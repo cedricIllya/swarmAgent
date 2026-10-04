@@ -60,7 +60,8 @@ export class OpenRouterClient {
     }
     if (opts.webSearch) {
       // Плагин `web` ищет ровно один раз на запрос и работает с любой моделью и с json_schema.
-      const plugin: Record<string, unknown> = { id: "web", max_results: opts.webSearch.maxResults ?? 5 };
+      // Движок Exa закреплён: «родной» поиск провайдера не возвращает url_citation, а нам нужны источники.
+      const plugin: Record<string, unknown> = { id: "web", engine: "exa", max_results: opts.webSearch.maxResults ?? 5 };
       if (opts.webSearch.includeDomains?.length) plugin["include_domains"] = opts.webSearch.includeDomains;
       body["plugins"] = [plugin];
     }
