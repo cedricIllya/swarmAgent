@@ -64,14 +64,20 @@ function flyClient(): FlyClient {
   return new FlyClient({ apiToken: token, org: env.fly.org, region: env.fly.region });
 }
 
-/** Шаблон скилла. `SKILL_TEMPLATE_DIR` задаётся в контейнере; в разработке — корень репозитория. */
-async function skillTemplate(): Promise<string> {
+/** Шаблоны скиллов. `SKILL_TEMPLATE_DIR` задаётся в контейнере; в разработке — корень репозитория. */
+async function skillTemplates(): Promise<{ worker: string; serviceSkills: Array<{ slug: string; content: string }> }> {
   const dir = process.env.SKILL_TEMPLATE_DIR ?? path.resolve(process.cwd(), "../../agent-template");
-  try {
-    return await readFile(/*turbopackIgnore: true*/ path.join(dir, "swarm-worker", "SKILL.md"), "utf8");
-  } catch {
-    throw new Error(`agent-template/swarm-worker/SKILL.md не найден в ${dir}`);
-  }
+  const read = async (rel: string) => {
+    try {
+      return await readFile(/*turbopackIgnore: true*/ path.join(dir, rel), "utf8");
+    } catch {
+      throw new Error(`agent-template/${rel} не найден в ${dir}`);
+    }
+  };
+  return {
+    worker: await read("swarm-worker/SKILL.md"),
+    serviceSkills: [{ slug: "gensite", content: await read("gensite/SKILL.md") }],
+  };
 }
 
 /** Env и файлы машины для текущего состояния агента. Используется при создании и смене модели. */
@@ -82,6 +88,7 @@ async function machineConfigFor(agent: AgentRow, runtimeToken: string, ownerEmai
   const services = await buildSnapshot(db(), agent.id);
   const email = `${agent.localPart}@${agent.domain}`;
 
+  const skills = await skillTemplates();
   const files = renderAllFiles({
     config: {
       agentId: agent.id,
@@ -99,7 +106,8 @@ async function machineConfigFor(agent: AgentRow, runtimeToken: string, ownerEmai
       browserbaseApiKey: env.browserbase.apiKey,
       browserbaseProjectId: env.browserbase.projectId,
     },
-    skillTemplate: await skillTemplate(),
+    skillTemplate: skills.worker,
+    serviceSkills: skills.serviceSkills,
   });
 
   const machineEnv: Record<string, string> = {

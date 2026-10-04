@@ -101,5 +101,23 @@ describe("renderConfigYaml", () => {
       skillTemplate: "hi",
     });
     for (const file of files) expect(file.mode).toBe("0644");
+    const withRecipe = renderAllFiles({
+      config: {
+        agentId: "agt_1",
+        agentName: "Ops",
+        email: "ops@agents.test",
+        model: "m",
+        autonomous: false,
+        skyvern: { enabled: false },
+        services: { generatedAt: "t", recipes: [], credentials: [] },
+      },
+      env: { openRouterApiKey: "k", runtimeToken: "t" },
+      skillTemplate: "hi",
+      serviceSkills: [{ slug: "gensite", content: "https://gensite.ru/api/mcp {{AGENT_EMAIL}}" }],
+    });
+    const gensite = withRecipe.find((f) => f.path === "skills/gensite/SKILL.md")?.content ?? "";
+    expect(gensite).toContain("gensite.ru/api/mcp");
+    expect(gensite).toContain("ops@agents.test");
+    expect(gensite).not.toContain("{{AGENT_EMAIL}}");
   });
 });
