@@ -1,5 +1,5 @@
 import type { ServicesSnapshot } from "@swarm/contracts";
-import { stringify } from "yaml";
+import { parse, stringify } from "yaml";
 
 /** Где на машине агента живёт всё его состояние. */
 export const HERMES_HOME = "/opt/data";
@@ -17,37 +17,54 @@ export interface HermesConfigInput {
 }
 
 /**
- * `config.yaml` Hermes: провайдер OpenRouter, модель агента, MCP-серверы из
- * общего каталога с секретами тенанта. Skyvern — единственный MCP «из коробки».
+ * Блок `mcp_servers` для Hermes. Ключи — по его спецификации:
+ * `tools.include`, `transport: sse` только для SSE, без `description`.
+ * Skyvern — единственный MCP «из коробки».
  */
-export function renderConfigYaml(input: HermesConfigInput): string {
+export function renderMcpServers(services: ServicesSnapshot, skyvernEnabled: boolean): Record<string, unknown> {
   const mcpServers: Record<string, unknown> = {};
 
-  if (input.skyvern.enabled) {
+  if (skyvernEnabled) {
     mcpServers["skyvern"] = {
       command: "skyvern",
       args: ["run", "mcp"],
       env: { SKYVERN_API_KEY: "${SKYVERN_API_KEY}" },
-      description: "Регистрация и вход в сервисы через браузер. Только для signup/login.",
     };
   }
 
-  for (const recipe of input.services.recipes) {
+  for (const recipe of services.recipes) {
     if (recipe.kind !== "mcp" || !recipe.mcp) continue;
-    const cred = input.services.credentials.find((c) => c.slug === recipe.slug);
+    const cred = services.credentials.find((c) => c.slug === recipe.slug);
     const headers: Record<string, string> = {};
     const token = cred?.token ?? cred?.oauth?.accessToken;
     if (recipe.mcp.auth !== "none" && token) headers["Authorization"] = `Bearer ${token}`;
-    const entry: Record<string, unknown> = {
-      url: recipe.mcp.url,
-      transport: recipe.mcp.transport,
-    };
+    const entry: Record<string, unknown> = { url: recipe.mcp.url };
+    if (recipe.mcp.transport === "sse") entry["transport"] = "sse";
     if (Object.keys(headers).length) entry["headers"] = headers;
-    if (recipe.mcp.includeTools.length) entry["include_tools"] = recipe.mcp.includeTools;
-    if (recipe.notes) entry["description"] = recipe.notes.slice(0, 300);
+    if (recipe.mcp.includeTools.length) entry["tools"] = { include: recipe.mcp.includeTools };
     mcpServers[recipe.slug] = entry;
   }
 
+  return mcpServers;
+}
+
+/**
+ * Подменить только `mcp_servers` в уже лежащем `config.yaml`.
+ * Остальные ключи Hermes не трогаем: gateway подхватит файл сам.
+ */
+export function replaceMcpServers(configYaml: string, services: ServicesSnapshot, skyvernEnabled: boolean): string {
+  const doc = parse(configYaml);
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return configYaml;
+  const next = doc as Record<string, unknown>;
+  next["mcp_servers"] = renderMcpServers(services, skyvernEnabled);
+  return `# Сгенерировано Swarm Agent. Правки руками перепишутся при смене модели.\n${stringify(next)}`;
+}
+
+/**
+ * `config.yaml` Hermes: провайдер OpenRouter, модель агента, MCP-серверы из
+ * общего каталога с секретами тенанта.
+ */
+export function renderConfigYaml(input: HermesConfigInput): string {
   const doc = {
     model: {
       provider: "openrouter",
@@ -63,7 +80,7 @@ export function renderConfigYaml(input: HermesConfigInput): string {
     skills: { auto_create: true },
     terminal: { backend: "local" },
     toolsets: ["default", "mcp", "skills", "memory", "cronjob"],
-    mcp_servers: mcpServers,
+    mcp_servers: renderMcpServers(input.services, input.skyvern.enabled),
     swarm: {
       agent_id: input.agentId,
       email: input.email,
@@ -146,6 +163,12 @@ export interface RenderedFile {
   mode?: string;
 }
 
+/**
+ * Volume читают два контейнера под разными uid. `0600` для Hermes — Permission denied.
+ * Снаружи volume не смонтирован, поэтому общие файлы — `0644`.
+ */
+export const SHARED_FILE_MODE = "0644";
+
 /** Все файлы, которые control plane кладёт на volume при создании и смене настроек. */
 export function renderAllFiles(args: {
   config: HermesConfigInput;
@@ -153,16 +176,21 @@ export function renderAllFiles(args: {
   skillTemplate: string;
 }): RenderedFile[] {
   return [
-    { path: "config.yaml", content: renderConfigYaml(args.config) },
-    { path: ".env", content: renderHermesEnv(args.env), mode: "0600" },
-    { path: "cron/jobs.json", content: renderCronJobs() },
+    { path: "config.yaml", content: renderConfigYaml(args.config), mode: SHARED_FILE_MODE },
+    { path: ".env", content: renderHermesEnv(args.env), mode: SHARED_FILE_MODE },
+    { path: "cron/jobs.json", content: renderCronJobs(), mode: SHARED_FILE_MODE },
     {
       path: "skills/swarm-worker/SKILL.md",
       content: renderWorkerSkill(args.skillTemplate, {
         agentName: args.config.agentName,
         email: args.config.email,
       }),
+      mode: SHARED_FILE_MODE,
     },
-    { path: "services.json", content: JSON.stringify(args.config.services, null, 2), mode: "0600" },
+    {
+      path: "services.json",
+      content: JSON.stringify(args.config.services, null, 2),
+      mode: SHARED_FILE_MODE,
+    },
   ];
 }

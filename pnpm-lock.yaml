@@ -193,6 +193,9 @@ importers:
       '@swarm/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@swarm/hermes-config':
+        specifier: workspace:*
+        version: link:../../packages/hermes-config
       '@swarm/usage':
         specifier: workspace:*
         version: link:../../packages/usage
