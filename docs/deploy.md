@@ -4,6 +4,30 @@ Control plane — приложение Fly `swarm-control-plane` в регион
 
 Сборка идёт из корня репозитория, Dockerfile указан в `fly.toml`. Контекст не должен содержать `node_modules` и `.env`: это закрывает `.dockerignore`.
 
+## Пуш в `main`
+
+Пуш в `main` запускает [`.github/workflows/fly-deploy.yml`](../.github/workflows/fly-deploy.yml). Два задания идут параллельно, каждое ждёт, если предыдущая выкладка того же приложения ещё идёт:
+
+| Задание | Команда |
+| --- | --- |
+| control plane | `flyctl deploy --remote-only --ha=false` |
+| образ runtime | `flyctl deploy --remote-only --build-only --push --image-label latest -c fly.runtime.toml` |
+
+Ручной запуск того же workflow: Actions → Fly Deploy → Run workflow.
+
+В секретах GitHub лежат deploy-токены одного приложения. Их создают так и вставляют в приглашение `gh` (значение в терминал не печатать):
+
+```bash
+fly tokens create deploy -a swarm-control-plane -n "github-actions swarm-control-plane" \
+  | gh secret set FLY_API_TOKEN --repo cedricIllya/swarmAgent
+fly tokens create deploy -a swarm-agent-runtime -n "github-actions swarm-agent-runtime" \
+  | gh secret set FLY_RUNTIME_API_TOKEN --repo cedricIllya/swarmAgent
+```
+
+`FLY_API_TOKEN` в GitHub — deploy-токен `swarm-control-plane`. Секрет с тем же именем на машине Fly — токен организации `anton-seidler`: им control plane создаёт приложения агентов. Список и отзыв токенов: `fly tokens list`, `fly tokens revoke <id>`.
+
+Ручная выкладка с своей машины:
+
 ```bash
 fly deploy --ha=false
 ```
@@ -12,7 +36,7 @@ fly deploy --ha=false
 
 Машина control plane одна, shared-cpu-1x, 1 GB. `auto_stop_machines = "suspend"` и `min_machines_running = 0`: нет HTTP несколько минут — она засыпает, первый запрос (сайт или вебхук Mailgun) будит. Код в браузер вводит машина агента, ей control plane постоянно не нужен.
 
-Пока control plane не спит, он раз в 15 минут будит агентов, у чьего тенанта есть секрет сервиса, и зовёт `POST /tick`. Пустой тик сразу усыпляет машину агента. Расписание Fly умеет только `hourly`, не каждые 15 минут, поэтому у машины control plane стоит `schedule = hourly`: если сайт давно никто не открывал, Fly будит её примерно раз в час, пропущенная проверка выполняется, и она снова засыпает. `fly deploy` это поле сохраняет; если после выкладки его нет, вернуть так:
+Пока control plane не спит, он раз в 15 минут будит агентов, у которых есть свой секрет сервиса, и зовёт `POST /tick`. Пустой тик сразу усыпляет машину агента. Расписание Fly умеет только `hourly`, не каждые 15 минут, поэтому у машины control plane стоит `schedule = hourly`: если сайт давно никто не открывал, Fly будит её примерно раз в час, пропущенная проверка выполняется, и она снова засыпает. `fly deploy` это поле сохраняет; если после выкладки его нет, вернуть так:
 
 ```bash
 fly machine update <id> --schedule hourly -a swarm-control-plane -y
@@ -87,7 +111,7 @@ fly certs show swarm.cedricillya.online -a swarm-control-plane   # покаже�
 
 Строка подключения к базе — секрет Fly. Её не копируют в репозиторий и в чат. Приложение ходит через PgBouncer (`prepare: false`), миграции — на хост `direct.<cluster>.flympg.net`.
 
-Повторный деплой:
+Повторный деплой — пуш в `main`. С своей машины то же самое:
 
 ```bash
 fly deploy --ha=false

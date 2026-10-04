@@ -1,0 +1,41 @@
+# Пуш в main выкладывает control plane и пересобирает образ runtime.
+# Секреты: FLY_API_TOKEN (deploy swarm-control-plane),
+# FLY_RUNTIME_API_TOKEN (deploy swarm-agent-runtime).
+name: Fly Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  control-plane:
+    name: Control plane
+    runs-on: ubuntu-latest
+    concurrency:
+      group: fly-swarm-control-plane
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy swarm-control-plane
+        run: flyctl deploy --remote-only --ha=false
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  runtime-image:
+    name: Runtime image
+    runs-on: ubuntu-latest
+    concurrency:
+      group: fly-swarm-agent-runtime
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Push swarm-agent-runtime:latest
+        run: flyctl deploy --remote-only --build-only --push --image-label latest -c fly.runtime.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_RUNTIME_API_TOKEN }}
