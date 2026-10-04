@@ -24,6 +24,10 @@ import { machineIsIdle, markSleepy, noteActivity, startIdleWatch } from "./idle"
 import { log, warn } from "./log";
 import { redactInternal } from "./redact";
 
+// Volume общий с Hermes (uid 10000). umask 077 оставлял services.json режимом 0600,
+// Hermes не мог прочитать рецепт и пытался регистрировать MCP через hermes_tools.
+process.umask(0o022);
+
 const cfg = loadConfig();
 const rt = new AgentRuntime(cfg);
 await rt.init();

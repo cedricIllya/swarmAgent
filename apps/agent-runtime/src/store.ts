@@ -52,6 +52,7 @@ export class Store {
       await mkdir(this.dir(d), { recursive: true });
     }
     await this.migrateLegacyChat();
+    await chmod(this.dir("skills"), 0o755).catch(() => undefined);
     await this.chmodShared(this.dir("services.json"));
   }
 

@@ -71,9 +71,14 @@ describe("chats", () => {
   });
 
   it("writes services.json world-readable for the hermes container", async () => {
-    const store = await tmpStore();
-    await store.writeServices({ generatedAt: "t", recipes: [], credentials: [] });
-    const mode = (await stat(path.join(store.root, "services.json"))).mode & 0o777;
-    expect(mode).toBe(0o644);
+    const prev = process.umask(0o077);
+    try {
+      const store = await tmpStore();
+      await store.writeServices({ generatedAt: "t", recipes: [], credentials: [] });
+      const mode = (await stat(path.join(store.root, "services.json"))).mode & 0o777;
+      expect(mode).toBe(0o644);
+    } finally {
+      process.umask(prev);
+    }
   });
 });
