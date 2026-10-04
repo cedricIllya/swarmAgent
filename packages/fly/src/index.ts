@@ -59,7 +59,10 @@ export class FlyClient {
     if (body !== undefined) init.body = JSON.stringify(body);
     const res = await this.f(`${this.base}${path}`, init);
     const text = await res.text();
-    if (!res.ok) throw new FlyError(`Fly ${method} ${path} → ${res.status}`, res.status, text);
+    if (!res.ok) {
+      const detail = text.replace(/\s+/g, " ").slice(0, 500);
+      throw new FlyError(`Fly ${method} ${path} → ${res.status}${detail ? `: ${detail}` : ""}`, res.status, text);
+    }
     return (text ? JSON.parse(text) : {}) as T;
   }
 
@@ -80,6 +83,26 @@ export class FlyClient {
       org_slug: this.cfg.org,
       enable_subdomains: false,
     });
+  }
+
+  /**
+   * Приватный адрес `<app>.flycast`. Запрос на него идёт через прокси Fly
+   * и сам снимает suspend. Публичный IP не выделяем.
+   * Сеть не задаём: адрес попадает в сеть организации, где живёт control plane.
+   */
+  async ensureFlycast(appName: string): Promise<void> {
+    const listed = await this.request<Array<{ type?: string }> | { addresses?: Array<{ type?: string }> }>(
+      "GET",
+      `/v1/apps/${appName}/ip_assignments`,
+    );
+    const ips = Array.isArray(listed) ? listed : (listed.addresses ?? []);
+    if (ips.some((ip) => ip.type === "private_v6")) return;
+    try {
+      await this.request("POST", `/v1/apps/${appName}/ip_assignments`, { type: "private_v6" });
+    } catch (e) {
+      if (e instanceof FlyError && e.status === 409) return;
+      throw e;
+    }
   }
 
   async destroyApp(appName: string): Promise<void> {
@@ -112,6 +135,38 @@ export class FlyClient {
     return this.request("GET", `/v1/apps/${appName}/machines`);
   }
 
+  async getMachine(appName: string, machineId: string): Promise<FlyMachine | null> {
+    try {
+      return await this.request("GET", `/v1/apps/${appName}/machines/${machineId}`);
+    } catch (e) {
+      if (e instanceof FlyError && e.status === 404) return null;
+      throw e;
+    }
+  }
+
+  /**
+   * `start` поднимает stopped и снимает suspend. Уже запущенная машина
+   * отвечает 409/412 — это не ошибка.
+   */
+  async startMachine(appName: string, machineId: string): Promise<void> {
+    try {
+      await this.request("POST", `/v1/apps/${appName}/machines/${machineId}/start`);
+    } catch (e) {
+      if (e instanceof FlyError && (e.status === 409 || e.status === 412)) return;
+      throw e;
+    }
+  }
+
+  /** Память сохраняется, CPU и RAM не тарифицируются. Диск — тарифицируется. */
+  async suspendMachine(appName: string, machineId: string): Promise<void> {
+    try {
+      await this.request("POST", `/v1/apps/${appName}/machines/${machineId}/suspend`);
+    } catch (e) {
+      if (e instanceof FlyError && (e.status === 409 || e.status === 412)) return;
+      throw e;
+    }
+  }
+
   async createMachine(appName: string, body: { name: string; config: MachineConfig }): Promise<FlyMachine> {
     return this.request("POST", `/v1/apps/${appName}/machines`, {
       name: body.name,
@@ -129,11 +184,23 @@ export class FlyClient {
     await this.request("POST", `/v1/apps/${appName}/machines/${machineId}/restart`);
   }
 
+  /**
+   * Ждёт состояние. Один запрос Fly принимает timeout только в диапазоне 1–60 секунд,
+   * поэтому длинное ожидание режется на минутные куски. 408 — кусок истёк, машина ещё не там.
+   */
   async waitForState(appName: string, machineId: string, state: "started" | "stopped" | "destroyed", timeoutSec = 120): Promise<void> {
-    await this.request(
-      "GET",
-      `/v1/apps/${appName}/machines/${machineId}/wait?state=${state}&timeout=${timeoutSec}`,
-    );
+    const deadline = Date.now() + Math.max(1, timeoutSec) * 1000;
+    while (Date.now() < deadline) {
+      const slice = Math.min(60, Math.max(1, Math.ceil((deadline - Date.now()) / 1000)));
+      try {
+        await this.request("GET", `/v1/apps/${appName}/machines/${machineId}/wait?state=${state}&timeout=${slice}`);
+        return;
+      } catch (e) {
+        if (e instanceof FlyError && e.status === 408 && Date.now() < deadline) continue;
+        throw e;
+      }
+    }
+    throw new FlyError(`Fly wait ${state} ${machineId} превысил ${timeoutSec}с`, 408, "");
   }
 
   async exec(
@@ -169,10 +236,11 @@ export interface MachineContainer {
   restart?: { policy: "always" | "on-failure" | "no" };
   healthchecks?: Array<{
     name: string;
-    http?: { port: number; path: string; method?: string };
-    interval?: string;
-    timeout?: string;
-    grace_period?: string;
+    exec?: { command: string[] };
+    /** Секунды, не наносекунды и не строка "15s". */
+    interval?: number;
+    timeout?: number;
+    grace_period?: number;
     kind?: "readiness" | "liveness";
   }>;
 }
@@ -194,19 +262,32 @@ export interface MachineConfig {
   }>;
   auto_destroy?: boolean;
   restart?: { policy: "always" | "on-failure" | "no" };
+  /** hourly | daily | weekly | monthly. Будит stopped/suspended машину. */
+  schedule?: string;
   metadata?: Record<string, string>;
 }
 
 export const DATA_PATH = "/opt/data";
 export const VOLUME_NAME = "agent_data";
 export const RUNTIME_PORT = 8787;
+/**
+ * Volume тарифицируется целиком, пока агент спит: $0.15/ГБ в месяц.
+ * 3 ГБ хватает на конфиг Hermes, журнал и несколько роликов.
+ * 1 ГБ — минимум Fly, его съедает один длинный ролик. 10 ГБ почти всегда пустые.
+ */
+export const AGENT_VOLUME_GB = 3;
 
 export function appNameFor(agentId: string): string {
   return `swarm-${agentId.replace(/^agt_/, "").toLowerCase().replace(/[^a-z0-9-]/g, "-")}`;
 }
 
 export function runtimeUrlFor(appName: string): string {
-  return `http://${appName}.internal:${RUNTIME_PORT}`;
+  return `http://${appName}.flycast:${RUNTIME_PORT}`;
+}
+
+/** `.flycast` будит машину самим HTTP. Старые `.internal` — нет, их будит API `start`. */
+export function wakesOnHttp(runtimeUrl: string | null | undefined): boolean {
+  return Boolean(runtimeUrl?.includes(".flycast"));
 }
 
 export interface AgentMachineInput {
@@ -229,7 +310,12 @@ export const BOOTSTRAP_PATH = "/bootstrap";
  * Два контейнера на одной Machine. Hermes с s6-overlay хочет быть PID 1 —
  * поэтому не один образ с двумя процессами. Volume примонтирован обоим.
  * Hermes стартует после того, как runtime стал healthy — то есть уже
- * разложил config.yaml. Машина не засыпает: autostop off, restart always.
+ * разложил config.yaml.
+ *
+ * Сервис прокси нужен, чтобы запрос на `.flycast` сам снимал suspend.
+ * Автостоп выключен: runtime просит suspend через 2 минуты, прокси держал бы
+ * машину дольше и дольше брал бы деньги за CPU и RAM.
+ * `ports` не пустой: пустой список оставлял машину в `started` без контейнеров.
  */
 export function buildAgentMachineConfig(input: AgentMachineInput): MachineConfig {
   const files: MachineFile[] = input.files.map((f) => ({
@@ -244,6 +330,16 @@ export function buildAgentMachineConfig(input: AgentMachineInput): MachineConfig
     restart: { policy: "always" },
     auto_destroy: false,
     metadata: { role: "swarm-agent" },
+    services: [
+      {
+        protocol: "tcp",
+        internal_port: RUNTIME_PORT,
+        autostart: true,
+        autostop: "off",
+        min_machines_running: 0,
+        ports: [{ port: RUNTIME_PORT, handlers: ["http"] }],
+      },
+    ],
     containers: [
       {
         name: "runtime",
@@ -253,12 +349,13 @@ export function buildAgentMachineConfig(input: AgentMachineInput): MachineConfig
         restart: { policy: "always" },
         healthchecks: [
           {
-            name: "http",
+            name: "ready",
             kind: "readiness",
-            http: { port: RUNTIME_PORT, path: "/health" },
-            interval: "15s",
-            timeout: "5s",
-            grace_period: "20s",
+            // Только exec: с http-проверкой pilot не запускает ни один контейнер машины.
+            exec: { command: ["wget", "-q", "-O", "/dev/null", `http://127.0.0.1:${RUNTIME_PORT}/health`] },
+            interval: 15,
+            timeout: 5,
+            grace_period: 20,
           },
         ],
       },
@@ -269,16 +366,6 @@ export function buildAgentMachineConfig(input: AgentMachineInput): MachineConfig
         env: { ...input.env, HERMES_HOME: DATA_PATH },
         depends_on: [{ name: "runtime", condition: "healthy" }],
         restart: { policy: "always" },
-      },
-    ],
-    services: [
-      {
-        protocol: "tcp",
-        internal_port: RUNTIME_PORT,
-        ports: [],
-        autostop: "off",
-        autostart: true,
-        min_machines_running: 1,
       },
     ],
   };

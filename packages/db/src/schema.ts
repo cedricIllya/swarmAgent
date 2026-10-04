@@ -131,7 +131,7 @@ export const agents = pgTable(
     flyAppName: text("fly_app_name"),
     flyMachineId: text("fly_machine_id"),
     flyVolumeId: text("fly_volume_id"),
-    /** Приватный адрес runtime: http://<app>.internal:8787 */
+    /** Приватный адрес runtime: http://<app>.flycast:8787. Старые записи — .internal. */
     runtimeUrl: text("runtime_url"),
     /** Bearer, которым control plane ходит в runtime. Зашифрован. */
     runtimeTokenEnc: text("runtime_token_enc"),

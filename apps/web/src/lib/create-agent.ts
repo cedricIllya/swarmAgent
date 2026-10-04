@@ -13,7 +13,7 @@ import {
   type AgentRow,
 } from "@swarm/agents";
 import { buildSnapshot } from "@swarm/connections";
-import { FlyClient, appNameFor, buildAgentMachineConfig, runtimeUrlFor } from "@swarm/fly";
+import { AGENT_VOLUME_GB, FlyClient, appNameFor, buildAgentMachineConfig, runtimeUrlFor } from "@swarm/fly";
 import { renderAllFiles } from "@swarm/hermes-config";
 import { allocateLocalPart, localPartFromName, validateLocalPart } from "@swarm/mail";
 import type { TenantView } from "@swarm/identity";
@@ -136,9 +136,10 @@ async function provision(agent: AgentRow, runtimeToken: string, ownerEmail: stri
 
   await updateAgent(database, agent.id, { status: "provisioning", statusMessage: "Создаём приложение Fly", flyAppName: appName });
   await fly.ensureApp(appName);
+  await fly.ensureFlycast(appName);
 
-  await updateAgent(database, agent.id, { statusMessage: "Создаём диск 10 GB" });
-  const volume = await fly.ensureVolume(appName, "agent_data", 10);
+  await updateAgent(database, agent.id, { statusMessage: `Создаём диск ${AGENT_VOLUME_GB} GB` });
+  const volume = await fly.ensureVolume(appName, "agent_data", AGENT_VOLUME_GB);
   await updateAgent(database, agent.id, { flyVolumeId: volume.id });
 
   await updateAgent(database, agent.id, { statusMessage: "Запускаем Hermes и runtime" });
@@ -160,8 +161,10 @@ export async function reconfigureAgent(agentId: string, ownerEmail: string | nul
   const agent = await getAgentById(database, agentId);
   if (!agent?.flyAppName || !agent.flyMachineId || !agent.flyVolumeId) return;
   const fly = flyClient();
+  await fly.ensureFlycast(agent.flyAppName);
   const config = await machineConfigFor(agent, runtimeTokenOf(agent), ownerEmail, agent.flyVolumeId);
   await fly.updateMachine(agent.flyAppName, agent.flyMachineId, config);
+  await updateAgent(database, agent.id, { runtimeUrl: runtimeUrlFor(agent.flyAppName) });
 }
 
 /** Разослать свежий snapshot каталога всем агентам тенанта. */
