@@ -19,7 +19,7 @@ import { allocateLocalPart, localPartFromName, validateLocalPart } from "@swarm/
 import type { TenantView } from "@swarm/identity";
 import { env } from "@/env";
 import { db } from "./db";
-import { RuntimeClient } from "./runtime-client";
+import { awakeRuntime } from "./runtime-client";
 
 /**
  * Единственное место, которое по очереди зовёт адрес, реестр, Fly и конфиг Hermes.
@@ -177,7 +177,7 @@ export async function pushServicesToTenant(tenantId: string): Promise<void> {
       .filter((a) => a.status === "running")
       .map(async (a) => {
         const row = await getAgent(database, tenantId, a.id);
-        const client = row ? RuntimeClient.for(row) : null;
+        const client = row ? await awakeRuntime(row) : null;
         if (client) await client.syncServices({ snapshot });
       }),
   );

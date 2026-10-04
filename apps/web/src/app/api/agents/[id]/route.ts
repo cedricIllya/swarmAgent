@@ -4,12 +4,13 @@ import { getAgent, toAgentView, updateAgent } from "@swarm/agents";
 import type { RuntimeState } from "@swarm/contracts";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
-import { RuntimeClient } from "@/lib/runtime-client";
+import { RuntimeClient, awakeRuntime } from "@/lib/runtime-client";
+import { isAsleepState, isWakingState, machineState } from "@/lib/fly-machines";
 import { destroyAgent, reconfigureAgent } from "@/lib/create-agent";
 
 type Params = { params: Promise<{ id: string }> };
 
-export async function GET(_req: Request, { params }: Params): Promise<Response> {
+export async function GET(req: Request, { params }: Params): Promise<Response> {
   const viewer = await getViewer();
   if (!viewer) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { id } = await params;
@@ -18,15 +19,26 @@ export async function GET(_req: Request, { params }: Params): Promise<Response> 
 
   let state: RuntimeState | null = null;
   let runtimeError: string | null = null;
+  let asleep = false;
+  let waking = false;
   const client = RuntimeClient.for(agent);
+  const wake = new URL(req.url).searchParams.get("wake") === "1";
   if (client && agent.status === "running") {
     try {
-      state = await client.state();
+      if (wake) {
+        await awakeRuntime(agent, 45_000);
+        state = await client.state();
+      } else {
+        const flyState = await machineState(agent);
+        if (isAsleepState(flyState)) asleep = true;
+        else if (isWakingState(flyState)) waking = true;
+        else state = await client.state();
+      }
     } catch (e) {
       runtimeError = String(e instanceof Error ? e.message : e);
     }
   }
-  return NextResponse.json({ agent: toAgentView(agent), state, runtimeError });
+  return NextResponse.json({ agent: toAgentView(agent), state, runtimeError, asleep, waking });
 }
 
 const Patch = z.object({
@@ -49,16 +61,16 @@ export async function PATCH(req: Request, { params }: Params): Promise<Response>
   if (parsed.data.model) patch.model = parsed.data.model;
   await updateAgent(db(), agent.id, patch);
 
-  const client = RuntimeClient.for(agent);
-  if (client && agent.status === "running") {
-    try {
+  try {
+    const client = await awakeRuntime(agent);
+    if (client) {
       await client.updateSettings({
         ...(parsed.data.autonomous !== undefined ? { autonomous: parsed.data.autonomous } : {}),
         ...(parsed.data.model ? { model: parsed.data.model } : {}),
       });
-    } catch (e) {
-      console.warn(`[agents] runtime settings: ${String(e)}`);
     }
+  } catch (e) {
+    console.warn(`[agents] runtime settings: ${String(e)}`);
   }
   // Смена модели переписывает config.yaml Hermes и перезапускает машину.
   if (parsed.data.model && parsed.data.model !== agent.model) {

@@ -5,7 +5,7 @@ import { decryptJson } from "@swarm/crypto";
 import { env } from "@/env";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
-import { RuntimeClient } from "@/lib/runtime-client";
+import { awakeRuntime } from "@/lib/runtime-client";
 
 /** Callback Google: refresh token в базу (шифрованно) и google_token.json на машину агента. */
 export async function GET(req: Request): Promise<Response> {
@@ -38,8 +38,8 @@ export async function GET(req: Request): Promise<Response> {
 
   await updateAgent(db(), agent.id, { googleRefreshToken: tokens.refreshToken, googleEmail: tokens.email });
 
-  const client = RuntimeClient.for(agent);
-  if (client && agent.status === "running") {
+  const client = await awakeRuntime(agent);
+  if (client) {
     try {
       await client.googleToken({
         token: toGoogleTokenJson(cfg, {

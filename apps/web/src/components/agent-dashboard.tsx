@@ -9,6 +9,8 @@ interface Detail {
   agent: Agent;
   state: RuntimeState | null;
   runtimeError: string | null;
+  asleep?: boolean;
+  waking?: boolean;
 }
 
 function fmtTime(iso: string): string {
@@ -24,18 +26,20 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
   const [detail, setDetail] = useState<Detail>({ agent: initialAgent, state: null, runtimeError: null });
   const router = useRouter();
 
-  const refresh = useCallback(async () => {
-    const res = await fetch(`/api/agents/${initialAgent.id}`, { cache: "no-store" });
-    if (res.ok) setDetail((await res.json()) as Detail);
+  const refresh = useCallback(async (wake = false) => {
+    const res = await fetch(`/api/agents/${initialAgent.id}${wake ? "?wake=1" : ""}`, { cache: "no-store" });
+    if (!res.ok) return;
+    const next = (await res.json()) as Detail;
+    setDetail((prev) => (next.asleep && !next.state && prev.state ? { ...next, state: prev.state } : next));
   }, [initialAgent.id]);
 
   useEffect(() => {
-    void refresh();
-    const t = setInterval(refresh, 5000);
+    void refresh(true);
+    const t = setInterval(() => void refresh(false), 5000);
     return () => clearInterval(t);
   }, [refresh]);
 
-  const { agent, state, runtimeError } = detail;
+  const { agent, state, runtimeError, asleep, waking } = detail;
 
   async function remove() {
     if (!confirm(`Удалить агента ${agent.name}? Машина и диск будут уничтожены, адрес освободится.`)) return;
@@ -50,6 +54,8 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
           <div className="row" style={{ gap: 10 }}>
             <h1>{agent.name}</h1>
             <StatusBadge status={agent.status} />
+            {asleep && <span className="badge">спит</span>}
+            {waking && <span className="badge">просыпается</span>}
             {state?.busyInBrowser && <span className="badge badge-warn"><span className="badge-dot pulse" />в браузере</span>}
           </div>
           <div className="faint small" style={{ marginTop: 4 }}>
@@ -62,7 +68,13 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
         </button>
       </div>
 
-      {runtimeError && (
+      {asleep && (
+        <div className="notice" style={{ marginBottom: 16 }}>
+          Агент спит: процессор и память Fly не тарифицирует. Диск считается и во сне. Письмо, чат и одобрение будят машину.
+        </div>
+      )}
+
+      {runtimeError && !asleep && (
         <div className="notice notice-warn" style={{ marginBottom: 16 }}>
           Машина агента не отвечает: {runtimeError}
         </div>

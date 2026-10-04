@@ -3,7 +3,7 @@ import { ChatRequestSchema } from "@swarm/contracts";
 import { getAgent } from "@swarm/agents";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
-import { RuntimeClient } from "@/lib/runtime-client";
+import { awakeRuntime } from "@/lib/runtime-client";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
   const viewer = await getViewer();
@@ -13,8 +13,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!agent) return NextResponse.json({ error: "not found" }, { status: 404 });
   const body = ChatRequestSchema.pick({ message: true }).safeParse(await req.json().catch(() => null));
   if (!body.success) return NextResponse.json({ error: "bad input" }, { status: 400 });
-  const client = RuntimeClient.for(agent);
-  if (!client || agent.status !== "running") {
+  const client = await awakeRuntime(agent);
+  if (!client) {
     return NextResponse.json({ error: "Агент ещё не запущен" }, { status: 409 });
   }
   const r = await client.chat({ message: body.data.message, author: viewer.user.email });

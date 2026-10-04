@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAgent } from "@swarm/agents";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
-import { RuntimeClient } from "@/lib/runtime-client";
+import { awakeRuntime } from "@/lib/runtime-client";
 
 /** Проксирует MP4 с машины агента: сам runtime снаружи недоступен. */
 export async function GET(
@@ -14,7 +14,7 @@ export async function GET(
   const { id, sessionId } = await params;
   const agent = await getAgent(db(), viewer.tenant.id, id);
   if (!agent) return NextResponse.json({ error: "not found" }, { status: 404 });
-  const client = RuntimeClient.for(agent);
+  const client = await awakeRuntime(agent, 120_000);
   if (!client) return NextResponse.json({ error: "Агент не запущен" }, { status: 409 });
   const upstream = await client.video(sessionId);
   if (!upstream.ok || !upstream.body) return NextResponse.json({ error: "Видео нет" }, { status: 404 });

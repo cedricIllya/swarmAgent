@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getAgent } from "@swarm/agents";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
-import { RuntimeClient } from "@/lib/runtime-client";
+import { awakeRuntime } from "@/lib/runtime-client";
 
 export async function POST(
   req: Request,
@@ -16,7 +16,7 @@ export async function POST(
   if (!agent) return NextResponse.json({ error: "not found" }, { status: 404 });
   const body = z.object({ approved: z.boolean() }).safeParse(await req.json().catch(() => null));
   if (!body.success) return NextResponse.json({ error: "bad input" }, { status: 400 });
-  const client = RuntimeClient.for(agent);
+  const client = await awakeRuntime(agent);
   if (!client) return NextResponse.json({ error: "Агент не запущен" }, { status: 409 });
   return NextResponse.json(await client.resolveApproval(approvalId, body.data.approved));
 }
