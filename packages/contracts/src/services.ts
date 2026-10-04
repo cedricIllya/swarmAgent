@@ -65,11 +65,31 @@ export const ServiceCredentialSchema = z.object({
   storageState: z.unknown().optional(),
   /** Логин аккаунта сервиса, который завёл агент. */
   accountEmail: z.string().optional(),
+  /** Имя, которым агент заполнил регистрацию. */
+  accountName: z.string().optional(),
   /** Пароль аккаунта, который агент сам задал при регистрации по приглашению. */
   password: z.string().optional(),
 });
 
 export type ServiceCredential = z.infer<typeof ServiceCredentialSchema>;
+
+/**
+ * Поздний отчёт (например, только токен) не затирает уже сохранённый вход:
+ * почту, имя и пароль, под которыми агент зарегистрировался.
+ */
+export function mergeCredential(prev: ServiceCredential | undefined, next: ServiceCredential): ServiceCredential {
+  if (!prev) return next;
+  return {
+    ...prev,
+    ...next,
+    token: next.token ?? prev.token,
+    oauth: next.oauth ?? prev.oauth,
+    storageState: next.storageState ?? prev.storageState,
+    accountEmail: next.accountEmail ?? prev.accountEmail,
+    accountName: next.accountName ?? prev.accountName,
+    password: next.password ?? prev.password,
+  };
+}
 
 /**
  * Что control plane кладёт на машину агента как `services.json`:

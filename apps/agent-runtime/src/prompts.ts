@@ -98,7 +98,11 @@ export interface PromptContext {
 
 export function systemPrompt(ctx: PromptContext): string {
   const recipes = ctx.services?.recipes ?? [];
-  const line = (r: (typeof recipes)[number]) => `- ${r.name} (${r.slug}): способ ${r.kind}`;
+  const line = (r: (typeof recipes)[number]) => {
+    const cred = ctx.services?.credentials.find((c) => c.slug === r.slug);
+    const who = [cred?.accountName, cred?.accountEmail].filter(Boolean).join(", ");
+    return `- ${r.name} (${r.slug}): способ ${r.kind}${who ? `, аккаунт ${who}` : ""}`;
+  };
   const own = recipes.filter((r) => ctx.services?.credentials.some((c) => c.slug === r.slug)).map(line);
   const catalog = recipes.filter((r) => !ctx.services?.credentials.some((c) => c.slug === r.slug)).map(line);
 

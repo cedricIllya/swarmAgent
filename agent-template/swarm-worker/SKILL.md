@@ -158,7 +158,7 @@ curl -s -X POST http://127.0.0.1:8787/report -H "Authorization: Bearer $SWARM_RU
 Получил ключ, токен или вошёл в браузере — запиши свой доступ. Он сохраняется только за тобой:
 
 ```bash
-... -d '{"type":"credential","credential":{"slug":"example","kind":"api","token":"<key>","accountEmail":"{{AGENT_EMAIL}}"}}'
+... -d '{"type":"credential","credential":{"slug":"example","kind":"api","token":"<key>","accountEmail":"{{AGENT_EMAIL}}","accountName":"{{AGENT_NAME}}"}}'
 ```
 
 Секреты никогда не пиши в текст ответа и в заметки рецепта.

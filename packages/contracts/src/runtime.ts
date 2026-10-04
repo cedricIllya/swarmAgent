@@ -112,6 +112,11 @@ const ConnectedServiceSchema = z.object({
   name: z.string(),
   kind: z.enum(["mcp", "api", "browser"]),
   hasCredential: z.boolean(),
+  /** Почта, под которой агент зарегистрировался. */
+  accountEmail: z.string().nullable().optional(),
+  /** Имя, которым агент заполнил регистрацию. */
+  accountName: z.string().nullable().optional(),
+  hasPassword: z.boolean().optional(),
 });
 
 export const RuntimeStateSchema = z.object({

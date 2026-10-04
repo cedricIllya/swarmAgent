@@ -1,4 +1,5 @@
 import {
+  mergeCredential,
   ServiceCredentialSchema,
   ServiceRecipeSchema,
   type ServiceCredential,
@@ -110,7 +111,9 @@ export async function listCredentials(db: Db, agentId: string): Promise<ServiceC
 
 export async function upsertCredential(db: Db, owner: CredentialOwner, credential: ServiceCredential): Promise<void> {
   const parsed = ServiceCredentialSchema.parse(credential);
-  const { slug, kind, accountEmail, ...secret } = parsed;
+  const prev = (await listCredentials(db, owner.agentId)).find((c) => c.slug === parsed.slug);
+  const merged = mergeCredential(prev, parsed);
+  const { slug, kind, accountEmail, ...secret } = merged;
   const secretEnc = encryptJson(secret);
   await db
     .insert(schema.serviceCredentials)

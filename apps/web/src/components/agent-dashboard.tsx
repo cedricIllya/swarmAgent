@@ -528,15 +528,53 @@ function ApprovalRow({ approval, onDecide }: { approval: PendingApproval; onDeci
   );
 }
 
+interface SavedLogin {
+  slug: string;
+  name: string;
+  kind: "mcp" | "api" | "browser";
+  accountEmail: string | null;
+  accountName: string | null;
+  password: string | null;
+}
+
 function ServicesCard({ agent, state }: { agent: Agent; state: RuntimeState | null }) {
-  const list = state?.connectedServices ?? [];
+  const [logins, setLogins] = useState<SavedLogin[]>([]);
+  const [shown, setShown] = useState<Record<string, boolean>>({});
+  const live = state?.connectedServices ?? [];
   const kindLabel = { mcp: "MCP", api: "API", browser: "браузер" } as const;
+
+  useEffect(() => {
+    let cancel = false;
+    void fetch(`/api/agents/${agent.id}/credentials`, { cache: "no-store" }).then(async (res) => {
+      if (!res.ok || cancel) return;
+      setLogins((await res.json()) as SavedLogin[]);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [agent.id, live.length]);
+
+  const rows = new Map<string, SavedLogin>();
+  for (const s of live) {
+    const saved = logins.find((l) => l.slug === s.slug);
+    rows.set(s.slug, {
+      slug: s.slug,
+      name: s.name,
+      kind: s.kind,
+      accountEmail: saved?.accountEmail ?? s.accountEmail ?? null,
+      accountName: saved?.accountName ?? s.accountName ?? null,
+      password: saved?.password ?? null,
+    });
+  }
+  for (const saved of logins) if (!rows.has(saved.slug)) rows.set(saved.slug, saved);
+  const list = [...rows.values()];
+
   return (
     <section className="card">
       <div className="card-head">
         <div>
           <h2>Подключённые сервисы</h2>
-          <span className="muted small">Только те, куда доступ уже сохранён</span>
+          <span className="muted small">Куда агент вошёл и под каким аккаунтом</span>
         </div>
         <Link href="/services" className="small">
           Все сервисы →
@@ -553,6 +591,21 @@ function ServicesCard({ agent, state }: { agent: Agent; state: RuntimeState | nu
               <div>
                 <div>{s.name}</div>
                 <div className="faint small mono">{s.slug}</div>
+                {(s.accountName || s.accountEmail) && (
+                  <div className="small" style={{ marginTop: 4 }}>
+                    {[s.accountName, s.accountEmail].filter(Boolean).join(" · ")}
+                  </div>
+                )}
+                {s.password && (
+                  <button
+                    type="button"
+                    className="linkish small"
+                    style={{ marginTop: 4 }}
+                    onClick={() => setShown((prev) => ({ ...prev, [s.slug]: !prev[s.slug] }))}
+                  >
+                    {shown[s.slug] ? s.password : "Показать пароль"}
+                  </button>
+                )}
               </div>
               <span className="badge">{kindLabel[s.kind]}</span>
             </div>

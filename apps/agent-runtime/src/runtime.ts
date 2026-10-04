@@ -1,5 +1,14 @@
 import Browserbase from "@browserbasehq/sdk";
-import type { BrowserSession, ChatMessage, PendingApproval, Run, RunStep, RuntimeReport, RuntimeState } from "@swarm/contracts";
+import {
+  mergeCredential,
+  type BrowserSession,
+  type ChatMessage,
+  type PendingApproval,
+  type Run,
+  type RunStep,
+  type RuntimeReport,
+  type RuntimeState,
+} from "@swarm/contracts";
 import { emitRuntime } from "./events";
 import { emptyUsage } from "@swarm/usage";
 import { ControlPlaneClient } from "./control-plane";
@@ -329,6 +338,7 @@ export class AgentRuntime {
         slug: args.slug,
         kind: existing?.kind ?? "browser",
         accountEmail: result.accountEmail,
+        accountName: this.cfg.agentName,
         ...(result.password ? { password: result.password } : {}),
         storageState: { provider: "browserbase", contextId },
       },
@@ -356,12 +366,18 @@ export class AgentRuntime {
     if (!snap) return [];
     return snap.recipes
       .filter((r) => snap.credentials.some((c) => c.slug === r.slug))
-      .map((r) => ({
-        slug: r.slug,
-        name: r.name,
-        kind: r.kind,
-        hasCredential: true,
-      }));
+      .map((r) => {
+        const cred = snap.credentials.find((c) => c.slug === r.slug);
+        return {
+          slug: r.slug,
+          name: r.name,
+          kind: r.kind,
+          hasCredential: true,
+          accountEmail: cred?.accountEmail ?? null,
+          accountName: cred?.accountName ?? null,
+          hasPassword: Boolean(cred?.password),
+        };
+      });
   }
 
   async publishServices(): Promise<void> {
@@ -380,7 +396,12 @@ export class AgentRuntime {
    * Новый рецепт или секрет: на control plane, в локальный `services.json`,
    * в `config.yaml` Hermes и строкой в журнал задачи.
    */
-  async applyReport(body: RuntimeReport): Promise<{ slug: string; name: string; kind: "mcp" | "api" | "browser" }> {
+  async applyReport(input: RuntimeReport): Promise<{ slug: string; name: string; kind: "mcp" | "api" | "browser" }> {
+    const prev =
+      input.type === "credential"
+        ? (await this.store.readServices())?.credentials.find((c) => c.slug === input.credential.slug)
+        : undefined;
+    const body = input.type === "credential" ? { ...input, credential: mergeCredential(prev, input.credential) } : input;
     await this.controlPlane.report(body);
     const snap = await this.store.readServices();
     const reported =
