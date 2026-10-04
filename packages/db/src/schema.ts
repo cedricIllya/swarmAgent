@@ -165,7 +165,10 @@ export const serviceRecipes = pgTable("service_recipes", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-/** Секрет тенанта для сервиса из каталога. Всегда с tenant_id, тело зашифровано. */
+/**
+ * Секрет агента для сервиса из каталога. Доступ принадлежит тому агенту, который вошёл:
+ * соседи по тенанту его не видят. tenant_id — для учёта и каскадного удаления. Тело зашифровано.
+ */
 export const serviceCredentials = pgTable(
   "service_credentials",
   {
@@ -173,6 +176,9 @@ export const serviceCredentials = pgTable(
     tenantId: text("tenant_id")
       .notNull()
       .references(() => tenants.id, { onDelete: "cascade" }),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
     slug: text("slug")
       .notNull()
       .references(() => serviceRecipes.slug, { onDelete: "cascade" }),
@@ -180,9 +186,11 @@ export const serviceCredentials = pgTable(
     /** Зашифрованный JSON ServiceCredential без slug/kind. */
     secretEnc: text("secret_enc").notNull(),
     accountEmail: text("account_email"),
-    connectedByAgentId: text("connected_by_agent_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("service_credentials_tenant_slug_idx").on(t.tenantId, t.slug)],
+  (t) => [
+    uniqueIndex("service_credentials_agent_slug_idx").on(t.agentId, t.slug),
+    index("service_credentials_tenant_idx").on(t.tenantId),
+  ],
 );

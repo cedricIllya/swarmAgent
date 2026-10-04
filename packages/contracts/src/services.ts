@@ -45,7 +45,8 @@ export const ServiceRecipeSchema = z.object({
 export type ServiceRecipe = z.infer<typeof ServiceRecipeSchema>;
 
 /**
- * Секрет тенанта для сервиса из каталога. На машину агента уходит уже расшифрованным.
+ * Секрет агента для сервиса из каталога. Принадлежит тому агенту, который вошёл,
+ * и уходит только на его машину уже расшифрованным.
  */
 export const ServiceCredentialSchema = z.object({
   slug: z.string(),
@@ -70,7 +71,7 @@ export type ServiceCredential = z.infer<typeof ServiceCredentialSchema>;
 
 /**
  * Что control plane кладёт на машину агента как `services.json`:
- * весь общий каталог и секреты только его тенанта.
+ * весь общий каталог и секреты только этого агента.
  */
 export const ServicesSnapshotSchema = z.object({
   generatedAt: z.string(),

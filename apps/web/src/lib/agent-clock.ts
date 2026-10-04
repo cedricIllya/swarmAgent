@@ -1,4 +1,5 @@
 import { getAgentById } from "@swarm/agents";
+import { agentIdsWithCredentials } from "@swarm/connections";
 import { eq, schema } from "@swarm/db";
 import { db } from "@/lib/db";
 import { awakeRuntime } from "@/lib/runtime-client";
@@ -12,7 +13,7 @@ let beat = Date.now();
  * Пока сайт не спит — раз в 15 минут. После suspend таймеры замирают;
  * большой разрыв в пульсе значит, что Fly только что разбудил процесс,
  * и пропущенную проверку надо сделать сразу.
- * Агентов без секретов сервисов не будим: тику там нечего смотреть,
+ * Агентов без собственных секретов сервисов не будим: тику там нечего смотреть,
  * отложенная почта дождётся следующего письма.
  */
 async function runTicks(): Promise<void> {
@@ -20,13 +21,12 @@ async function runTicks(): Promise<void> {
   ticking = true;
   try {
     const database = db();
-    const [agents, creds] = await Promise.all([
-      database.select({ id: schema.agents.id, tenantId: schema.agents.tenantId }).from(schema.agents).where(eq(schema.agents.status, "running")),
-      database.select({ tenantId: schema.serviceCredentials.tenantId }).from(schema.serviceCredentials),
+    const [agents, withCreds] = await Promise.all([
+      database.select({ id: schema.agents.id }).from(schema.agents).where(eq(schema.agents.status, "running")),
+      agentIdsWithCredentials(database),
     ]);
-    const withCreds = new Set(creds.map((c) => c.tenantId));
     for (const row of agents) {
-      if (!withCreds.has(row.tenantId)) continue;
+      if (!withCreds.has(row.id)) continue;
       try {
         const agent = await getAgentById(database, row.id);
         if (!agent) continue;

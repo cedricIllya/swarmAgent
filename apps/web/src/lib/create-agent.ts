@@ -79,7 +79,7 @@ async function machineConfigFor(agent: AgentRow, runtimeToken: string, ownerEmai
   const openRouterApiKey = env.openRouterApiKey;
   if (!openRouterApiKey) throw new Error("OPENROUTER_API_KEY не задан");
 
-  const services = await buildSnapshot(db(), agent.tenantId);
+  const services = await buildSnapshot(db(), agent.id);
   const email = `${agent.localPart}@${agent.domain}`;
 
   const files = renderAllFiles({
@@ -167,18 +167,26 @@ export async function reconfigureAgent(agentId: string, ownerEmail: string | nul
   await updateAgent(database, agent.id, { runtimeUrl: runtimeUrlFor(agent.flyAppName) });
 }
 
-/** Разослать свежий snapshot каталога всем агентам тенанта. */
+/** Отдать агенту его snapshot: общий каталог и только его секреты. */
+export async function pushServicesToAgent(agent: AgentRow): Promise<void> {
+  const snapshot = await buildSnapshot(db(), agent.id);
+  const client = await awakeRuntime(agent);
+  if (client) await client.syncServices({ snapshot });
+}
+
+/**
+ * Каталог изменился — разослать его запущенным агентам тенанта.
+ * Каждый получает свой snapshot, чужие секреты никуда не уезжают.
+ */
 export async function pushServicesToTenant(tenantId: string): Promise<void> {
   const database = db();
-  const snapshot = await buildSnapshot(database, tenantId);
   const agents = await listAgents(database, tenantId);
   await Promise.allSettled(
     agents
       .filter((a) => a.status === "running")
       .map(async (a) => {
         const row = await getAgent(database, tenantId, a.id);
-        const client = row ? await awakeRuntime(row) : null;
-        if (client) await client.syncServices({ snapshot });
+        if (row) await pushServicesToAgent(row);
       }),
   );
 }

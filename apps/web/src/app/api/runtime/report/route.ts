@@ -3,11 +3,11 @@ import { RuntimeReportSchema } from "@swarm/contracts";
 import { upsertCredential, upsertRecipe } from "@swarm/connections";
 import { authenticateRuntime } from "@/lib/runtime-auth";
 import { db } from "@/lib/db";
-import { pushServicesToTenant } from "@/lib/create-agent";
+import { pushServicesToAgent, pushServicesToTenant } from "@/lib/create-agent";
 
 /**
  * Агент нашёл способ входа (рецепт — общий на продукт) или вошёл в сервис
- * (доступ — только его тенанта). После записи остальные агенты тенанта получают snapshot.
+ * (доступ — только его). Рецепт разлетается агентам тенанта, доступ возвращается только автору.
  */
 export async function POST(req: Request): Promise<Response> {
   const agent = await authenticateRuntime(req);
@@ -17,9 +17,10 @@ export async function POST(req: Request): Promise<Response> {
 
   if (parsed.data.type === "recipe") {
     await upsertRecipe(db(), parsed.data.recipe, agent.id);
+    after(() => pushServicesToTenant(agent.tenantId).catch((e) => console.warn(`[report] push: ${String(e)}`)));
   } else {
-    await upsertCredential(db(), agent.tenantId, parsed.data.credential, agent.id);
+    await upsertCredential(db(), { tenantId: agent.tenantId, agentId: agent.id }, parsed.data.credential);
+    after(() => pushServicesToAgent(agent).catch((e) => console.warn(`[report] push: ${String(e)}`)));
   }
-  after(() => pushServicesToTenant(agent.tenantId).catch((e) => console.warn(`[report] push: ${String(e)}`)));
   return NextResponse.json({ ok: true });
 }

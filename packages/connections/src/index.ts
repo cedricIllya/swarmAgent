@@ -85,12 +85,18 @@ export async function upsertRecipe(db: Db, recipe: ServiceRecipe, discoveredByAg
     });
 }
 
-/** Секреты тенанта. Тело расшифровывается только здесь, перед отправкой на машину. */
-export async function listCredentials(db: Db, tenantId: string): Promise<ServiceCredential[]> {
+/** Кому принадлежит доступ. Агент всегда внутри своего тенанта. */
+export interface CredentialOwner {
+  tenantId: string;
+  agentId: string;
+}
+
+/** Секреты одного агента. Тело расшифровывается только здесь, перед отправкой на его машину. */
+export async function listCredentials(db: Db, agentId: string): Promise<ServiceCredential[]> {
   const rows = await db
     .select()
     .from(schema.serviceCredentials)
-    .where(eq(schema.serviceCredentials.tenantId, tenantId));
+    .where(eq(schema.serviceCredentials.agentId, agentId));
   return rows.map((row) => {
     const body = decryptJson<Record<string, unknown>>(row.secretEnc);
     return ServiceCredentialSchema.parse({
@@ -102,47 +108,47 @@ export async function listCredentials(db: Db, tenantId: string): Promise<Service
   });
 }
 
-export async function upsertCredential(
-  db: Db,
-  tenantId: string,
-  credential: ServiceCredential,
-  connectedByAgentId: string | null,
-): Promise<void> {
+export async function upsertCredential(db: Db, owner: CredentialOwner, credential: ServiceCredential): Promise<void> {
   const parsed = ServiceCredentialSchema.parse(credential);
   const { slug, kind, accountEmail, ...secret } = parsed;
   const secretEnc = encryptJson(secret);
-  const existing = await db
-    .select({ id: schema.serviceCredentials.id })
-    .from(schema.serviceCredentials)
-    .where(and(eq(schema.serviceCredentials.tenantId, tenantId), eq(schema.serviceCredentials.slug, slug)))
-    .limit(1);
-  if (existing[0]) {
-    await db
-      .update(schema.serviceCredentials)
-      .set({ kind, secretEnc, accountEmail: accountEmail ?? null, connectedByAgentId, updatedAt: new Date() })
-      .where(eq(schema.serviceCredentials.id, existing[0].id));
-    return;
-  }
-  await db.insert(schema.serviceCredentials).values({
-    id: newId("crd"),
-    tenantId,
-    slug,
-    kind,
-    secretEnc,
-    accountEmail: accountEmail ?? null,
-    connectedByAgentId,
-  });
+  await db
+    .insert(schema.serviceCredentials)
+    .values({
+      id: newId("crd"),
+      tenantId: owner.tenantId,
+      agentId: owner.agentId,
+      slug,
+      kind,
+      secretEnc,
+      accountEmail: accountEmail ?? null,
+    })
+    .onConflictDoUpdate({
+      target: [schema.serviceCredentials.agentId, schema.serviceCredentials.slug],
+      set: { kind, secretEnc, accountEmail: accountEmail ?? null, updatedAt: new Date() },
+    });
 }
 
-export async function deleteCredential(db: Db, tenantId: string, slug: string): Promise<void> {
+export async function deleteCredential(db: Db, agentId: string, slug: string): Promise<void> {
   await db
     .delete(schema.serviceCredentials)
-    .where(and(eq(schema.serviceCredentials.tenantId, tenantId), eq(schema.serviceCredentials.slug, slug)));
+    .where(and(eq(schema.serviceCredentials.agentId, agentId), eq(schema.serviceCredentials.slug, slug)));
 }
 
-/** Что уезжает на машину агента как `services.json`. */
-export async function buildSnapshot(db: Db, tenantId: string): Promise<ServicesSnapshot> {
-  const [recipes, credentials] = await Promise.all([listRecipes(db), listCredentials(db, tenantId)]);
+/** Агенты, у которых есть хотя бы один доступ. Остальным плановый тик смотреть нечего. */
+export async function agentIdsWithCredentials(db: Db): Promise<Set<string>> {
+  const rows = await db
+    .selectDistinct({ agentId: schema.serviceCredentials.agentId })
+    .from(schema.serviceCredentials);
+  return new Set(rows.map((r) => r.agentId));
+}
+
+/**
+ * Что уезжает на машину агента как `services.json`: весь общий каталог
+ * и секреты только этого агента.
+ */
+export async function buildSnapshot(db: Db, agentId: string): Promise<ServicesSnapshot> {
+  const [recipes, credentials] = await Promise.all([listRecipes(db), listCredentials(db, agentId)]);
   return { generatedAt: new Date().toISOString(), recipes, credentials };
 }
 
