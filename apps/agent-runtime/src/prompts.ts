@@ -34,6 +34,7 @@ export function systemPrompt(ctx: PromptContext): string {
     catalog.join("\n") || "- пусто",
     "",
     "Когда нашёл новый способ входа в сервис — сообщи через POST /report (type=recipe).",
+    "MCP не регистрируй через hermes mcp и не импортируй hermes_tools: в терминале этого модуля нет. 401 от MCP — нет токена, его тоже запиши через /report.",
     "Когда вошёл в сервис и получил ключ или cookies — POST /report (type=credential).",
     "",
     "Граница ответа человеку. Источники только два: сервисы этого клиента и публичный интернет.",
