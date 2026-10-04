@@ -12,7 +12,7 @@ interface ModelOption {
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4.5";
 
-export function CreateAgentForm({ onCreated }: { onCreated: (a: Agent) => void }) {
+export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string; onCreated: (a: Agent) => void }) {
   const [name, setName] = useState("");
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [localPart, setLocalPart] = useState("");
@@ -58,7 +58,7 @@ export function CreateAgentForm({ onCreated }: { onCreated: (a: Agent) => void }
       <div className="field">
         <label className="label">Имя</label>
         <input className="input" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder="Например, Владимир Ленин" />
-        <span className="faint small">Адрес соберётся из имени: Владимир Ленин → vladimir.lenin@…</span>
+        <span className="faint small">Адрес соберётся из вашего логина и имени: Владимир Ленин → {ownerLogin}.vladimir.lenin@…</span>
       </div>
       <div className="field">
         <label className="label">Адрес вручную (необязательно)</label>

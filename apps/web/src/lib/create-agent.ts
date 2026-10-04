@@ -15,7 +15,7 @@ import {
 import { buildSnapshot } from "@swarm/connections";
 import { AGENT_VOLUME_GB, FlyClient, appNameFor, buildAgentMachineConfig, runtimeUrlFor } from "@swarm/fly";
 import { renderAllFiles } from "@swarm/hermes-config";
-import { allocateLocalPart, localPartFromName, validateLocalPart } from "@swarm/mail";
+import { allocateLocalPart, localPartForOwner, validateLocalPart } from "@swarm/mail";
 import type { TenantView } from "@swarm/identity";
 import { env } from "@/env";
 import { db } from "./db";
@@ -40,7 +40,7 @@ export async function createAgent(
     localPart = input.localPart.toLowerCase();
     if (await isAddressTaken(database, localPart, domain)) throw new Error(`Адрес ${localPart}@${domain} занят`);
   } else {
-    localPart = await allocateLocalPart(localPartFromName(input.name), (c) => isAddressTaken(database, c, domain));
+    localPart = await allocateLocalPart(localPartForOwner(owner.email, input.name), (c) => isAddressTaken(database, c, domain));
   }
 
   const { row, runtimeToken } = await insertAgent(database, {

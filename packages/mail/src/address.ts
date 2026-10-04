@@ -21,17 +21,19 @@ function transliterate(input: string): string {
   return out;
 }
 
+function toAscii(input: string): string {
+  return transliterate(input)
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 /**
  * `Владимир Ленин` → `vladimir.lenin`. Пустое имя → `agent`.
  * Слова через точку, внутри слова всё не буква-цифра → дефис.
  */
 export function localPartFromName(name: string): string {
-  const ascii = transliterate(name)
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-
-  const parts = ascii
+  const parts = toAscii(name)
     .split(/\s+/)
     .map((word) =>
       word
@@ -42,6 +44,38 @@ export function localPartFromName(name: string): string {
 
   const joined = parts.join(".");
   return joined.length > 0 ? joined : "agent";
+}
+
+/** Сколько символов локальной части остаётся под числовой суффикс при коллизии. */
+const SUFFIX_RESERVE = 4;
+const MAX_LOGIN_LENGTH = 32;
+
+/**
+ * Логин владельца из его email: `John.Doe+work@corp.com` → `john.doe`.
+ * Точки, дефисы и подчёркивания сохраняются, остальное становится дефисом. Пусто → `user`.
+ */
+export function loginFromEmail(email: string): string {
+  const at = email.indexOf("@");
+  const local = at > 0 ? email.slice(0, at) : email;
+  const plus = local.indexOf("+");
+  const login = toAscii(plus >= 0 ? local.slice(0, plus) : local)
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/[._-]{2,}/g, (m) => m[0]!)
+    .replace(/^[._-]+|[._-]+$/g, "")
+    .slice(0, MAX_LOGIN_LENGTH)
+    .replace(/[._-]+$/g, "");
+  return login.length > 0 ? login : "user";
+}
+
+/**
+ * Адрес индивидуален для владельца: `cedric@gmail.com` + `Владимир Ленин` → `cedric.vladimir.lenin`.
+ * Имя агента обрезается так, чтобы вместе с суффиксом коллизии уложиться в 64 символа.
+ */
+export function localPartForOwner(ownerEmail: string, agentName: string, maxLength = 64): string {
+  const login = loginFromEmail(ownerEmail);
+  const room = maxLength - SUFFIX_RESERVE - login.length - 1;
+  const agent = localPartFromName(agentName).slice(0, Math.max(room, 1)).replace(/[.-]+$/g, "");
+  return `${login}.${agent.length > 0 ? agent : "agent"}`;
 }
 
 /** `vladimir.lenin` + 2 → `vladimir.lenin2`. Суффикс без лишней точки. */

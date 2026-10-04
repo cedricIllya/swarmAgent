@@ -6,7 +6,7 @@ import type { Agent } from "@swarm/contracts";
 import { StatusBadge } from "./status-badge";
 import { CreateAgentForm } from "./create-agent-form";
 
-export function AgentsHome({ initialAgents }: { initialAgents: Agent[] }) {
+export function AgentsHome({ initialAgents, ownerLogin }: { initialAgents: Agent[]; ownerLogin: string }) {
   const [agents, setAgents] = useState(initialAgents);
   const [open, setOpen] = useState(initialAgents.length === 0);
 
@@ -38,6 +38,7 @@ export function AgentsHome({ initialAgents }: { initialAgents: Agent[] }) {
       {open && (
         <div className="card" style={{ marginBottom: 20 }}>
           <CreateAgentForm
+            ownerLogin={ownerLogin}
             onCreated={(a) => {
               setAgents((prev) => [a, ...prev]);
               setOpen(false);
@@ -49,7 +50,7 @@ export function AgentsHome({ initialAgents }: { initialAgents: Agent[] }) {
       {agents.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: 40 }}>
           <p className="muted" style={{ margin: 0 }}>
-            Агентов пока нет. Создайте первого — он получит адрес вида <code>name@домен</code>.
+            Агентов пока нет. Создайте первого — он получит адрес вида <code>{ownerLogin}.имя@домен</code>.
           </p>
         </div>
       ) : (

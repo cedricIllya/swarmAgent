@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   allocateLocalPart,
+  localPartForOwner,
   localPartFromName,
+  loginFromEmail,
   parseAddress,
   validateLocalPart,
   withSuffix,
@@ -20,6 +22,41 @@ describe("localPartFromName", () => {
   it("falls back to agent", () => {
     expect(localPartFromName("")).toBe("agent");
     expect(localPartFromName("   ---  ")).toBe("agent");
+  });
+});
+
+describe("loginFromEmail", () => {
+  it("takes the local part, lowercased, without plus tag", () => {
+    expect(loginFromEmail("John.Doe+work@corp.com")).toBe("john.doe");
+  });
+  it("keeps dots, hyphens and underscores, replaces the rest", () => {
+    expect(loginFromEmail("ops_bot-1@x.io")).toBe("ops_bot-1");
+    expect(loginFromEmail("иван!петров@x.io")).toBe("ivan-petrov");
+  });
+  it("collapses repeated separators and trims edges", () => {
+    expect(loginFromEmail(".a..b-@x.io")).toBe("a.b");
+  });
+  it("caps length and falls back to user", () => {
+    expect(loginFromEmail("a".repeat(50) + "@x.io")).toBe("a".repeat(32));
+    expect(loginFromEmail("+tag@x.io")).toBe("user");
+  });
+});
+
+describe("localPartForOwner", () => {
+  it("prefixes the agent name with the owner login", () => {
+    expect(localPartForOwner("cedric@gmail.com", "Владимир Ленин")).toBe("cedric.vladimir.lenin");
+  });
+  it("differs for the same agent name under different owners", () => {
+    expect(localPartForOwner("alice@x.io", "Ops")).not.toBe(localPartForOwner("bob@x.io", "Ops"));
+  });
+  it("leaves room for a collision suffix inside 64 chars", () => {
+    const got = localPartForOwner("a".repeat(40) + "@x.io", "b".repeat(80));
+    expect(got.length).toBeLessThanOrEqual(60);
+    expect(validateLocalPart(withSuffix(got, 999))).toBeNull();
+    expect(got.startsWith("a".repeat(32) + ".")).toBe(true);
+  });
+  it("falls back to agent for an empty name", () => {
+    expect(localPartForOwner("cedric@gmail.com", "   ")).toBe("cedric.agent");
   });
 });
 
