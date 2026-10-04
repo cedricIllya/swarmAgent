@@ -1,0 +1,132 @@
+import { z } from "zod";
+import { InboundEmailSchema } from "./email";
+import {
+  ServiceCredentialSchema,
+  ServiceRecipeSchema,
+  ServicesSnapshotSchema,
+} from "./services";
+import { UsageSummarySchema } from "./usage";
+
+/**
+ * HTTP между control plane и agent-runtime на машине агента.
+ * Все запросы с заголовком `Authorization: Bearer <RUNTIME_TOKEN>`.
+ */
+
+export const DeliverEmailRequestSchema = z.object({
+  email: InboundEmailSchema,
+});
+
+export const ChatRequestSchema = z.object({
+  message: z.string().min(1),
+  /** Кто написал, чтобы runtime знал, что это владелец. */
+  author: z.string(),
+});
+
+export const UpdateSettingsRequestSchema = z.object({
+  autonomous: z.boolean().optional(),
+  model: z.string().optional(),
+});
+
+export const SyncServicesRequestSchema = z.object({
+  snapshot: ServicesSnapshotSchema,
+});
+
+export const GoogleTokenRequestSchema = z.object({
+  /** Содержимое google_token.json в формате google-workspace скилла Hermes. */
+  token: z.record(z.string(), z.unknown()),
+});
+
+export const RunStatus = z.enum(["queued", "running", "waiting_approval", "done", "failed"]);
+
+export const RunSchema = z.object({
+  id: z.string(),
+  startedAt: z.string(),
+  finishedAt: z.string().nullable(),
+  status: RunStatus,
+  /** Откуда пришла задача. */
+  trigger: z.enum(["email", "chat", "cron", "approval"]),
+  title: z.string(),
+  /** Короткий итог для списка. */
+  summary: z.string(),
+  threadId: z.string().nullable(),
+});
+
+export const RunStepSchema = z.object({
+  at: z.string(),
+  kind: z.enum(["model", "tool", "mcp", "api", "browser", "email", "note", "error"]),
+  text: z.string(),
+  data: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const BrowserSessionSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  startedAt: z.string(),
+  finishedAt: z.string().nullable(),
+  provider: z.enum(["browserbase", "skyvern"]),
+  purpose: z.string(),
+  hasVideo: z.boolean(),
+});
+
+export const ChatMessageSchema = z.object({
+  at: z.string(),
+  role: z.enum(["user", "agent"]),
+  text: z.string(),
+  runId: z.string().nullable(),
+});
+
+export const PendingApprovalSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  createdAt: z.string(),
+  /** Что именно собираемся изменить. */
+  description: z.string(),
+  /** Message-ID письма с вопросом, чтобы узнать «да/нет» в ответе. */
+  emailMessageId: z.string().nullable(),
+});
+
+export const RuntimeStateSchema = z.object({
+  agentId: z.string(),
+  email: z.string(),
+  model: z.string(),
+  autonomous: z.boolean(),
+  busyInBrowser: z.boolean(),
+  pendingApprovals: z.array(PendingApprovalSchema),
+  runs: z.array(RunSchema),
+  chat: z.array(ChatMessageSchema),
+  browserSessions: z.array(BrowserSessionSchema),
+  usage: UsageSummarySchema,
+  /** Подключения, которые этот runtime реально проверил и использует. */
+  connectedServices: z.array(
+    z.object({
+      slug: z.string(),
+      name: z.string(),
+      kind: z.enum(["mcp", "api", "browser"]),
+      hasCredential: z.boolean(),
+    }),
+  ),
+});
+
+export type DeliverEmailRequest = z.infer<typeof DeliverEmailRequestSchema>;
+export type ChatRequest = z.infer<typeof ChatRequestSchema>;
+export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsRequestSchema>;
+export type SyncServicesRequest = z.infer<typeof SyncServicesRequestSchema>;
+export type GoogleTokenRequest = z.infer<typeof GoogleTokenRequestSchema>;
+export type Run = z.infer<typeof RunSchema>;
+export type RunStatus = z.infer<typeof RunStatus>;
+export type RunStep = z.infer<typeof RunStepSchema>;
+export type BrowserSession = z.infer<typeof BrowserSessionSchema>;
+export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+export type PendingApproval = z.infer<typeof PendingApprovalSchema>;
+export type RuntimeState = z.infer<typeof RuntimeStateSchema>;
+
+/**
+ * Что runtime сообщает обратно control plane, когда нашёл новый способ входа
+ * или вошёл в сервис. Эндпоинт в web: `POST /api/runtime/report`.
+ */
+export const RuntimeReportSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("recipe"), recipe: ServiceRecipeSchema }),
+  z.object({ type: z.literal("credential"), credential: ServiceCredentialSchema }),
+]);
+
+export type RuntimeReport = z.infer<typeof RuntimeReportSchema>;
