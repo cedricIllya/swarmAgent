@@ -395,7 +395,24 @@ function UsageCard({ state }: { state: RuntimeState | null }) {
   );
 }
 
+const ACTION_LABEL: Record<string, string> = {
+  "hermes.turn": "работа агента",
+  "hermes.tick": "обход сервисов",
+  "hermes.approval": "после решения человека",
+  "stagehand.llm": "браузер",
+  "classify.email": "разбор письма",
+  "classify.email.in-browser": "разбор письма во время браузера",
+};
+
+function actionLabel(action: string): string {
+  return ACTION_LABEL[action] ?? action.replace(/[._]/g, " ");
+}
+
 function TaskRows({ task }: { task: UsageByTask }) {
+  // Уже работающие машины собраны со старым runtime: у действия может не быть `details`.
+  const notes = (action: UsageByTask["actions"][number]) => action.details ?? [];
+  // Одно действие без заметок агента повторило бы строку задачи — показываем только итог.
+  const breakdown = task.actions.length > 1 || task.actions.some((a) => notes(a).length > 0);
   return (
     <>
       <tr>
@@ -405,15 +422,25 @@ function TaskRows({ task }: { task: UsageByTask }) {
         <td className="num">{task.completionTokens.toLocaleString("ru-RU")}</td>
         <td className="num">{usd(task.costUsd)}</td>
       </tr>
-      {task.actions.map((a) => (
-        <tr key={a.action} className="sub">
-          <td>{a.action}</td>
-          <td className="num">{a.calls}</td>
-          <td className="num">{a.promptTokens.toLocaleString("ru-RU")}</td>
-          <td className="num">{a.completionTokens.toLocaleString("ru-RU")}</td>
-          <td className="num">{usd(a.costUsd)}</td>
-        </tr>
-      ))}
+      {breakdown &&
+        task.actions.map((a) => (
+          <tr key={a.action} className="sub">
+            <td>
+              {actionLabel(a.action)}
+              {notes(a).length > 0 && (
+                <ul className="subtasks">
+                  {notes(a).map((d, i) => (
+                    <li key={i}>{d}</li>
+                  ))}
+                </ul>
+              )}
+            </td>
+            <td className="num">{a.calls}</td>
+            <td className="num">{a.promptTokens.toLocaleString("ru-RU")}</td>
+            <td className="num">{a.completionTokens.toLocaleString("ru-RU")}</td>
+            <td className="num">{usd(a.costUsd)}</td>
+          </tr>
+        ))}
     </>
   );
 }

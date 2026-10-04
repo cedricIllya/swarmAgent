@@ -399,6 +399,18 @@ code,
   color: var(--text-muted);
   padding-left: 28px;
   font-size: 13px;
+  vertical-align: top;
+}
+.subtasks {
+  margin: 4px 0 0;
+  padding: 0 0 0 14px;
+  border-left: 2px solid var(--border);
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  word-break: break-word;
 }
 
 .steps {

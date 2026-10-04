@@ -9,7 +9,7 @@ import { ManagedBrowserSession, type BrowserDeps } from "./browser/stagehand";
 import { SkyvernClient } from "./browser/skyvern";
 import { approvalContinuationPrompt, systemPrompt } from "./prompts";
 import { redactInternal } from "./redact";
-import { recordUsage, type TaskRef } from "./usage";
+import { recordUsage, turnDetails, type TaskRef } from "./usage";
 import type { RuntimeConfig } from "./config";
 import { log, warn } from "./log";
 
@@ -105,9 +105,11 @@ export class AgentRuntime {
       runtimePort: this.cfg.port,
       services,
     });
+    const startedAt = new Date().toISOString();
     await this.step(run.id, "model", "запрос модели", { chars: prompt.length });
     const r = await this.hermes.run(prompt, { sessionId: run.threadId ?? run.id, system, model: this.model });
-    await recordUsage(this.store, this.taskRef(run), action, "hermes", r);
+    const details = turnDetails(await this.store.listSteps(run.id), startedAt);
+    await recordUsage(this.store, this.taskRef(run), action, "hermes", r, details);
     const text = redactInternal(r.text);
     await this.step(run.id, "model", text.slice(0, 4000), {
       promptTokens: r.promptTokens,

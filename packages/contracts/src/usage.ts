@@ -15,6 +15,8 @@ export const UsageRecordSchema = z.object({
   completionTokens: z.number().int().nonnegative(),
   /** Доллары, как их вернул OpenRouter. */
   costUsd: z.number().nonnegative(),
+  /** Что агент успел сделать за этот вызов, по его же заметкам в журнале задачи. */
+  details: z.array(z.string()).optional(),
 });
 
 export type UsageRecord = z.infer<typeof UsageRecordSchema>;
@@ -25,6 +27,8 @@ export const UsageByActionSchema = z.object({
   promptTokens: z.number().int(),
   completionTokens: z.number().int(),
   costUsd: z.number(),
+  /** Старый runtime это поле не присылает. */
+  details: z.array(z.string()).default([]),
 });
 
 export const UsageByTaskSchema = z.object({

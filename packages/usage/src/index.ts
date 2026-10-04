@@ -39,6 +39,9 @@ export function parseUsageJsonl(text: string): UsageRecord[] {
   return out;
 }
 
+/** Сколько заметок агента показываем под одним действием, чтобы таблица не разрасталась. */
+export const MAX_DETAILS = 12;
+
 export function summarizeUsage(records: UsageRecord[]): UsageSummary {
   const tasks = new Map<string, UsageByTask & { byAction: Map<string, UsageByAction> }>();
   let totalCostUsd = 0;
@@ -72,13 +75,17 @@ export function summarizeUsage(records: UsageRecord[]): UsageSummary {
 
     let action = task.byAction.get(r.action);
     if (!action) {
-      action = { action: r.action, calls: 0, promptTokens: 0, completionTokens: 0, costUsd: 0 };
+      action = { action: r.action, calls: 0, promptTokens: 0, completionTokens: 0, costUsd: 0, details: [] };
       task.byAction.set(r.action, action);
     }
     action.calls += 1;
     action.promptTokens += r.promptTokens;
     action.completionTokens += r.completionTokens;
     action.costUsd += r.costUsd;
+    for (const d of r.details ?? []) {
+      if (action.details.length >= MAX_DETAILS) break;
+      if (!action.details.includes(d)) action.details.push(d);
+    }
   }
 
   const list: UsageByTask[] = [...tasks.values()]

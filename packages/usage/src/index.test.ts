@@ -25,5 +25,16 @@ describe("usage", () => {
     expect(s.tasks[0]?.taskId).toBe("a");
     expect(s.tasks[0]?.actions[0]?.action).toBe("stagehand.act");
     expect(s.tasks[0]?.calls).toBe(2);
+    expect(s.tasks[0]?.actions[0]?.details).toEqual([]);
+  });
+
+  it("collects distinct agent details per action", () => {
+    const base = { at: "t", taskId: "a", taskTitle: "A", action: "hermes.turn", source: "hermes", model: "m", promptTokens: 1, completionTokens: 1, costUsd: 0 };
+    const s = summarizeUsage([
+      { ...base, details: ["вошёл в Linear", "нашёл 3 задачи"] },
+      { ...base, details: ["нашёл 3 задачи", "создал задачу X"] },
+      { ...base },
+    ] as never);
+    expect(s.tasks[0]?.actions[0]?.details).toEqual(["вошёл в Linear", "нашёл 3 задачи", "создал задачу X"]);
   });
 });
