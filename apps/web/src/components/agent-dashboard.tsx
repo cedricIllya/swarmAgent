@@ -116,8 +116,13 @@ function ChatCard({ agent, state, onChanged }: { agent: Agent; state: RuntimeSta
   const [autonomous, setAutonomous] = useState(agent.autonomous);
   const bottom = useRef<HTMLDivElement>(null);
 
-  useEffect(() => setAutonomous(agent.autonomous), [agent.autonomous]);
-  useEffect(() => bottom.current?.scrollIntoView({ block: "end" }), [state?.chat.length]);
+  useEffect(() => {
+    setAutonomous(agent.autonomous);
+  }, [agent.autonomous]);
+  // В Chrome scrollIntoView возвращает Promise: если отдать его из эффекта, React вызовет его как cleanup.
+  useEffect(() => {
+    void bottom.current?.scrollIntoView({ block: "end" });
+  }, [state?.chat.length]);
 
   async function send(e: FormEvent) {
     e.preventDefault();
