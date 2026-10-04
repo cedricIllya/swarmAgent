@@ -6,13 +6,14 @@ import { ControlPlaneClient } from "./control-plane";
 import { HermesClient } from "./hermes";
 import { OpenRouterClient, type WebCitation } from "./openrouter";
 import { Store } from "./store";
-import { ManagedBrowserSession, type BrowserDeps } from "./browser/stagehand";
+import { ManagedBrowserSession, ensureContext, type BrowserDeps } from "./browser/stagehand";
 import { SkyvernClient } from "./browser/skyvern";
+import { acceptInvite, type AcceptInviteResult } from "./browser/invite";
 import { approvalContinuationPrompt, systemPrompt } from "./prompts";
 import { redactInternal } from "./redact";
 import { recordUsage, turnDetails, type TaskRef } from "./usage";
 import { discoverService, fetchPage, type DiscoveryInput, type DiscoveryResult, type FetchedPage } from "./discovery";
-import { matchRecipe } from "./domains";
+import { hostOf, matchRecipe, rootDomain } from "./domains";
 import { syncHermesMcp } from "./hermes-config-sync";
 import type { RuntimeConfig } from "./config";
 import { log, warn } from "./log";
@@ -250,12 +251,89 @@ export class AgentRuntime {
     await this.step(meta.runId, "browser", "браузер закрыт", { sessionId, hasVideo: meta.hasVideo });
   }
 
-  /** Код или ссылка из письма — в ту сессию, которая ждёт. */
+  /**
+   * Код или ссылка из письма — в ту сессию, которая ждёт. Если никто не ждёт, но сессия
+   * открыта, код придерживается для её ближайшего `wait-code`: письмо часто приходит
+   * раньше, чем страница с полем для кода успевает загрузиться.
+   */
   deliverCodeToBrowser(v: { kind: "code" | "link"; value: string }): boolean {
     for (const s of this.sessions.values()) {
       if (s.waitingForCode && s.deliverCode(v)) return true;
     }
-    return false;
+    const latest = [...this.sessions.values()].at(-1);
+    if (!latest) return false;
+    latest.stashCode(v);
+    return true;
+  }
+
+  get browserAvailable(): boolean {
+    return this.bb !== null;
+  }
+
+  /**
+   * Принять приглашение и зарегистрироваться под почтой агента. Сессия идёт в постоянном
+   * контексте сервиса, поэтому cookies останутся для следующих заходов. После входа
+   * записываем доступ (`type=credential`), а если рецепта ещё нет — минимальный браузерный.
+   */
+  async acceptInvite(run: Run, args: { url: string; slug: string; service: string }): Promise<AcceptInviteResult> {
+    const snap = await this.store.readServices();
+    const existing = snap?.credentials.find((c) => c.slug === args.slug) ?? null;
+    const session = await this.openBrowser(run, { purpose: `принять приглашение в ${args.service}`, serviceSlug: args.slug });
+    let result: AcceptInviteResult;
+    try {
+      result = await acceptInvite(session, {
+        url: args.url,
+        service: args.service,
+        agentName: this.cfg.agentName,
+        email: this.cfg.email,
+        password: existing?.password ?? null,
+        onStep: (text, data) => this.step(run.id, "browser", text, data),
+      });
+    } finally {
+      await this.closeBrowser(session.id);
+    }
+
+    if (result.status !== "accepted") {
+      await this.step(run.id, "note", `приглашение в ${args.service} не принято: ${result.notes}`);
+      return result;
+    }
+
+    const recipeKnown = snap?.recipes.some((r) => r.slug === args.slug) ?? false;
+    if (!recipeKnown) {
+      let appUrl = result.finalUrl;
+      try {
+        appUrl = new URL(result.finalUrl || args.url).origin + "/";
+      } catch {
+        appUrl = args.url;
+      }
+      await this.applyReport({
+        type: "recipe",
+        runId: run.id,
+        recipe: {
+          slug: args.slug,
+          name: args.service,
+          kind: "browser",
+          domains: [rootDomain(hostOf(args.url))],
+          browser: { loginUrl: args.url, appUrl },
+          notes: "Вход по приглашению в браузере; MCP и API не искали или не нашли.",
+          discoveredBy: this.cfg.agentId,
+        },
+      });
+    }
+    const contextId = await ensureContext(this.browserDeps(), args.slug);
+    await this.applyReport({
+      type: "credential",
+      runId: run.id,
+      credential: {
+        ...(existing ?? {}),
+        slug: args.slug,
+        kind: existing?.kind ?? "browser",
+        accountEmail: result.accountEmail,
+        ...(result.password ? { password: result.password } : {}),
+        storageState: { provider: "browserbase", contextId },
+      },
+    });
+    return result;
   }
 
   // Settings / services

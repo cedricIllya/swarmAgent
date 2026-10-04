@@ -1,12 +1,11 @@
-import type { InboundEmail, Run } from "@swarm/contracts";
+import type { InboundEmail } from "@swarm/contracts";
 import { classifyReply, findDigitCode, matchesThread } from "./approval";
-import { hostOf } from "./domains";
+import { prepareOnboarding } from "./onboarding";
 import {
   EMAIL_CLASSIFY_SCHEMA,
   classifyEmailPrompt,
   emailTaskPrompt,
   type EmailClassification,
-  type OnboardingContext,
 } from "./prompts";
 import type { AgentRuntime } from "./runtime";
 import { recordUsage } from "./usage";
@@ -36,16 +35,37 @@ export async function processEmail(rt: AgentRuntime, email: InboundEmail): Promi
     return;
   }
 
-  if (rt.busyInBrowser) {
-    const owner = ownerAddress(rt);
-    const fromOwner = owner !== null && bareAddress(email.from) === owner;
-    if (!fromOwner) {
-      await handleWhileInBrowser(rt, email);
+  const owner = ownerAddress(rt);
+  const fromOwner = owner !== null && bareAddress(email.from) === owner;
+
+  if (rt.busyInBrowser && !fromOwner) {
+    await handleWhileInBrowser(rt, email);
+    return;
+  }
+
+  // Браузер открыт, но код ещё не просил (страница с полем только грузится):
+  // код или ссылку придерживаем для сессии, остальная почта идёт обычным путём.
+  let known: EmailClassification | null = null;
+  if (rt.sessions.size > 0 && !fromOwner) {
+    const code = findDigitCode(`${email.subject}\n${email.replyText || email.text}`);
+    if (code) {
+      rt.deliverCodeToBrowser({ kind: "code", value: code });
+      log("inbox", "код из письма придержан для открытой сессии");
+      return;
+    }
+    known = await classifyEmail(rt, email, "classify.email.browser-open");
+    if (known.kind === "verification" && known.hasLoginLink && email.links.length > 0) {
+      rt.deliverCodeToBrowser({ kind: "link", value: pickLoginLink(email.links) });
+      log("inbox", "ссылка для входа придержана для открытой сессии");
       return;
     }
   }
 
-  await handleNewEmail(rt, email);
+  await handleNewEmail(rt, email, known);
+}
+
+function pickLoginLink(links: string[]): string {
+  return links.find((l) => /verify|confirm|magic|login|signin|auth|token/i.test(l)) ?? links[0]!;
 }
 
 async function handleThreadReply(
@@ -88,16 +108,15 @@ async function handleWhileInBrowser(rt: AgentRuntime, email: InboundEmail): Prom
 
   const c = await classifyEmail(rt, email, "classify.email.in-browser");
   if (c.kind === "verification" && c.hasLoginLink && email.links.length > 0) {
-    const link = email.links.find((l) => /verify|confirm|magic|login|signin|auth|token/i.test(l)) ?? email.links[0]!;
-    const delivered = rt.deliverCodeToBrowser({ kind: "link", value: link });
+    const delivered = rt.deliverCodeToBrowser({ kind: "link", value: pickLoginLink(email.links) });
     log("inbox", "ссылка для входа в браузер", { delivered });
     return;
   }
   log("inbox", "письмо отложено до конца работы в браузере", { subject: email.subject });
 }
 
-async function handleNewEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> {
-  const c = await classifyEmail(rt, email, "classify.email");
+async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: EmailClassification | null = null): Promise<void> {
+  const c = known ?? (await classifyEmail(rt, email, "classify.email"));
   log("inbox", "письмо классифицировано", { kind: c.kind, service: c.service });
 
   if (c.kind === "notification" || c.kind === "other" || c.kind === "verification") {
@@ -110,7 +129,15 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail): Promise<vo
   const run = await rt.createRun("email", email.subject || (c.kind === "invite" ? "Приглашение" : "Задача"), email.messageId);
   await rt.step(run.id, "email", `${c.kind} от ${email.from}`, { service: c.service, domain: c.serviceDomain });
   try {
-    const onboarding = c.kind === "invite" ? await prepareOnboarding(rt, run, email, c) : undefined;
+    const onboarding =
+      c.kind === "invite"
+        ? await prepareOnboarding(rt, run, {
+            service: c.service,
+            domain: c.serviceDomain,
+            links: email.links,
+            extraHosts: email.dkimDomains,
+          })
+        : undefined;
     const text = await rt.think(run, emailTaskPrompt(email, c.kind, onboarding));
     const current = await rt.store.getRun(run.id);
     if (current?.status === "waiting_approval") return;
@@ -120,28 +147,6 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail): Promise<vo
     warn("inbox", "задача упала", { error: String(e) });
     await rt.step(run.id, "error", String(e));
     await rt.finishRun(run, "failed", String(e));
-  }
-}
-
-/**
- * Приглашение: рецепт из каталога по доменам ссылок и DKIM, иначе runtime сам ищет
- * MCP и документацию, чтобы модель начинала ход уже со способом входа.
- */
-async function prepareOnboarding(
-  rt: AgentRuntime,
-  run: Run,
-  email: InboundEmail,
-  c: EmailClassification,
-): Promise<OnboardingContext> {
-  const hosts = [...email.links.map(hostOf), ...email.dkimDomains, c.serviceDomain ?? ""].filter(Boolean);
-  const recipe = await rt.knownRecipe(hosts);
-  if (recipe) return { recipe: { slug: recipe.slug, name: recipe.name, kind: recipe.kind }, discovery: null };
-  try {
-    const discovery = await rt.discover(run, { service: c.service, domain: c.serviceDomain, links: email.links });
-    return { recipe: null, discovery };
-  } catch (e) {
-    warn("inbox", "поиск сервиса не удался", { error: String(e) });
-    return { recipe: null, discovery: null };
   }
 }
 

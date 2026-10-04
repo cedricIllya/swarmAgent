@@ -1,5 +1,6 @@
 import type { InboundEmail, ServicesSnapshot } from "@swarm/contracts";
 import type { DiscoveryResult } from "./discovery";
+import type { OnboardingContext } from "./onboarding";
 
 export interface KnownRecipeRef {
   slug: string;
@@ -7,24 +8,55 @@ export interface KnownRecipeRef {
   kind: string;
 }
 
-/**
- * Что онбординг знает о сервисе до первого хода модели: рецепт из каталога
- * или итог поиска документации. Пусто — модель ищет сама через /discover.
- */
-export interface OnboardingContext {
-  recipe: KnownRecipeRef | null;
-  discovery: DiscoveryResult | null;
+const EMPTY_ONBOARDING: OnboardingContext = { recipe: null, discovery: null, inviteUrl: null, invite: null, inviteSkipped: null };
+
+/** Шаг 0 онбординга: принято ли приглашение и есть ли аккаунт под почтой агента. */
+function invitePrompt(ctx: OnboardingContext, slug: string | null): string {
+  const inv = ctx.invite;
+  if (inv?.status === "accepted") {
+    return [
+      `Шаг 0 выполнен: приглашение принято, аккаунт ${inv.accountEmail} зарегистрирован${inv.password ? ", пароль сохранён в доступе" : ""}.`,
+      `Cookies сохранены${slug ? `: /browser/open с serviceSlug "${slug}" продолжит уже вошедшим` : ""}. Заново регистрироваться не нужно.`,
+    ].join(" ");
+  }
+  if (inv) {
+    const how = inv.status === "needs_human" ? "нужна помощь" : "не удалось";
+    return [
+      `Шаг 0 не завершён: принять приглашение автоматически ${how} — ${inv.notes}.`,
+      ctx.inviteUrl ? `Ссылка приглашения: ${ctx.inviteUrl}.` : "",
+      slug
+        ? `Продолжи сам в браузере: /browser/open с serviceSlug "${slug}" и этой ссылкой, коды придут через /browser/wait-code. Если нужна капча или решение владельца — спроси его.`
+        : "Продолжи сам в браузере через runtime; если нужна капча или решение владельца — спроси его.",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (ctx.inviteUrl) {
+    return [
+      `Шаг 0 ещё не сделан (${ctx.inviteSkipped ?? "не запускался"}): сначала прими приглашение по ссылке ${ctx.inviteUrl} под своей почтой —`,
+      "POST /invite/accept с runId, url, slug и названием сервиса. Только после входа переходи к подключению.",
+    ].join(" ");
+  }
+  return "Шаг 0: в приглашении нет ссылки. Если сервис требует принять приглашение — попроси у отправителя ссылку, иначе переходи к подключению.";
 }
 
-export function onboardingPrompt(ctx: OnboardingContext): string {
-  if (ctx.recipe) {
-    return `В каталоге уже есть рецепт «${ctx.recipe.name}» (${ctx.recipe.slug}), способ ${ctx.recipe.kind}. Не ищи способ заново: входи по нему.`;
-  }
+export function onboardingPrompt(ctx: OnboardingContext = EMPTY_ONBOARDING): string {
   const d = ctx.discovery;
-  if (!d) {
-    return "Сервиса нет в каталоге. Сначала вызови POST /discover с runId, названием, доменом и ссылками: он найдёт MCP, документацию и способ входа. Дальше — по его ответу.";
+  const slug = ctx.recipe?.slug ?? d?.slug ?? null;
+  const head = invitePrompt(ctx, slug);
+  if (ctx.recipe) {
+    return [
+      head,
+      `Шаг 1: в каталоге уже есть рецепт «${ctx.recipe.name}» (${ctx.recipe.slug}), способ ${ctx.recipe.kind}. Не ищи способ заново: подключайся по нему и запиши свой доступ через /report (type=credential).`,
+    ].join("\n");
   }
-  const lines = [`Сервиса «${d.service}» в каталоге не было. Runtime уже поискал документацию${d.domain ? ` по домену ${d.domain}` : ""}:`];
+  if (!d) {
+    return [
+      head,
+      "Шаг 1: сервиса нет в каталоге. Вызови POST /discover с runId, названием, доменом и ссылками: он найдёт MCP, документацию и способ входа. Дальше — по его ответу.",
+    ].join("\n");
+  }
+  const lines = [head, `Шаг 1: сервиса «${d.service}» в каталоге не было. Runtime уже поискал документацию${d.domain ? ` по домену ${d.domain}` : ""}:`];
   if (d.mcp) {
     const auth = d.mcp.auth === "none" ? "без токена" : d.mcp.auth === "oauth" ? "нужна OAuth-авторизация" : "нужен bearer-токен";
     lines.push(
@@ -51,7 +83,7 @@ export function onboardingPrompt(ctx: OnboardingContext): string {
   if (d.draftRecipe && !d.confirmed) {
     lines.push("- Черновик рецепта для /report (type=recipe), после проверки:", JSON.stringify(d.draftRecipe));
   }
-  lines.push("Иди по лестнице MCP → API → браузер с этими данными. Если чего-то не хватает — POST /web/search или /docs/fetch.");
+  lines.push("Шаг 2: подключайся по лестнице MCP → API → браузер с этими данными, уже под своим аккаунтом. Если чего-то не хватает — POST /web/search или /docs/fetch.");
   return lines.join("\n");
 }
 
@@ -77,8 +109,9 @@ export function systemPrompt(ctx: PromptContext): string {
       ? "Режим: все действия без человека разрешены. Одобрения не спрашивай."
       : "Режим: перед изменениями в чужих системах (создать, удалить, отправить, оплатить) спроси одобрение через POST /approval. Чтение — свободно.",
     "",
+    "Приглашение в сервис — сначала прими его и зарегистрируйся под своей почтой (runtime делает это сам или по POST /invite/accept), и только потом подключайся.",
     "Подключение к сервису — всегда лестница: 1) MCP, 2) API, 3) браузер. Браузер — только если первых двух нет.",
-    "Skyvern — только регистрация и вход. Действия внутри сервиса — Stagehand через локальный runtime.",
+    "Регистрация и вход — через runtime (/invite/accept или /browser/open + /browser/wait-code: коды из писем приходят туда). Skyvern — только когда код с почты не нужен. Действия внутри сервиса — Stagehand через локальный runtime.",
     "Всегда следуй скиллу swarm-worker. Он описывает локальные эндпоинты runtime:",
     `http://127.0.0.1:${ctx.runtimePort} с заголовком Authorization: Bearer $SWARM_RUNTIME_TOKEN.`,
     "",
@@ -116,8 +149,8 @@ export function emailTaskPrompt(email: InboundEmail, kind: string, onboarding?: 
     "",
     kind === "invite"
       ? [
-          "Это приглашение в сервис. Онбордись по лестнице MCP → API → браузер. После входа сообщи рецепт и доступ через /report, затем посмотри, есть ли для тебя задачи.",
-          onboardingPrompt(onboarding ?? { recipe: null, discovery: null }),
+          "Это приглашение в сервис. Порядок: 0) принять приглашение и зарегистрироваться под своей почтой, 1) найти способ подключения, 2) подключиться по лестнице MCP → API → браузер, сообщить рецепт и доступ через /report, 3) посмотреть, есть ли для тебя задачи.",
+          onboardingPrompt(onboarding),
         ].join("\n")
       : "Выполни то, что просят, и подготовь ответ отправителю.",
     "В тексте для человека — только его сервис и публичный интернет, без устройства Swarm.",
@@ -178,7 +211,7 @@ export function chatTaskPrompt(args: {
   kind: ChatClassification["kind"];
   links: string[];
   recipe: KnownRecipeRef | null;
-  discovery?: DiscoveryResult | null;
+  onboarding?: OnboardingContext | undefined;
 }): string {
   const head = `Сообщение из чата от ${args.author}:\n\n${args.message}`;
   const links = args.links.length ? `\n\nСсылки:\n${args.links.map((l) => `- ${l}`).join("\n")}` : "";
@@ -190,8 +223,8 @@ export function chatTaskPrompt(args: {
       head,
       links,
       "",
-      "Это приглашение в сервис. Онбордись по лестнице MCP → API → браузер. После входа сообщи рецепт и доступ через /report, затем посмотри, есть ли для тебя задачи.",
-      onboardingPrompt({ recipe: args.recipe, discovery: args.discovery ?? null }),
+      "Это приглашение в сервис. Порядок: 0) принять приглашение и зарегистрироваться под своей почтой, 1) найти способ подключения, 2) подключиться по лестнице MCP → API → браузер, сообщить рецепт и доступ через /report, 3) посмотреть, есть ли для тебя задачи.",
+      onboardingPrompt(args.onboarding ?? { ...EMPTY_ONBOARDING, recipe: args.recipe }),
       "Ответ человеку — только его сервис и публичный интернет, без устройства Swarm. Секрет в ответ не копируй.",
     ].join("\n");
   }

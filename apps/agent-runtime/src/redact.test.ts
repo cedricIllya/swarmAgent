@@ -13,6 +13,12 @@ describe("redactInternal", () => {
     expect(out).not.toMatch(/127\.0\.0\.1|internal|flycast|\/opt\/data|SWARM_RUNTIME_TOKEN|API_SERVER_KEY|Bearer/i);
   });
 
+  it("masks a quoted account password", () => {
+    const out = redactInternal('Доступ: {"slug":"acme","password":"Qw3rty!A9","accountEmail":"a@b.c"}');
+    expect(out).not.toContain("Qw3rty!A9");
+    expect(out).toContain('"password":"***"');
+  });
+
   it("keeps an ordinary answer", () => {
     expect(redactInternal("Создал задачу «Отчёт» в Linear.")).toBe("Создал задачу «Отчёт» в Linear.");
   });

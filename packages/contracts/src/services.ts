@@ -65,6 +65,8 @@ export const ServiceCredentialSchema = z.object({
   storageState: z.unknown().optional(),
   /** Логин аккаунта сервиса, который завёл агент. */
   accountEmail: z.string().optional(),
+  /** Пароль аккаунта, который агент сам задал при регистрации по приглашению. */
+  password: z.string().optional(),
 });
 
 export type ServiceCredential = z.infer<typeof ServiceCredentialSchema>;

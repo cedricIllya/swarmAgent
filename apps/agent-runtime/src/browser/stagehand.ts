@@ -27,6 +27,8 @@ export interface BrowserDeps {
   store: Store;
 }
 
+const PENDING_CODE_TTL_MS = 10 * 60 * 1000;
+
 /** Ожидание кода из письма: одна сессия — один ожидающий. */
 interface CodeWaiter {
   resolve: (value: { kind: "code" | "link"; value: string }) => void;
@@ -44,6 +46,8 @@ export class ManagedBrowserSession {
   private stagehand: Stagehand | null = null;
   private browser: Awaited<ReturnType<typeof browserbase.connect>> | null = null;
   private waiter: CodeWaiter | null = null;
+  /** Код пришёл письмом раньше, чем сессия его попросила: держим недолго. */
+  private pendingCode: { value: { kind: "code" | "link"; value: string }; at: number } | null = null;
   private closed = false;
 
   constructor(
@@ -184,6 +188,12 @@ export class ManagedBrowserSession {
    * с кодом приходит тем же процессом.
    */
   waitForCode(timeoutMs: number): Promise<{ kind: "code" | "link"; value: string } | null> {
+    if (this.pendingCode && Date.now() - this.pendingCode.at < PENDING_CODE_TTL_MS) {
+      const v = this.pendingCode.value;
+      this.pendingCode = null;
+      return Promise.resolve(v);
+    }
+    this.pendingCode = null;
     if (this.waiter) clearTimeout(this.waiter.timer);
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -211,6 +221,13 @@ export class ManagedBrowserSession {
     this.action({ type: "code-from-email", kind: v.kind }).catch(() => undefined);
     this.waiter.resolve(v);
     return true;
+  }
+
+  /** Сессия открыта, но код ещё не просила: следующий `waitForCode` получит его сразу. */
+  stashCode(v: { kind: "code" | "link"; value: string }): void {
+    if (this.closed) return;
+    this.pendingCode = { value: v, at: Date.now() };
+    this.action({ type: "code-from-email", kind: v.kind, stashed: true }).catch(() => undefined);
   }
 
   async close(): Promise<BrowserSession> {
@@ -260,7 +277,7 @@ function stripFence(text: string): string {
  * Browserbase Context хранит cookies между сессиями. Один контекст на сервис,
  * id лежит в `browser-profiles/<slug>.json` на volume этого агента.
  */
-async function ensureContext(deps: BrowserDeps, slug: string): Promise<string> {
+export async function ensureContext(deps: BrowserDeps, slug: string): Promise<string> {
   const file = path.join(deps.store.dir("browser-profiles"), `${slug}.json`);
   try {
     const saved = JSON.parse(await readFile(file, "utf8")) as { contextId: string };

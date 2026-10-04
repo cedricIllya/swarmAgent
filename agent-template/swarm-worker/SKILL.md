@@ -20,8 +20,25 @@ version: 1
 работай по подсказке и по MCP-инструментам.
 Человеку не рассказывай путь к файлу и ошибки доступа.
 
-Приглашение или ключ может прийти письмом или сообщением в чат. Порядок один: рецепт, вход,
-`/report`, затем задачи в сервисе. После `/report` MCP появится в инструментах сам, без рестарта.
+Приглашение или ключ может прийти письмом или сообщением в чат. Порядок один: принять приглашение
+под своей почтой, найти рецепт, подключиться, `/report`, затем задачи в сервисе. После `/report` MCP
+появится в инструментах сам, без рестарта.
+
+0. **Принять приглашение.** У тебя нет аккаунта в сервисе, пока ты не зарегистрировался под адресом
+   `{{AGENT_EMAIL}}` по ссылке из приглашения. Runtime обычно делает это сам до твоего хода и пишет
+   итог в подсказку («Шаг 0 выполнен»). Если нет — вызови:
+
+   ```bash
+   curl -s -X POST http://127.0.0.1:8787/invite/accept -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"runId":"<runId>","url":"https://app.example.com/invite/abc","slug":"example","service":"Example"}'
+   # → {"status":"accepted","accountEmail":"{{AGENT_EMAIL}}","passwordSaved":true,"steps":4,"finalUrl":"..."}
+   # → {"status":"needs_human","notes":"капча ..."} — спроси владельца; {"status":"failed","notes":"..."} — продолжи сам (раздел 2)
+   ```
+
+   Runtime сам вводит почту, придумывает пароль, ждёт код или ссылку из письма и после входа записывает
+   доступ (`type=credential`, cookies в контексте `serviceSlug`). Не регистрируйся через Google/SSO и не
+   на чужую почту. Токены и ключи ищи только после того, как ты внутри.
 
 1. **MCP.** Если рецепт `kind: mcp` есть и у тебя есть доступ — сервер уже в твоём `config.yaml`, инструменты
    называются `mcp_<slug>_<tool>`. Не регистрируй его через `hermes mcp add` и не импортируй `hermes_tools`:
@@ -31,8 +48,9 @@ version: 1
    (раздел 1.1): он проверит официальный реестр MCP, типовые адреса на домене и документацию.
 2. **API.** MCP нет — ищи публичный REST/GraphQL API и способ получить ключ. Ключ лежит в
    `credentials[].token`. Запросы делай через `curl` в терминале. Нашёл способ — сообщи рецепт.
-3. **Браузер.** Ни MCP, ни API — работай в браузере через runtime (раздел 2). Регистрация и вход —
-   Skyvern. Действия внутри — Stagehand.
+3. **Браузер.** Ни MCP, ни API — работай в браузере через runtime (раздел 2). Открывай сессию с тем же
+   `serviceSlug`: cookies после шага 0 уже там. Вход с кодом из письма — `/invite/accept` или
+   `/browser/open` + `/browser/wait-code`; Skyvern — только когда код с почты не нужен.
 
 Не понижай ступень: если MCP есть, браузер не открывай.
 
@@ -71,15 +89,19 @@ curl -s -X POST http://127.0.0.1:8787/web/search -H "Authorization: Bearer $SWAR
 
 ## 2. Браузер через runtime
 
-Вход и регистрация (Skyvern):
+Вход по приглашению — `/invite/accept` (раздел 1, шаг 0). Вход или регистрация без кода из письма
+(пароль уже известен, его ты найдёшь в `credentials[].password`) можно поручить Skyvern:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8787/skyvern/login \
   -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" -H "Content-Type: application/json" \
   -d '{"runId":"<runId>","url":"https://app.example.com/login","purpose":"login",
-       "prompt":"Войди по приглашению. Email: {{AGENT_EMAIL}}. Если просят код — он придёт на почту.",
-       "credentials":{"email":"{{AGENT_EMAIL}}"}}'
+       "prompt":"Войди. Email: {{AGENT_EMAIL}}, пароль в параметре password.",
+       "credentials":{"email":"{{AGENT_EMAIL}}","password":"<из credentials>"}}'
 ```
+
+Skyvern не получает письма: если сайт пришлёт код на почту, он до него не дойдёт. Для таких входов
+используй сессию runtime и `/browser/wait-code`.
 
 Действия внутри сервиса (Stagehand на сессии Browserbase):
 

@@ -280,6 +280,21 @@ app.post("/discover", async (c) => {
   return c.json({ known: null, result });
 });
 
+// Принять приглашение и зарегистрироваться под почтой агента: Stagehand в постоянном
+// контексте сервиса, коды и ссылки из писем попадают в ту же сессию.
+app.post("/invite/accept", async (c) => {
+  noteActivity();
+  if (!rt.browserAvailable) return c.json({ error: "Browserbase не настроен" }, 400);
+  const body = z
+    .object({ runId: z.string(), url: z.string().url(), slug: z.string().min(1), service: z.string().min(1) })
+    .parse(await c.req.json());
+  const run = await rt.store.getRun(body.runId);
+  if (!run) return c.json({ error: "run not found" }, 404);
+  const r = await rt.acceptInvite(run, { url: body.url, slug: body.slug, service: body.service });
+  const { password: _password, ...safe } = r;
+  return c.json({ ...safe, passwordSaved: r.password !== null });
+});
+
 app.post("/docs/fetch", async (c) => {
   noteActivity();
   const body = z

@@ -10,6 +10,7 @@ import {
 } from "./prompts";
 import type { AgentRuntime } from "./runtime";
 import { hostOf } from "./domains";
+import { prepareOnboarding } from "./onboarding";
 import { warn } from "./log";
 import { redactInternal } from "./redact";
 import { recordUsage } from "./usage";
@@ -39,7 +40,7 @@ export async function handleChat(
   const links = extractLinks(args.message);
   const classification = await classifyChat(rt, args.message, links);
   const hosts = [...links.map(hostOf), classification.serviceDomain ?? ""].filter(Boolean);
-  const recipe = await rt.knownRecipe(hosts);
+  const recipe = classification.kind === "invite" ? null : await rt.knownRecipe(hosts);
 
   let chatId = args.chatId ?? null;
   if (chatId) {
@@ -58,23 +59,19 @@ export async function handleChat(
 
   void (async () => {
     try {
-      // Неизвестный сервис: сначала ищем документацию и MCP, потом даём ход модели.
-      const discovery =
-        classification.kind === "invite" && !recipe
-          ? await rt
-              .discover(run, { service: classification.service, domain: classification.serviceDomain, links })
-              .catch((e) => {
-                warn("chat", "поиск сервиса не удался", { error: String(e) });
-                return null;
-              })
-          : null;
+      // Приглашение: рецепт или поиск документации, затем принять приглашение под своей почтой —
+      // и только потом ход модели.
+      const onboarding =
+        classification.kind === "invite"
+          ? await prepareOnboarding(rt, run, { service: classification.service, domain: classification.serviceDomain, links })
+          : undefined;
       const prompt = chatTaskPrompt({
         message: args.message,
         author: args.author,
         kind: classification.kind,
         links,
-        recipe: knownRecipe,
-        discovery,
+        recipe: onboarding?.recipe ?? knownRecipe,
+        onboarding,
       });
       const text = await rt.think(run, prompt);
       const current = await rt.store.getRun(run.id);
