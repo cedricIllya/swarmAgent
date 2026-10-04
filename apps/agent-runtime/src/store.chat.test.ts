@@ -21,31 +21,31 @@ describe("chats", () => {
     const store = new Store(dir);
     await store.init();
 
-    const chats = await store.listChats();
+    const chats = await store.chats.list();
     const general = chats.find((c) => c.title === "Общий");
     expect(general).toBeTruthy();
     const migrated = await readFile(path.join(dir, "chat.jsonl.migrated"), "utf8");
     expect(migrated).toContain("привет");
 
-    const messages = await store.listChatMessages(general!.id);
+    const messages = await store.chats.listMessages(general!.id);
     expect(messages.map((m) => m.text)).toEqual(["привет"]);
     expect(messages[0]?.chatId).toBe(general!.id);
 
-    const other = await store.createChat("Второй");
-    await store.addChatMessage(other.id, {
+    const other = await store.chats.create("Второй");
+    await store.chats.addMessage(other.id, {
       at: "2026-01-02T00:00:00.000Z",
       role: "user",
       text: "другое",
       runId: null,
       chatId: other.id,
     });
-    expect((await store.listChatMessages(general!.id)).map((m) => m.text)).toEqual(["привет"]);
-    expect((await store.listChatMessages(other.id)).map((m) => m.text)).toEqual(["другое"]);
+    expect((await store.chats.listMessages(general!.id)).map((m) => m.text)).toEqual(["привет"]);
+    expect((await store.chats.listMessages(other.id)).map((m) => m.text)).toEqual(["другое"]);
   });
 
   it("marks a chat busy only while its run is going", async () => {
     const store = await tmpStore();
-    const chat = await store.createChat("Задача");
+    const chat = await store.chats.create("Задача");
     await store.saveRun({
       id: "run_1",
       startedAt: "2026-01-01T00:00:00.000Z",
@@ -56,7 +56,7 @@ describe("chats", () => {
       summary: "",
       threadId: chat.id,
     });
-    expect((await store.listChats()).find((c) => c.id === chat.id)?.busy).toBe(true);
+    expect((await store.chats.list()).find((c) => c.id === chat.id)?.busy).toBe(true);
     await store.saveRun({
       id: "run_1",
       startedAt: "2026-01-01T00:00:00.000Z",
@@ -67,12 +67,12 @@ describe("chats", () => {
       summary: "готово",
       threadId: chat.id,
     });
-    expect((await store.listChats()).find((c) => c.id === chat.id)?.busy).toBe(false);
+    expect((await store.chats.list()).find((c) => c.id === chat.id)?.busy).toBe(false);
   });
 
   it("marks the mail chat busy while a letter is being handled", async () => {
     const store = await tmpStore();
-    const mail = await store.ensureSystemChat();
+    const mail = await store.chats.ensureSystem();
     await store.saveRun({
       id: "run_mail",
       startedAt: "2026-01-01T00:00:00.000Z",
@@ -83,7 +83,7 @@ describe("chats", () => {
       summary: "",
       threadId: "<msg@example.com>",
     });
-    const listed = await store.listChats();
+    const listed = await store.chats.list();
     expect(listed.find((c) => c.id === mail.id)?.busy).toBe(true);
     expect(listed.find((c) => c.id === mail.id)?.kind).toBe("mail");
   });

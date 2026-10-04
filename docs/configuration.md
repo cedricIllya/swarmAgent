@@ -30,8 +30,8 @@ openssl rand -base64 32
 | `MAILGUN_REGION` | нет | `eu` или `us`. По умолчанию `eu`. |
 | `WEBHOOK_URL` | для `pnpm mailgun route` | Куда Mailgun шлёт письма. Обычно `{APP_URL}/webhooks/email`. |
 | `INBOUND_WEBHOOK_TOKEN` | для JSON-входа | |
-| `SKYVERN_API_KEY` | нет | Без него MCP Skyvern в конфиг Hermes не добавляется. |
-| `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` | пара | Без пары браузер в runtime отвечает ошибкой на открытие сессии. |
+| `SKYVERN_API_KEY` | для онбординга | Регистрация по приглашению и вход идут через Skyvern; коды из писем runtime передаёт ему сам. Без него приглашение принимает Stagehand на Browserbase; MCP Skyvern в конфиг Hermes не добавляется. |
+| `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` | пара | Собственный браузер агента для работы внутри сервиса (и запасной путь онбординга). Без пары `/browser/*` отвечает ошибкой. Нет ни Skyvern, ни Browserbase — `/invite/accept` отвечает 400. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | пара | Без них кнопка Google возвращает на карточку с ошибкой. |
 | `DEV_RUNTIME_URL` | нет | Локальный runtime вместо `*.flycast`. |
 | `SKILL_TEMPLATE_DIR` | в контейнере | Каталог с `swarm-worker/SKILL.md`. В образе это `/app/agent-template`. |

@@ -17,6 +17,8 @@ export interface OnboardingContext {
   invite: AcceptInviteResult | null;
   /** Почему приглашение не принимали автоматически (нет браузера, нет ссылки). */
   inviteSkipped: string | null;
+  /** У агента есть свой браузер (Browserbase) для работы внутри сервиса и ручного дожима. */
+  browserAvailable: boolean;
 }
 
 export interface OnboardingInput {
@@ -43,13 +45,13 @@ export function pickInviteLink(links: string[], domain: string | null): string |
 
 export async function prepareOnboarding(rt: AgentRuntime, run: Run, input: OnboardingInput): Promise<OnboardingContext> {
   const hosts = [...input.links.map(hostOf), ...(input.extraHosts ?? []), input.domain ?? ""].filter(Boolean);
-  const known = await rt.knownRecipe(hosts);
+  const known = await rt.services.knownRecipe(hosts);
   const recipe: KnownRecipeRef | null = known ? { slug: known.slug, name: known.name, kind: known.kind } : null;
 
   let discovery: DiscoveryResult | null = null;
   if (!recipe) {
     try {
-      discovery = await rt.discover(run, { service: input.service, domain: input.domain, links: input.links });
+      discovery = await rt.research.discover(run, { service: input.service, domain: input.domain, links: input.links });
     } catch (e) {
       warn("onboarding", "поиск сервиса не удался", { error: String(e) });
     }
@@ -64,11 +66,11 @@ export async function prepareOnboarding(rt: AgentRuntime, run: Run, input: Onboa
   let inviteSkipped: string | null = null;
   if (!inviteUrl) {
     inviteSkipped = "в приглашении нет ссылки";
-  } else if (!rt.browserAvailable) {
+  } else if (!rt.browser.canOnboard) {
     inviteSkipped = "браузер не настроен";
   } else {
     try {
-      invite = await rt.acceptInvite(run, { url: inviteUrl, slug, service });
+      invite = await rt.browser.acceptInvite(run, { url: inviteUrl, slug, service });
     } catch (e) {
       warn("onboarding", "принять приглашение не удалось", { error: String(e) });
       await rt.step(run.id, "error", `принять приглашение не удалось: ${String(e)}`);
@@ -76,5 +78,5 @@ export async function prepareOnboarding(rt: AgentRuntime, run: Run, input: Onboa
     }
   }
 
-  return { recipe, discovery, inviteUrl, invite, inviteSkipped };
+  return { recipe, discovery, inviteUrl, invite, inviteSkipped, browserAvailable: rt.browser.available };
 }

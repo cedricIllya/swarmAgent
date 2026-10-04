@@ -23,7 +23,7 @@ export function markSleepy(activityBefore: number): void {
 
 export async function machineIsIdle(rt: AgentRuntime): Promise<boolean> {
   if (rt.busyInBrowser) return false;
-  if (rt.sessions.size > 0) return false;
+  if (rt.browser.sessions.size > 0) return false;
   const runs = await rt.store.listRuns(50);
   return !runs.some((r) => r.status === "running" || r.status === "queued");
 }

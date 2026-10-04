@@ -6,7 +6,10 @@ import {
   interpretMcpResponse,
   matchRegistryServers,
   probeMcp,
+  rankDocLinks,
   registryNameDomain,
+  scoreDocUrl,
+  searchCovers,
 } from "./discovery";
 import type { OpenRouterClient } from "./openrouter";
 
@@ -159,12 +162,13 @@ describe("discoverService", () => {
 
   it("falls back to documentation and the model when no MCP answers", async () => {
     const docsHtml = "<html><head><title>Acme Developers</title></head><body>" + "<p>Base URL https://api.acme.io/v2. Create a token in Settings → API.</p>".repeat(20) + "</body></html>";
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
       if (url.startsWith("https://registry.test/")) return res(JSON.stringify({ servers: [] }), 200, { "Content-Type": "application/json" });
       if (url === "https://developers.acme.io/") return res(docsHtml, 200, { "Content-Type": "text/html" });
       return res("nope", 404, { "Content-Type": "text/html" });
-    }) as unknown as typeof fetch;
+    });
+    const fetchImpl = fetchMock as unknown as typeof fetch;
 
     const chat = vi.fn(async (_m: unknown, opts: { webSearch?: unknown }) => ({
       text: JSON.stringify(
@@ -193,5 +197,193 @@ describe("discoverService", () => {
     expect(result.draftRecipe).toMatchObject({ kind: "api", api: { baseUrl: "https://api.acme.io/v2" }, browser: { loginUrl: "https://app.acme.io/login" } });
     expect(result.docs.map((d) => d.url)).toEqual(expect.arrayContaining(["https://developers.acme.io/", "https://developers.acme.io/auth"]));
     expect(usage).toEqual(["discover.search", "discover.extract"]);
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls).not.toContain("https://docs.acme.io/");
+    expect(urls).not.toContain("https://acme.io/docs");
+    expect(urls).not.toContain("https://developer.acme.io/");
+  });
+
+  it("skips search when a verified MCP needs no token", async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("https://registry.test/")) {
+        return res(
+          JSON.stringify({
+            servers: [
+              {
+                server: { name: "io.acme/acme", remotes: [{ type: "streamable-http", url: "https://mcp.acme.io/mcp" }] },
+                _meta: { "io.modelcontextprotocol.registry/official": { status: "active", isLatest: true } },
+              },
+            ],
+          }),
+          200,
+          { "Content-Type": "application/json" },
+        );
+      }
+      if (url === "https://mcp.acme.io/mcp" && init?.method === "POST") return res(initOk, 200, { "Content-Type": "application/json" });
+      return res("no", 404);
+    }) as unknown as typeof fetch & { mock: { calls: unknown[][] } };
+    const chat = vi.fn();
+
+    const result = await discoverService(
+      { service: "Acme", domain: "acme.io", links: [] },
+      { fetchImpl, openRouter: { chat } as unknown as OpenRouterClient, model: "m", agentId: "ag", registryUrl: "https://registry.test" },
+    );
+
+    expect(result.mcp).toMatchObject({ auth: "none", verified: true });
+    expect(result.confirmed).toBe(true);
+    expect(chat).not.toHaveBeenCalled();
+    expect(fetchImpl.mock.calls.map((call) => String(call[0])).some((url) => url.includes("llms.txt") || url.includes("developers."))).toBe(false);
+  });
+
+  it("does not fetch pages when search already returned the connection details", async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.startsWith("https://registry.test/")) return res(JSON.stringify({ servers: [] }), 200, { "Content-Type": "application/json" });
+      return res("no", 404);
+    }) as unknown as typeof fetch & { mock: { calls: unknown[][] } };
+    const chat = vi.fn(async () => ({
+      text: JSON.stringify({
+        mcpUrl: null,
+        mcpTransport: null,
+        apiBaseUrl: "https://api.acme.io/v1",
+        apiDocsUrl: "https://docs.acme.io/api",
+        authHeader: "Authorization",
+        howToGetKey: "Settings → API",
+        loginUrl: "https://acme.io/login",
+        appUrl: "https://acme.io",
+        notes: "REST",
+      }),
+      promptTokens: 1,
+      completionTokens: 1,
+      costUsd: 0,
+      model: "m",
+      citations: [{ url: "https://docs.acme.io/api", title: "API", content: "base https://api.acme.io/v1" }],
+    }));
+    const usage: string[] = [];
+
+    const result = await discoverService(
+      { service: "Acme", domain: "acme.io", links: ["https://acme.io/invite/1"] },
+      { fetchImpl, openRouter: { chat } as unknown as OpenRouterClient, model: "m", agentId: "ag", registryUrl: "https://registry.test", onUsage: (a) => void usage.push(a) },
+    );
+
+    expect(usage).toEqual(["discover.search"]);
+    expect(result.api).toMatchObject({ baseUrl: "https://api.acme.io/v1", docsUrl: "https://docs.acme.io/api", howToGetKey: "Settings → API" });
+    expect(result.draftRecipe).toMatchObject({ kind: "api" });
+    expect(fetchImpl.mock.calls.map((call) => String(call[0])).some((url) => url.includes("llms.txt") || url.includes("docs.acme.io"))).toBe(false);
+  });
+
+  it("reads llms.txt and one auth page instead of the rest of the site", async () => {
+    const seen: string[] = [];
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if ((init?.method ?? "GET") !== "POST") seen.push(url);
+      if (url.startsWith("https://registry.test/")) return res(JSON.stringify({ servers: [] }), 200, { "Content-Type": "application/json" });
+      if (url === "https://docs.acme.io/llms.txt") {
+        return res(
+          "# Acme\n- [Pricing](https://docs.acme.io/pricing): plans\n- [Auth](https://docs.acme.io/api/authentication): create a token in Settings → API\n- [Blog](https://docs.acme.io/blog): news\n",
+          200,
+          { "Content-Type": "text/plain" },
+        );
+      }
+      if (url === "https://docs.acme.io/sitemap.xml") {
+        return res("<urlset><loc>https://docs.acme.io/blog</loc></urlset>", 200, { "Content-Type": "application/xml" });
+      }
+      if (url === "https://docs.acme.io/api/authentication") {
+        return res("<html><head><title>Auth</title></head><body><p>Base URL https://api.acme.io/v1. Token in Settings → API.</p></body></html>", 200, { "Content-Type": "text/html" });
+      }
+      if (url === "https://docs.acme.io/" || url === "https://docs.acme.io") {
+        return res('<html><a href="/blog">Blog</a><a href="/pricing">Pricing</a><a href="/about">About</a></html>', 200, { "Content-Type": "text/html" });
+      }
+      return res("no", 404, { "Content-Type": "text/html" });
+    }) as unknown as typeof fetch;
+    const chat = vi.fn(async (_messages: unknown, opts: { webSearch?: unknown }) => ({
+      text: JSON.stringify(
+        opts.webSearch
+          ? { mcpUrl: null, mcpTransport: null, apiBaseUrl: null, apiDocsUrl: "https://docs.acme.io/", authHeader: null, howToGetKey: null, loginUrl: null, appUrl: null, notes: "" }
+          : { mcpUrl: null, mcpTransport: null, apiBaseUrl: "https://api.acme.io/v1", apiDocsUrl: "https://docs.acme.io/api/authentication", authHeader: "Authorization", howToGetKey: "Settings → API", loginUrl: null, appUrl: null, notes: "" },
+      ),
+      promptTokens: 1,
+      completionTokens: 1,
+      costUsd: 0,
+      model: "m",
+      citations: [{ url: "https://docs.acme.io/", title: "Docs", content: "api" }],
+    }));
+
+    const result = await discoverService(
+      { service: "Acme", domain: "acme.io", links: [] },
+      { fetchImpl, openRouter: { chat } as unknown as OpenRouterClient, model: "m", agentId: "ag", registryUrl: "https://registry.test" },
+    );
+
+    expect(seen).toContain("https://docs.acme.io/llms.txt");
+    expect(seen).toContain("https://docs.acme.io/api/authentication");
+    expect(seen).not.toContain("https://docs.acme.io/");
+    expect(seen).not.toContain("https://docs.acme.io/blog");
+    expect(seen).not.toContain("https://docs.acme.io/pricing");
+    expect(seen).not.toContain("https://docs.acme.io/about");
+    expect(seen.some((url) => url.startsWith("https://developers."))).toBe(false);
+    expect(result.api).toMatchObject({ baseUrl: "https://api.acme.io/v1", howToGetKey: "Settings → API" });
+  });
+
+  it("probes three documentation roots when search names nothing", async () => {
+    const seen: string[] = [];
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if ((init?.method ?? "GET") !== "POST") seen.push(url);
+      if (url.startsWith("https://registry.test/")) return res(JSON.stringify({ servers: [] }), 200, { "Content-Type": "application/json" });
+      return res("no", 404, { "Content-Type": "text/html" });
+    }) as unknown as typeof fetch;
+    const chat = vi.fn(async () => ({
+      text: JSON.stringify({ mcpUrl: null, mcpTransport: null, apiBaseUrl: null, apiDocsUrl: null, authHeader: null, howToGetKey: null, loginUrl: null, appUrl: null, notes: "" }),
+      promptTokens: 1,
+      completionTokens: 1,
+      costUsd: 0,
+      model: "m",
+      citations: [],
+    }));
+
+    await discoverService(
+      { service: "Acme", domain: "acme.io", links: [] },
+      { fetchImpl, openRouter: { chat } as unknown as OpenRouterClient, model: "m", agentId: "ag", registryUrl: "https://registry.test" },
+    );
+
+    expect(seen).toEqual(expect.arrayContaining(["https://docs.acme.io/", "https://developers.acme.io/", "https://acme.io/docs"]));
+    for (const skipped of ["https://developer.acme.io/", "https://acme.io/developers", "https://acme.io/docs/api", "https://acme.io/api/docs", "https://api.acme.io/docs"]) {
+      expect(seen).not.toContain(skipped);
+    }
+    expect(chat).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("doc link ranking", () => {
+  it("prefers an API or auth page over the rest of the site", () => {
+    expect(scoreDocUrl("https://docs.acme.io/openapi.json")).toBeGreaterThan(scoreDocUrl("https://docs.acme.io/api/authentication"));
+    expect(scoreDocUrl("https://docs.acme.io/blog")).toBe(0);
+    expect(scoreDocUrl("https://docs.acme.io/logo.png")).toBe(0);
+    expect(
+      rankDocLinks(
+        ["https://docs.acme.io/blog", "https://docs.acme.io/pricing", "https://docs.acme.io/api/authentication", "https://cdn.example/logo.png"],
+        "acme.io",
+        "docs.acme.io",
+        new Set(["https://docs.acme.io/"]),
+      ),
+    ).toEqual(["https://docs.acme.io/api/authentication"]);
+  });
+
+  it("treats search as complete only when the docs URL is one of the citations", () => {
+    const findings = {
+      mcpUrl: null,
+      mcpTransport: null,
+      apiBaseUrl: "https://api.acme.io/v1",
+      apiDocsUrl: "https://docs.acme.io/api",
+      authHeader: "Authorization",
+      howToGetKey: "Settings → API",
+      loginUrl: null,
+      appUrl: null,
+      notes: "",
+    };
+    expect(searchCovers(findings, [{ url: "https://docs.acme.io/api", title: "API", content: "" }])).toBe(true);
+    expect(searchCovers(findings, [{ url: "https://example.com/unrelated", title: "", content: "" }])).toBe(false);
+    expect(searchCovers({ ...findings, howToGetKey: null }, [{ url: "https://docs.acme.io/api", title: "API", content: "" }])).toBe(false);
   });
 });

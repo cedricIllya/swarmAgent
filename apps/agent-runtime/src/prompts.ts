@@ -8,25 +8,44 @@ export interface KnownRecipeRef {
   kind: string;
 }
 
-const EMPTY_ONBOARDING: OnboardingContext = { recipe: null, discovery: null, inviteUrl: null, invite: null, inviteSkipped: null };
+const EMPTY_ONBOARDING: OnboardingContext = {
+  recipe: null,
+  discovery: null,
+  inviteUrl: null,
+  invite: null,
+  inviteSkipped: null,
+  browserAvailable: false,
+};
 
 /** Шаг 0 онбординга: принято ли приглашение и есть ли аккаунт под почтой агента. */
 function invitePrompt(ctx: OnboardingContext, slug: string | null): string {
   const inv = ctx.invite;
   if (inv?.status === "accepted") {
+    const cookies =
+      inv.provider === "browserbase" && slug
+        ? `Cookies сохранены: /browser/open с serviceSlug "${slug}" продолжит уже вошедшим.`
+        : `Cookies не сохранялись: для входа в браузере используй пароль из credentials${slug ? ` (slug "${slug}")` : ""} — /skyvern/login или /browser/open и форма входа.`;
     return [
-      `Шаг 0 выполнен: приглашение принято, аккаунт ${inv.accountEmail} зарегистрирован${inv.password ? ", пароль сохранён в доступе" : ""}.`,
-      `Cookies сохранены${slug ? `: /browser/open с serviceSlug "${slug}" продолжит уже вошедшим` : ""}. Заново регистрироваться не нужно.`,
+      `Шаг 0 выполнен: приглашение принято в браузере, аккаунт ${inv.accountEmail} зарегистрирован${inv.password ? ", пароль сохранён в доступе и виден владельцу в карточке" : ""}.`,
+      cookies,
+      "Заново регистрироваться не нужно.",
     ].join(" ");
   }
   if (inv) {
-    const how = inv.status === "needs_human" ? "нужна помощь" : "не удалось";
+    const next =
+      inv.status === "needs_human"
+        ? "Сам дальше не иди: коротко опиши владельцу, что остановило (капча, SSO, вопрос сервиса), и попроси помочь."
+        : [
+            "Повтори POST /invite/accept с той же ссылкой один раз.",
+            slug && ctx.browserAvailable
+              ? `Если снова не вышло — продолжи сам в своём браузере: /browser/open с serviceSlug "${slug}" и этой ссылкой, коды придут через /browser/wait-code.`
+              : "Если снова не вышло — скажи владельцу, на чём остановилось, и попроси новую ссылку или помощь.",
+            "Других способов принять приглашение нет: через API или без браузера это не делается, одобрения на регистрацию не нужно.",
+          ].join(" ");
     return [
-      `Шаг 0 не завершён: принять приглашение автоматически ${how} — ${inv.notes}.`,
+      `Шаг 0 не завершён: принять приглашение в браузере ${inv.status === "needs_human" ? "без человека не получилось" : "не удалось"} — ${inv.notes}.`,
       ctx.inviteUrl ? `Ссылка приглашения: ${ctx.inviteUrl}.` : "",
-      slug
-        ? `Продолжи сам в браузере: /browser/open с serviceSlug "${slug}" и этой ссылкой, коды придут через /browser/wait-code. Если нужна капча или решение владельца — спроси его.`
-        : "Продолжи сам в браузере через runtime; если нужна капча или решение владельца — спроси его.",
+      next,
     ]
       .filter(Boolean)
       .join(" ");
@@ -34,7 +53,8 @@ function invitePrompt(ctx: OnboardingContext, slug: string | null): string {
   if (ctx.inviteUrl) {
     return [
       `Шаг 0 ещё не сделан (${ctx.inviteSkipped ?? "не запускался"}): сначала прими приглашение по ссылке ${ctx.inviteUrl} под своей почтой —`,
-      "POST /invite/accept с runId, url, slug и названием сервиса. Только после входа переходи к подключению.",
+      "POST /invite/accept с runId, url, slug и названием сервиса. Это браузерная регистрация, runtime делает её сам и одобрения владельца не требует.",
+      "Только после входа переходи к подключению.",
     ].join(" ");
   }
   return "Шаг 0: в приглашении нет ссылки. Если сервис требует принять приглашение — попроси у отправителя ссылку, иначе переходи к подключению.";
@@ -113,9 +133,10 @@ export function systemPrompt(ctx: PromptContext): string {
       ? "Режим: все действия без человека разрешены. Одобрения не спрашивай."
       : "Режим: перед изменениями в чужих системах (создать, удалить, отправить, оплатить) спроси одобрение через POST /approval. Владелец нажмёт кнопку в чате. Чтение — свободно.",
     "",
-    "Приглашение в сервис — сначала прими его и зарегистрируйся под своей почтой (runtime делает это сам или по POST /invite/accept), и только потом подключайся.",
-    "Подключение к сервису — всегда лестница: 1) MCP, 2) API, 3) браузер. Браузер — только если первых двух нет.",
-    "Регистрация и вход — через runtime (/invite/accept или /browser/open + /browser/wait-code: коды из писем приходят туда). Skyvern — только когда код с почты не нужен. Действия внутри сервиса — Stagehand через локальный runtime.",
+    "Приглашение в сервис — сначала прими его и зарегистрируйся под своей почтой, и только потом подключайся.",
+    "Онбординг (принять приглашение, зарегистрироваться, войти) всегда идёт в браузере через runtime: POST /invite/accept. Runtime сам открывает браузер (Skyvern), вводит почту, задаёт пароль, передаёт коды и ссылки из писем и сохраняет логин с паролем — владелец видит их в карточке. Это не изменение в чужой системе: одобрения не спрашивай. Принять приглашение через API, скриптом или иным «программным» способом нельзя — такого пути нет, не предлагай его.",
+    "Подключение к сервису после регистрации — всегда лестница: 1) MCP, 2) API, 3) браузер. Браузер — только если первых двух нет.",
+    "Работа внутри сервиса в браузере — Stagehand через runtime (/browser/open с serviceSlug). Если сессия не вошла — войди по паролю из credentials: /skyvern/login или форма входа через /browser/act; коды из писем runtime передаст сам.",
     "Всегда следуй скиллу swarm-worker. Он описывает локальные эндпоинты runtime:",
     `http://127.0.0.1:${ctx.runtimePort} с заголовком Authorization: Bearer $SWARM_RUNTIME_TOKEN.`,
     "",

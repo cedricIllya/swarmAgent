@@ -46,16 +46,16 @@ export async function processEmail(rt: AgentRuntime, email: InboundEmail): Promi
   // Браузер открыт, но код ещё не просил (страница с полем только грузится):
   // код или ссылку придерживаем для сессии, остальная почта идёт обычным путём.
   let known: EmailClassification | null = null;
-  if (rt.sessions.size > 0 && !fromOwner) {
+  if (rt.browser.sessions.size > 0 && !fromOwner) {
     const code = findDigitCode(`${email.subject}\n${email.replyText || email.text}`);
     if (code) {
-      rt.deliverCodeToBrowser({ kind: "code", value: code });
+      rt.browser.deliverCode({ kind: "code", value: code });
       log("inbox", "код из письма придержан для открытой сессии");
       return;
     }
     known = await classifyEmail(rt, email, "classify.email.browser-open");
     if (known.kind === "verification" && known.hasLoginLink && email.links.length > 0) {
-      rt.deliverCodeToBrowser({ kind: "link", value: pickLoginLink(email.links) });
+      rt.browser.deliverCode({ kind: "link", value: pickLoginLink(email.links) });
       log("inbox", "ссылка для входа придержана для открытой сессии");
       return;
     }
@@ -78,7 +78,7 @@ async function handleThreadReply(
   log("inbox", "ответ в ветке", { threadId, verdict, approvalId });
 
   if (approvalId && (verdict === "approve" || verdict === "reject")) {
-    const run = await rt.resolveApproval(approvalId, verdict === "approve");
+    const run = await rt.approvals.resolve(approvalId, verdict === "approve");
     if (run) await replyInThread(rt, email, run.id, run.summary);
     return;
   }
@@ -101,14 +101,14 @@ async function handleWhileInBrowser(rt: AgentRuntime, email: InboundEmail): Prom
 
   const code = findDigitCode(`${email.subject}\n${email.replyText || email.text}`);
   if (code) {
-    const delivered = rt.deliverCodeToBrowser({ kind: "code", value: code });
+    const delivered = rt.browser.deliverCode({ kind: "code", value: code });
     log("inbox", "код из письма в браузер", { delivered });
     return;
   }
 
   const c = await classifyEmail(rt, email, "classify.email.in-browser");
   if (c.kind === "verification" && c.hasLoginLink && email.links.length > 0) {
-    const delivered = rt.deliverCodeToBrowser({ kind: "link", value: pickLoginLink(email.links) });
+    const delivered = rt.browser.deliverCode({ kind: "link", value: pickLoginLink(email.links) });
     log("inbox", "ссылка для входа в браузер", { delivered });
     return;
   }

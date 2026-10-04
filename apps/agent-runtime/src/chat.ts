@@ -48,7 +48,7 @@ export async function handleChat(
         const run = await rt.store.getRun(pending.runId);
         if (!run) return null;
         await rt.addChat({ role: "user", text: args.message, runId: run.id, chatId: args.chatId });
-        void rt.resolveApproval(pending.id, verdict === "approve", { announce: false }).catch((e) => {
+        void rt.approvals.resolve(pending.id, verdict === "approve", { announce: false }).catch((e) => {
           warn("chat", "одобрение не разобралось", { error: String(e) });
         });
         return { run, chatId: args.chatId };
@@ -59,14 +59,14 @@ export async function handleChat(
   const links = extractLinks(args.message);
   const classification = await classifyChat(rt, args.message, links);
   const hosts = [...links.map(hostOf), classification.serviceDomain ?? ""].filter(Boolean);
-  const recipe = classification.kind === "invite" ? null : await rt.knownRecipe(hosts);
+  const recipe = classification.kind === "invite" ? null : await rt.services.knownRecipe(hosts);
 
   let chatId = args.chatId ?? null;
   if (chatId) {
-    const existing = await rt.store.getChat(chatId);
+    const existing = await rt.store.chats.get(chatId);
     if (!existing) return null;
   } else {
-    const created = await rt.store.createChat(chatTitle(classification.kind, classification.service, args.message));
+    const created = await rt.store.chats.create(chatTitle(classification.kind, classification.service, args.message));
     chatId = created.id;
   }
 

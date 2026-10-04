@@ -94,6 +94,8 @@ export interface AcceptInviteResult {
   steps: number;
   finalUrl: string;
   notes: string;
+  /** Кто принимал приглашение: Skyvern или сессия Stagehand на Browserbase. */
+  provider?: "skyvern" | "browserbase";
 }
 
 export function generatePassword(): string {
@@ -139,6 +141,7 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
     steps,
     finalUrl: await browser.currentUrl().catch(() => ""),
     notes,
+    provider: "browserbase",
   });
 
   await browser.goto(args.url);
