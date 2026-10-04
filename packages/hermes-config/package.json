@@ -1,0 +1,20 @@
+{
+  "name": "@swarm/hermes-config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@swarm/contracts": "workspace:*",
+    "yaml": "^2.9.1"
+  }
+}
