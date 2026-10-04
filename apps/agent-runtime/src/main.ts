@@ -19,7 +19,6 @@ import { processEmail } from "./inbox";
 import { handleChat } from "./chat";
 import { startTicker, tick } from "./cron";
 import { streamRuntimeEvents } from "./events-http";
-import { syncHermesMcp } from "./hermes-config-sync";
 import { machineIsIdle, markSleepy, noteActivity, startIdleWatch } from "./idle";
 import { log, warn } from "./log";
 import { redactInternal } from "./redact";
@@ -60,13 +59,6 @@ app.onError((err, c) => {
 app.get("/state", async (c) => c.json(await rt.state()));
 
 app.get("/events", (c) => streamRuntimeEvents(c, rt));
-
-async function refreshHermesMcp(): Promise<void> {
-  const snap = await rt.store.readServices();
-  if (!snap) return;
-  await syncHermesMcp(cfg.dataDir, snap, Boolean(cfg.skyvernApiKey));
-  await rt.publishServices();
-}
 
 app.post("/email", async (c) => {
   noteActivity();
@@ -122,7 +114,7 @@ app.post("/services", async (c) => {
   noteActivity();
   const body = SyncServicesRequestSchema.parse(await c.req.json());
   await rt.store.writeServices(body.snapshot);
-  await refreshHermesMcp();
+  await rt.refreshHermesMcp();
   return c.json({ ok: true, recipes: body.snapshot.recipes.length, credentials: body.snapshot.credentials.length });
 });
 
@@ -264,29 +256,50 @@ app.post("/approval", async (c) => {
 app.post("/report", async (c) => {
   noteActivity();
   const body = RuntimeReportSchema.parse(await c.req.json());
-  await rt.controlPlane.report(body);
-  const snap = await rt.store.readServices();
-  const reported =
-    body.type === "recipe"
-      ? { name: body.recipe.name, kind: body.recipe.kind, slug: body.recipe.slug }
-      : { name: body.credential.slug, kind: body.credential.kind, slug: body.credential.slug };
-  if (snap) {
-    if (body.type === "recipe") {
-      snap.recipes = [...snap.recipes.filter((r) => r.slug !== body.recipe.slug), body.recipe];
-    } else {
-      snap.credentials = [...snap.credentials.filter((r) => r.slug !== body.credential.slug), body.credential];
-    }
-    await rt.store.writeServices(snap);
-    await refreshHermesMcp();
-  }
-  const kindLabel = { mcp: "MCP", api: "API", browser: "браузер" } as const;
-  const running = body.runId
-    ? await rt.store.getRun(body.runId)
-    : (await rt.store.listRuns(20)).find((r) => r.status === "running");
-  if (running) {
-    await rt.step(running.id, "note", `подключён сервис ${reported.name} (${kindLabel[reported.kind]})`);
-  }
+  await rt.applyReport(body);
   return c.json({ ok: true });
+});
+
+// Поиск способа входа в сервис, которого нет в каталоге: реестр MCP, типовые адреса,
+// документация в интернете. Подтверждённый MCP записывается рецептом сам.
+app.post("/discover", async (c) => {
+  noteActivity();
+  const body = z
+    .object({
+      runId: z.string(),
+      service: z.string().nullable().default(null),
+      domain: z.string().nullable().default(null),
+      links: z.array(z.string()).default([]),
+    })
+    .parse(await c.req.json());
+  const run = await rt.store.getRun(body.runId);
+  if (!run) return c.json({ error: "run not found" }, 404);
+  const known = await rt.knownRecipe([...body.links, body.domain ?? ""]);
+  if (known) return c.json({ known: { slug: known.slug, name: known.name, kind: known.kind }, result: null });
+  const result = await rt.discover(run, { service: body.service, domain: body.domain, links: body.links });
+  return c.json({ known: null, result });
+});
+
+app.post("/docs/fetch", async (c) => {
+  noteActivity();
+  const body = z
+    .object({ url: z.string().url(), maxChars: z.number().int().min(500).max(60_000).default(20_000) })
+    .parse(await c.req.json());
+  const page = await rt.readDocs(body.url, body.maxChars);
+  if (!page) return c.json({ error: "страница недоступна" }, 502);
+  return c.json(page);
+});
+
+app.post("/web/search", async (c) => {
+  noteActivity();
+  const body = z
+    .object({ runId: z.string().optional(), query: z.string().min(2), maxResults: z.number().int().min(1).max(10).default(6) })
+    .parse(await c.req.json());
+  const run = body.runId ? await rt.store.getRun(body.runId) : null;
+  const task = run ? rt.taskRef(run) : { taskId: "web", taskTitle: "Поиск в интернете" };
+  const r = await rt.webSearch(body.query, task, body.maxResults);
+  if (run) await rt.step(run.id, "tool", `поиск в интернете: ${body.query.slice(0, 120)}`, { results: r.results.length });
+  return c.json(r);
 });
 
 app.post("/email/send", async (c) => {

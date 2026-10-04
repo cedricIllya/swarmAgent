@@ -1,4 +1,4 @@
-import type { Run, ServiceRecipe } from "@swarm/contracts";
+import type { Run } from "@swarm/contracts";
 import {
   CHAT_CLASSIFY_SCHEMA,
   chatTaskPrompt,
@@ -9,33 +9,12 @@ import {
   type ChatClassification,
 } from "./prompts";
 import type { AgentRuntime } from "./runtime";
+import { hostOf } from "./domains";
 import { warn } from "./log";
 import { redactInternal } from "./redact";
 import { recordUsage } from "./usage";
 
 const TASK: ChatClassification = { kind: "task", service: null, serviceDomain: null };
-
-function hostOf(raw: string): string {
-  try {
-    return new URL(raw).hostname.toLowerCase();
-  } catch {
-    return raw.toLowerCase().replace(/^https?:\/\//, "").split("/")[0] ?? "";
-  }
-}
-
-function matchRecipe(recipes: ServiceRecipe[], hosts: string[]): ServiceRecipe | null {
-  for (const host of hosts) {
-    const h = host.toLowerCase();
-    if (!h) continue;
-    for (const recipe of recipes) {
-      for (const domain of recipe.domains) {
-        const d = domain.toLowerCase();
-        if (h === d || h.endsWith(`.${d}`)) return recipe;
-      }
-    }
-  }
-  return null;
-}
 
 async function classifyChat(rt: AgentRuntime, message: string, links: string[]): Promise<ChatClassification> {
   try {
@@ -59,9 +38,8 @@ export async function handleChat(
 ): Promise<{ run: Run; chatId: string } | null> {
   const links = extractLinks(args.message);
   const classification = await classifyChat(rt, args.message, links);
-  const services = await rt.store.readServices();
   const hosts = [...links.map(hostOf), classification.serviceDomain ?? ""].filter(Boolean);
-  const recipe = services ? matchRecipe(services.recipes, hosts) : null;
+  const recipe = await rt.knownRecipe(hosts);
 
   let chatId = args.chatId ?? null;
   if (chatId) {
@@ -76,16 +54,28 @@ export async function handleChat(
   await rt.step(run.id, "note", `чат: ${classification.kind}${classification.service ? `, ${classification.service}` : ""}`);
   await rt.addChat({ role: "user", text: args.message, runId: run.id, chatId });
 
-  const prompt = chatTaskPrompt({
-    message: args.message,
-    author: args.author,
-    kind: classification.kind,
-    links,
-    recipe: recipe ? { slug: recipe.slug, name: recipe.name, kind: recipe.kind } : null,
-  });
+  const knownRecipe = recipe ? { slug: recipe.slug, name: recipe.name, kind: recipe.kind } : null;
 
   void (async () => {
     try {
+      // Неизвестный сервис: сначала ищем документацию и MCP, потом даём ход модели.
+      const discovery =
+        classification.kind === "invite" && !recipe
+          ? await rt
+              .discover(run, { service: classification.service, domain: classification.serviceDomain, links })
+              .catch((e) => {
+                warn("chat", "поиск сервиса не удался", { error: String(e) });
+                return null;
+              })
+          : null;
+      const prompt = chatTaskPrompt({
+        message: args.message,
+        author: args.author,
+        kind: classification.kind,
+        links,
+        recipe: knownRecipe,
+        discovery,
+      });
       const text = await rt.think(run, prompt);
       const current = await rt.store.getRun(run.id);
       if (current?.status === "waiting_approval") return;

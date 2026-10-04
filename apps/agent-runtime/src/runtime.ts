@@ -1,16 +1,19 @@
 import Browserbase from "@browserbasehq/sdk";
-import type { BrowserSession, ChatMessage, PendingApproval, Run, RunStep, RuntimeState } from "@swarm/contracts";
+import type { BrowserSession, ChatMessage, PendingApproval, Run, RunStep, RuntimeReport, RuntimeState } from "@swarm/contracts";
 import { emitRuntime } from "./events";
 import { emptyUsage } from "@swarm/usage";
 import { ControlPlaneClient } from "./control-plane";
 import { HermesClient } from "./hermes";
-import { OpenRouterClient } from "./openrouter";
+import { OpenRouterClient, type WebCitation } from "./openrouter";
 import { Store } from "./store";
 import { ManagedBrowserSession, type BrowserDeps } from "./browser/stagehand";
 import { SkyvernClient } from "./browser/skyvern";
 import { approvalContinuationPrompt, systemPrompt } from "./prompts";
 import { redactInternal } from "./redact";
 import { recordUsage, turnDetails, type TaskRef } from "./usage";
+import { discoverService, fetchPage, type DiscoveryInput, type DiscoveryResult, type FetchedPage } from "./discovery";
+import { matchRecipe } from "./domains";
+import { syncHermesMcp } from "./hermes-config-sync";
 import type { RuntimeConfig } from "./config";
 import { log, warn } from "./log";
 
@@ -285,6 +288,99 @@ export class AgentRuntime {
 
   async publishServices(): Promise<void> {
     emitRuntime({ type: "services", connectedServices: await this.connectedServices() });
+  }
+
+  /** Переписать `mcp_servers` Hermes по текущему `services.json` и обновить карточку. */
+  async refreshHermesMcp(): Promise<void> {
+    const snap = await this.store.readServices();
+    if (!snap) return;
+    await syncHermesMcp(this.cfg.dataDir, snap, Boolean(this.cfg.skyvernApiKey));
+    await this.publishServices();
+  }
+
+  /**
+   * Новый рецепт или секрет: на control plane, в локальный `services.json`,
+   * в `config.yaml` Hermes и строкой в журнал задачи.
+   */
+  async applyReport(body: RuntimeReport): Promise<{ slug: string; name: string; kind: "mcp" | "api" | "browser" }> {
+    await this.controlPlane.report(body);
+    const snap = await this.store.readServices();
+    const reported =
+      body.type === "recipe"
+        ? { name: body.recipe.name, kind: body.recipe.kind, slug: body.recipe.slug }
+        : { name: body.credential.slug, kind: body.credential.kind, slug: body.credential.slug };
+    if (snap) {
+      if (body.type === "recipe") {
+        snap.recipes = [...snap.recipes.filter((r) => r.slug !== body.recipe.slug), body.recipe];
+      } else {
+        snap.credentials = [...snap.credentials.filter((r) => r.slug !== body.credential.slug), body.credential];
+      }
+      await this.store.writeServices(snap);
+      await this.refreshHermesMcp();
+    }
+    const kindLabel = { mcp: "MCP", api: "API", browser: "браузер" } as const;
+    const running = body.runId
+      ? await this.store.getRun(body.runId)
+      : (await this.store.listRuns(20)).find((r) => r.status === "running");
+    if (running) {
+      const what = body.type === "recipe" ? "найден способ входа в" : "подключён сервис";
+      await this.step(running.id, "note", `${what} ${reported.name} (${kindLabel[reported.kind]})`);
+    }
+    return reported;
+  }
+
+  // Discovery
+
+  /** Рецепт из каталога по доменам ссылок и подсказке классификатора. */
+  async knownRecipe(hosts: string[]): Promise<ReturnType<typeof matchRecipe>> {
+    const services = await this.store.readServices();
+    return services ? matchRecipe(services.recipes, hosts.filter(Boolean)) : null;
+  }
+
+  /**
+   * Сервиса нет в каталоге: ищем MCP в реестре и на домене, документацию в интернете,
+   * проверяем найденный MCP. Подтверждённый MCP сразу записываем рецептом — Hermes
+   * получит инструменты `mcp_<slug>_*` ещё до первого хода модели.
+   */
+  async discover(run: Run, input: DiscoveryInput): Promise<DiscoveryResult> {
+    const result = await discoverService(input, {
+      openRouter: this.openRouter,
+      model: this.model,
+      agentId: this.cfg.agentId,
+      onStep: (text, data) => this.step(run.id, "tool", text, data),
+      onUsage: (action, r) => recordUsage(this.store, this.taskRef(run), action, "runtime", r),
+    });
+    if (result.confirmed && result.draftRecipe) {
+      const snap = await this.store.readServices();
+      const taken = snap?.recipes.find((r) => r.slug === result.slug);
+      if (!taken) {
+        await this.applyReport({ type: "recipe", recipe: result.draftRecipe, runId: run.id });
+      } else {
+        await this.step(run.id, "note", `слаг ${result.slug} уже занят рецептом «${taken.name}», рецепт не записан`);
+      }
+    }
+    return result;
+  }
+
+  /** Один поиск в интернете с цитатами: для документации и вопросов «найди в интернете». */
+  async webSearch(query: string, task: TaskRef, maxResults = 6): Promise<{ answer: string; results: WebCitation[] }> {
+    const r = await this.openRouter.chat(
+      [
+        {
+          role: "user",
+          content: `Найди в интернете и кратко ответь со ссылками на источники:\n${query.slice(0, 2000)}`,
+        },
+      ],
+      { temperature: 0, maxTokens: 900, webSearch: { maxResults } },
+      this.model,
+    );
+    await recordUsage(this.store, task, "web.search", "runtime", r);
+    return { answer: r.text, results: r.citations };
+  }
+
+  /** Страница документации текстом без разметки, чтобы агент читал её одним вызовом. */
+  async readDocs(url: string, maxChars = 20_000): Promise<FetchedPage | null> {
+    return fetchPage(url, fetch, maxChars);
   }
 
   async state(): Promise<RuntimeState> {

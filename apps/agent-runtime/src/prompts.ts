@@ -1,4 +1,59 @@
 import type { InboundEmail, ServicesSnapshot } from "@swarm/contracts";
+import type { DiscoveryResult } from "./discovery";
+
+export interface KnownRecipeRef {
+  slug: string;
+  name: string;
+  kind: string;
+}
+
+/**
+ * Что онбординг знает о сервисе до первого хода модели: рецепт из каталога
+ * или итог поиска документации. Пусто — модель ищет сама через /discover.
+ */
+export interface OnboardingContext {
+  recipe: KnownRecipeRef | null;
+  discovery: DiscoveryResult | null;
+}
+
+export function onboardingPrompt(ctx: OnboardingContext): string {
+  if (ctx.recipe) {
+    return `В каталоге уже есть рецепт «${ctx.recipe.name}» (${ctx.recipe.slug}), способ ${ctx.recipe.kind}. Не ищи способ заново: входи по нему.`;
+  }
+  const d = ctx.discovery;
+  if (!d) {
+    return "Сервиса нет в каталоге. Сначала вызови POST /discover с runId, названием, доменом и ссылками: он найдёт MCP, документацию и способ входа. Дальше — по его ответу.";
+  }
+  const lines = [`Сервиса «${d.service}» в каталоге не было. Runtime уже поискал документацию${d.domain ? ` по домену ${d.domain}` : ""}:`];
+  if (d.mcp) {
+    const auth = d.mcp.auth === "none" ? "без токена" : d.mcp.auth === "oauth" ? "нужна OAuth-авторизация" : "нужен bearer-токен";
+    lines.push(
+      d.mcp.verified
+        ? `- MCP: ${d.mcp.url} (${d.mcp.transport}, ${auth}) — отвечает на initialize.${d.confirmed ? ` Рецепт «${d.slug}» уже записан; инструменты mcp_${d.slug}_* появятся сами.` : " Проверь и запиши рецепт через /report."}`
+        : `- MCP по документации: ${d.mcp.url} — на initialize не ответил, считай непроверенным.`,
+    );
+    if (d.mcp.verified && d.mcp.auth !== "none") {
+      lines.push("  Токен для MCP возьми в настройках сервиса (см. документацию ниже) или через вход в браузере, затем /report (type=credential).");
+    }
+  } else {
+    lines.push("- Официальный MCP не найден.");
+  }
+  if (d.api) {
+    lines.push(
+      `- API: ${d.api.baseUrl ?? "базовый URL не найден"}${d.api.docsUrl ? `, документация ${d.api.docsUrl}` : ""}${d.api.howToGetKey ? `. Ключ: ${d.api.howToGetKey}` : ""}.`,
+    );
+  }
+  if (d.browser) lines.push(`- Вход в браузере: ${d.browser.loginUrl}, приложение ${d.browser.appUrl}.`);
+  if (d.docs.length) {
+    lines.push("- Страницы документации (читать через POST /docs/fetch):");
+    for (const doc of d.docs.slice(0, 5)) lines.push(`  - ${doc.title ? `${doc.title}: ` : ""}${doc.url}`);
+  }
+  if (d.draftRecipe && !d.confirmed) {
+    lines.push("- Черновик рецепта для /report (type=recipe), после проверки:", JSON.stringify(d.draftRecipe));
+  }
+  lines.push("Иди по лестнице MCP → API → браузер с этими данными. Если чего-то не хватает — POST /web/search или /docs/fetch.");
+  return lines.join("\n");
+}
 
 export interface PromptContext {
   agentName: string;
@@ -33,6 +88,7 @@ export function systemPrompt(ctx: PromptContext): string {
     "Общий каталог способов входа без твоего доступа. Рецепт из него используй сразу, не ищи способ заново. Человеку каталог не перечисляй:",
     catalog.join("\n") || "- пусто",
     "",
+    "Сервиса нет ни в подключённых, ни в каталоге — не гадай адреса: POST /discover найдёт официальный MCP, документацию API и вход; POST /docs/fetch читает страницу документации текстом; POST /web/search ищет в интернете.",
     "Когда нашёл новый способ входа в сервис — сообщи через POST /report (type=recipe).",
     "MCP не регистрируй через hermes mcp и не импортируй hermes_tools: в терминале этого модуля нет. 401 от MCP — нет токена, его тоже запиши через /report.",
     "Когда вошёл в сервис и получил ключ или cookies — POST /report (type=credential).",
@@ -46,7 +102,7 @@ export function systemPrompt(ctx: PromptContext): string {
     .join("\n");
 }
 
-export function emailTaskPrompt(email: InboundEmail, kind: string): string {
+export function emailTaskPrompt(email: InboundEmail, kind: string, onboarding?: OnboardingContext): string {
   return [
     `Пришло письмо (${kind}).`,
     `От: ${email.from}`,
@@ -59,7 +115,10 @@ export function emailTaskPrompt(email: InboundEmail, kind: string): string {
     email.replyText || email.text || "(пусто)",
     "",
     kind === "invite"
-      ? "Это приглашение в сервис. Онбордись по лестнице MCP → API → браузер. Проверь каталог services.json: если рецепт уже есть, не ищи заново. После входа сообщи рецепт и доступ через /report, затем посмотри, есть ли для тебя задачи."
+      ? [
+          "Это приглашение в сервис. Онбордись по лестнице MCP → API → браузер. После входа сообщи рецепт и доступ через /report, затем посмотри, есть ли для тебя задачи.",
+          onboardingPrompt(onboarding ?? { recipe: null, discovery: null }),
+        ].join("\n")
       : "Выполни то, что просят, и подготовь ответ отправителю.",
     "В тексте для человека — только его сервис и публичный интернет, без устройства Swarm.",
   ]
@@ -118,7 +177,8 @@ export function chatTaskPrompt(args: {
   author: string;
   kind: ChatClassification["kind"];
   links: string[];
-  recipe: { slug: string; name: string; kind: string } | null;
+  recipe: KnownRecipeRef | null;
+  discovery?: DiscoveryResult | null;
 }): string {
   const head = `Сообщение из чата от ${args.author}:\n\n${args.message}`;
   const links = args.links.length ? `\n\nСсылки:\n${args.links.map((l) => `- ${l}`).join("\n")}` : "";
@@ -129,9 +189,9 @@ export function chatTaskPrompt(args: {
     return [
       head,
       links,
-      known,
       "",
       "Это приглашение в сервис. Онбордись по лестнице MCP → API → браузер. После входа сообщи рецепт и доступ через /report, затем посмотри, есть ли для тебя задачи.",
+      onboardingPrompt({ recipe: args.recipe, discovery: args.discovery ?? null }),
       "Ответ человеку — только его сервис и публичный интернет, без устройства Swarm. Секрет в ответ не копируй.",
     ].join("\n");
   }

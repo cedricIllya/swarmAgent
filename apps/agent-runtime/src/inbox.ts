@@ -1,10 +1,12 @@
-import type { InboundEmail } from "@swarm/contracts";
+import type { InboundEmail, Run } from "@swarm/contracts";
 import { classifyReply, findDigitCode, matchesThread } from "./approval";
+import { hostOf } from "./domains";
 import {
   EMAIL_CLASSIFY_SCHEMA,
   classifyEmailPrompt,
   emailTaskPrompt,
   type EmailClassification,
+  type OnboardingContext,
 } from "./prompts";
 import type { AgentRuntime } from "./runtime";
 import { recordUsage } from "./usage";
@@ -108,7 +110,8 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail): Promise<vo
   const run = await rt.createRun("email", email.subject || (c.kind === "invite" ? "Приглашение" : "Задача"), email.messageId);
   await rt.step(run.id, "email", `${c.kind} от ${email.from}`, { service: c.service, domain: c.serviceDomain });
   try {
-    const text = await rt.think(run, emailTaskPrompt(email, c.kind));
+    const onboarding = c.kind === "invite" ? await prepareOnboarding(rt, run, email, c) : undefined;
+    const text = await rt.think(run, emailTaskPrompt(email, c.kind, onboarding));
     const current = await rt.store.getRun(run.id);
     if (current?.status === "waiting_approval") return;
     await rt.finishRun(run, "done", text);
@@ -117,6 +120,28 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail): Promise<vo
     warn("inbox", "задача упала", { error: String(e) });
     await rt.step(run.id, "error", String(e));
     await rt.finishRun(run, "failed", String(e));
+  }
+}
+
+/**
+ * Приглашение: рецепт из каталога по доменам ссылок и DKIM, иначе runtime сам ищет
+ * MCP и документацию, чтобы модель начинала ход уже со способом входа.
+ */
+async function prepareOnboarding(
+  rt: AgentRuntime,
+  run: Run,
+  email: InboundEmail,
+  c: EmailClassification,
+): Promise<OnboardingContext> {
+  const hosts = [...email.links.map(hostOf), ...email.dkimDomains, c.serviceDomain ?? ""].filter(Boolean);
+  const recipe = await rt.knownRecipe(hosts);
+  if (recipe) return { recipe: { slug: recipe.slug, name: recipe.name, kind: recipe.kind }, discovery: null };
+  try {
+    const discovery = await rt.discover(run, { service: c.service, domain: c.serviceDomain, links: email.links });
+    return { recipe: null, discovery };
+  } catch (e) {
+    warn("inbox", "поиск сервиса не удался", { error: String(e) });
+    return { recipe: null, discovery: null };
   }
 }
 

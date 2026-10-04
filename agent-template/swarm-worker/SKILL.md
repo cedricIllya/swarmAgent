@@ -27,14 +27,47 @@ version: 1
    называются `mcp_<slug>_<tool>`. Не регистрируй его через `hermes mcp add` и не импортируй `hermes_tools`:
    в терминале этого модуля нет, `execute_code` на этой машине выключен. Ошибка `No module named 'hermes_tools'`
    значит, что регистрация пошла не тем путём. Нет инструментов или сервер отвечает 401 — не хватает токена:
-   запиши его через `/report` (`type=credential`). Если рецепта нет — найди официальный MCP сервиса
-   (документация, `/.well-known/mcp`, страница «integrations»). Нашёл — сообщи рецепт (см. раздел 4) и используй.
+   запиши его через `/report` (`type=credential`). Если рецепта нет — не гадай адреса, а спроси runtime
+   (раздел 1.1): он проверит официальный реестр MCP, типовые адреса на домене и документацию.
 2. **API.** MCP нет — ищи публичный REST/GraphQL API и способ получить ключ. Ключ лежит в
    `credentials[].token`. Запросы делай через `curl` в терминале. Нашёл способ — сообщи рецепт.
 3. **Браузер.** Ни MCP, ни API — работай в браузере через runtime (раздел 2). Регистрация и вход —
    Skyvern. Действия внутри — Stagehand.
 
 Не понижай ступень: если MCP есть, браузер не открывай.
+
+### 1.1. Сервиса нет в каталоге: поиск документации
+
+Когда приглашение пришло из сервиса, которого нет ни в подключённых, ни в общем каталоге, runtime
+обычно уже сходил в поиск до твоего хода и положил результат в подсказку: адрес MCP и нужен ли токен,
+документацию API, где взять ключ, адрес входа. Если в подсказке этого нет — вызови сам:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/discover -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"runId":"<runId>","service":"Example","domain":"example.com","links":["https://example.com/invite/abc"]}'
+# → {"known":{...}} — рецепт уже есть, иди по нему
+# → {"known":null,"result":{"mcp":{"url":"...","auth":"bearer","verified":true},"api":{...},
+#      "browser":{...},"docs":[{"url":"...","title":"..."}],"draftRecipe":{...},"confirmed":true}}
+```
+
+`confirmed: true` — MCP ответил на `initialize`, runtime уже записал рецепт, инструменты `mcp_<slug>_*`
+появятся сами; если `auth` не `none`, добудь токен (документация подскажет где) и запиши `/report`
+(`type=credential`). `confirmed: false` — проверь `draftRecipe` и запиши его сам через `/report`.
+
+Прочитать страницу документации текстом и найти что-то в интернете:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/docs/fetch -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" \
+  -H "Content-Type: application/json" -d '{"url":"https://developers.example.com/api","maxChars":20000}'
+# → {"url":"...","finalUrl":"...","title":"...","text":"..."}
+
+curl -s -X POST http://127.0.0.1:8787/web/search -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" \
+  -H "Content-Type: application/json" -d '{"runId":"<runId>","query":"Example API personal access token"}'
+# → {"answer":"...","results":[{"url":"...","title":"...","content":"..."}]}
+```
+
+Адреса MCP и API бери только из документации или ответа `/discover`, не придумывай их.
 
 ## 2. Браузер через runtime
 
