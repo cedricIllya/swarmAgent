@@ -1,0 +1,21 @@
+{
+  "name": "swarm-agent",
+  "private": true,
+  "packageManager": "pnpm@12.8.1",
+  "scripts": {
+    "dev": "pnpm --filter @swarm/web dev",
+    "dev:runtime": "pnpm --filter @swarm/agent-runtime dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:generate": "pnpm --filter @swarm/db generate",
+    "db:migrate": "pnpm --filter @swarm/db migrate",
+    "mailgun": "tsx scripts/mailgun.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  }
+}
