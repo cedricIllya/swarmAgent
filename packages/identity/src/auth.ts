@@ -7,6 +7,8 @@ export interface AuthOptions {
   secret: string;
   baseURL: string;
   databaseUrl?: string | undefined;
+  /** Доставить ссылку сброса пароля. `url` ведёт на /api/auth и редиректит на страницу нового пароля. */
+  sendResetPassword?: (data: { email: string; name: string; url: string }) => Promise<void>;
 }
 
 /**
@@ -31,6 +33,18 @@ export function createAuth(opts: AuthOptions) {
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 8,
+      resetPasswordTokenExpiresIn: 60 * 60,
+      revokeSessionsOnPasswordReset: true,
+      ...(opts.sendResetPassword
+        ? {
+            sendResetPassword: async ({ user, url }: { user: { email: string; name: string }; url: string }) => {
+              // Не ждём отправку: по времени ответа нельзя понять, есть ли такой email.
+              void opts.sendResetPassword!({ email: user.email, name: user.name, url }).catch((e) =>
+                console.warn(`[auth] письмо сброса пароля: ${e instanceof Error ? e.message : String(e)}`),
+              );
+            },
+          }
+        : {}),
     },
     session: {
       additionalFields: {

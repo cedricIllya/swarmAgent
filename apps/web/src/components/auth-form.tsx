@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { authClient } from "@/lib/auth-client";
 
-export function AuthForm({ mode }: { mode: "login" | "register" }) {
+export function AuthForm({ mode, notice = null }: { mode: "login" | "register"; notice?: string | null }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -41,6 +41,11 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         <p className="muted small" style={{ marginTop: 0, marginBottom: 18 }}>
           {mode === "login" ? "С возвращением." : "Личное пространство создастся автоматически."}
         </p>
+        {notice && (
+          <div className="notice" style={{ marginBottom: 16 }}>
+            {notice}
+          </div>
+        )}
         {mode === "register" && (
           <div className="field">
             <label className="label">Имя</label>
@@ -52,7 +57,14 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           <input className="input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
         </div>
         <div className="field">
-          <label className="label">Пароль</label>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <label className="label">Пароль</label>
+            {mode === "login" && (
+              <Link className="small" href={email ? `/forgot-password?email=${encodeURIComponent(email)}` : "/forgot-password"}>
+                Забыли пароль?
+              </Link>
+            )}
+          </div>
           <input
             className="input"
             type="password"
