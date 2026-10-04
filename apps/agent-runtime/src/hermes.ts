@@ -74,6 +74,7 @@ export class HermesClient {
       return {
         text: json.choices?.[0]?.message?.content ?? "",
         model: json.model ?? args.model,
+        citations: [],
         ...usage,
       };
     } catch (e) {

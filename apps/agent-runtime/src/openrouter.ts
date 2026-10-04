@@ -9,18 +9,28 @@ export interface ChatMessageIn {
   content: ChatContent;
 }
 
+export interface WebCitation {
+  url: string;
+  title: string;
+  content: string;
+}
+
 export interface ChatResult {
   text: string;
   promptTokens: number;
   completionTokens: number;
   costUsd: number;
   model: string;
+  /** Источники из веб-поиска, если он был включён. */
+  citations: WebCitation[];
 }
 
 export interface ChatOptions {
   temperature?: number;
   jsonSchema?: { name: string; schema: unknown };
   maxTokens?: number;
+  /** Подмешать результаты веб-поиска OpenRouter перед ответом модели. */
+  webSearch?: { maxResults?: number; includeDomains?: string[] };
 }
 
 /**
@@ -48,6 +58,12 @@ export class OpenRouterClient {
         json_schema: { name: opts.jsonSchema.name, strict: true, schema: opts.jsonSchema.schema },
       };
     }
+    if (opts.webSearch) {
+      // Плагин `web` ищет ровно один раз на запрос и работает с любой моделью и с json_schema.
+      const plugin: Record<string, unknown> = { id: "web", max_results: opts.webSearch.maxResults ?? 5 };
+      if (opts.webSearch.includeDomains?.length) plugin["include_domains"] = opts.webSearch.includeDomains;
+      body["plugins"] = [plugin];
+    }
     const res = await this.fetchImpl("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -61,13 +77,32 @@ export class OpenRouterClient {
     if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${await res.text()}`);
     const json = (await res.json()) as {
       model?: string;
-      choices?: Array<{ message?: { content?: string | null } }>;
+      choices?: Array<{
+        message?: {
+          content?: string | null;
+          annotations?: Array<{ type?: string; url_citation?: { url?: string; title?: string; content?: string } }>;
+        };
+      }>;
     };
     const usage = parseOpenRouterUsage(json);
+    const message = json.choices?.[0]?.message;
     return {
-      text: json.choices?.[0]?.message?.content ?? "",
+      text: message?.content ?? "",
       model: json.model ?? model,
+      citations: parseCitations(message?.annotations),
       ...usage,
     };
   }
+}
+
+function parseCitations(
+  annotations: Array<{ type?: string; url_citation?: { url?: string; title?: string; content?: string } }> | undefined,
+): WebCitation[] {
+  const out: WebCitation[] = [];
+  for (const a of annotations ?? []) {
+    const url = a.url_citation?.url;
+    if (a.type !== "url_citation" || !url || out.some((c) => c.url === url)) continue;
+    out.push({ url, title: a.url_citation?.title ?? "", content: a.url_citation?.content ?? "" });
+  }
+  return out;
 }
