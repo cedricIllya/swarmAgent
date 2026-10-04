@@ -17,7 +17,7 @@ export class ControlPlaneClient {
     return this.baseUrl.length > 0;
   }
 
-  private async post<T>(path: string, body: unknown): Promise<T> {
+  private async post<T>(path: string, body: unknown, timeoutMs = 30_000): Promise<T> {
     if (!this.enabled) throw new Error("CONTROL_PLANE_URL не задан");
     const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method: "POST",
@@ -27,6 +27,7 @@ export class ControlPlaneClient {
         "X-Agent-Id": this.agentId,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) throw new Error(`control plane ${path} → ${res.status}: ${await res.text()}`);
     return (await res.json()) as T;
@@ -41,6 +42,16 @@ export class ControlPlaneClient {
       await this.post("/api/runtime/report", report);
     } catch (e) {
       warn("control-plane", "не удалось записать отчёт", { error: String(e) });
+    }
+  }
+
+  /** Control plane может спать: будим его этим запросом и просим усыпить нашу машину. */
+  async requestSuspend(): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      await this.post("/api/runtime/suspend", {}, 60_000);
+    } catch (e) {
+      warn("control-plane", "не удалось уснуть", { error: String(e) });
     }
   }
 }

@@ -18,6 +18,7 @@ import { AgentRuntime } from "./runtime";
 import { processEmail } from "./inbox";
 import { handleChat } from "./chat";
 import { startTicker, tick } from "./cron";
+import { machineIsIdle, markSleepy, noteActivity, startIdleWatch } from "./idle";
 import { log, warn } from "./log";
 import { redactInternal } from "./redact";
 
@@ -53,42 +54,53 @@ app.onError((err, c) => {
 app.get("/state", async (c) => c.json(await rt.state()));
 
 app.post("/email", async (c) => {
+  noteActivity();
   const body = DeliverEmailRequestSchema.parse(await c.req.json());
   processEmail(rt, body.email).catch((e) => warn("inbox", "обработка упала", { error: String(e) }));
   return c.json({ accepted: true }, 202);
 });
 
 app.post("/chat", async (c) => {
+  noteActivity();
   const body = ChatRequestSchema.parse(await c.req.json());
   const run = await handleChat(rt, body.message, body.author);
   return c.json({ runId: run.id }, 202);
 });
 
 app.post("/settings", async (c) => {
+  noteActivity();
   const body = UpdateSettingsRequestSchema.parse(await c.req.json());
   await rt.updateSettings(body);
   return c.json({ ok: true, model: rt.model, autonomous: rt.autonomous });
 });
 
 app.post("/services", async (c) => {
+  noteActivity();
   const body = SyncServicesRequestSchema.parse(await c.req.json());
   await rt.store.writeServices(body.snapshot);
   return c.json({ ok: true, recipes: body.snapshot.recipes.length, credentials: body.snapshot.credentials.length });
 });
 
 app.post("/google-token", async (c) => {
+  noteActivity();
   const body = GoogleTokenRequestSchema.parse(await c.req.json());
   await rt.store.writeGoogleToken(body.token);
   return c.json({ ok: true });
 });
 
 app.post("/approvals/:id", async (c) => {
+  noteActivity();
   const { approved } = z.object({ approved: z.boolean() }).parse(await c.req.json());
   const run = await rt.resolveApproval(c.req.param("id"), approved);
   return run ? c.json({ runId: run.id, status: run.status }) : c.json({ error: "not found" }, 404);
 });
 
-app.post("/tick", async (c) => c.json(await tick(rt)));
+app.post("/tick", async (c) => {
+  const started = Date.now();
+  const result = await tick(rt);
+  if (await machineIsIdle(rt)) markSleepy(started);
+  return c.json(result);
+});
 
 app.get("/runs/:id", async (c) => {
   const run = await rt.store.getRun(c.req.param("id"));
@@ -115,6 +127,7 @@ const BrowserOpen = z.object({
 });
 
 app.post("/browser/open", async (c) => {
+  noteActivity();
   const body = BrowserOpen.parse(await c.req.json());
   const run = await rt.store.getRun(body.runId);
   if (!run) return c.json({ error: "run not found" }, 404);
@@ -129,6 +142,7 @@ app.post("/browser/open", async (c) => {
 const Session = z.object({ sessionId: z.string() });
 
 app.post("/browser/goto", async (c) => {
+  noteActivity();
   const body = Session.extend({ url: z.string().url() }).parse(await c.req.json());
   const s = rt.sessions.get(body.sessionId);
   if (!s) return c.json({ error: "session not found" }, 404);
@@ -137,6 +151,7 @@ app.post("/browser/goto", async (c) => {
 });
 
 app.post("/browser/act", async (c) => {
+  noteActivity();
   const body = Session.extend({ instruction: z.string() }).parse(await c.req.json());
   const s = rt.sessions.get(body.sessionId);
   if (!s) return c.json({ error: "session not found" }, 404);
@@ -144,6 +159,7 @@ app.post("/browser/act", async (c) => {
 });
 
 app.post("/browser/extract", async (c) => {
+  noteActivity();
   const body = Session.extend({ instruction: z.string(), schema: z.unknown().optional() }).parse(await c.req.json());
   const s = rt.sessions.get(body.sessionId);
   if (!s) return c.json({ error: "session not found" }, 404);
@@ -151,6 +167,7 @@ app.post("/browser/extract", async (c) => {
 });
 
 app.post("/browser/observe", async (c) => {
+  noteActivity();
   const body = Session.extend({ instruction: z.string() }).parse(await c.req.json());
   const s = rt.sessions.get(body.sessionId);
   if (!s) return c.json({ error: "session not found" }, 404);
@@ -158,6 +175,7 @@ app.post("/browser/observe", async (c) => {
 });
 
 app.post("/browser/wait-code", async (c) => {
+  noteActivity();
   const body = Session.extend({ timeoutSec: z.number().int().min(10).max(900).default(300) }).parse(await c.req.json());
   const s = rt.sessions.get(body.sessionId);
   if (!s) return c.json({ error: "session not found" }, 404);
@@ -166,12 +184,14 @@ app.post("/browser/wait-code", async (c) => {
 });
 
 app.post("/browser/close", async (c) => {
+  noteActivity();
   const body = Session.parse(await c.req.json());
   await rt.closeBrowser(body.sessionId);
   return c.json({ ok: true });
 });
 
 app.post("/skyvern/login", async (c) => {
+  noteActivity();
   if (!rt.skyvern) return c.json({ error: "SKYVERN_API_KEY не задан" }, 400);
   const body = z
     .object({
@@ -190,12 +210,14 @@ app.post("/skyvern/login", async (c) => {
 });
 
 app.post("/approval", async (c) => {
+  noteActivity();
   const body = z.object({ runId: z.string(), description: z.string().min(1) }).parse(await c.req.json());
   const r = await rt.requestApproval(body.runId, body.description);
   return c.json({ approved: r.approved, pendingId: r.pending?.id ?? null });
 });
 
 app.post("/report", async (c) => {
+  noteActivity();
   const body = RuntimeReportSchema.parse(await c.req.json());
   await rt.controlPlane.report(body);
   const snap = await rt.store.readServices();
@@ -211,6 +233,7 @@ app.post("/report", async (c) => {
 });
 
 app.post("/email/send", async (c) => {
+  noteActivity();
   const body = z
     .object({ runId: z.string(), to: z.string(), subject: z.string(), text: z.string(), inReplyTo: z.string().optional() })
     .parse(await c.req.json());
@@ -222,6 +245,7 @@ app.post("/email/send", async (c) => {
 });
 
 app.post("/runs/:id/step", async (c) => {
+  noteActivity();
   const body = z
     .object({
       kind: z.enum(["model", "tool", "mcp", "api", "browser", "email", "note", "error"]),
@@ -233,8 +257,12 @@ app.post("/runs/:id/step", async (c) => {
   return c.json({ ok: true });
 });
 
-startTicker(rt, cfg.tickMinutes);
+// На Fly тик приходит с control plane: свой таймер во сне не тикает.
+if (!cfg.controlPlaneUrl) startTicker(rt, cfg.tickMinutes);
+startIdleWatch(rt);
 
-serve({ fetch: app.fetch, port: cfg.port, hostname: "0.0.0.0" }, () => {
+// Приватная сеть Fly (`.flycast` и старый `.internal`) — только IPv6. `0.0.0.0` снаружи недостижим,
+// `::` слушает оба стека, 127.0.0.1 для healthcheck и Hermes тоже остаётся.
+serve({ fetch: app.fetch, port: cfg.port, hostname: "::" }, () => {
   log("main", "runtime запущен", { port: cfg.port, agentId: cfg.agentId, email: cfg.email });
 });

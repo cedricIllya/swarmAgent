@@ -162,6 +162,11 @@ export class Store {
     await this.writeJson(this.dir("deferred-emails", `${id}.json`), email);
   }
 
+  async hasDeferredEmails(): Promise<boolean> {
+    const files = await readdir(this.dir("deferred-emails")).catch(() => [] as string[]);
+    return files.some((f) => f.endsWith(".json"));
+  }
+
   async takeDeferredEmails(): Promise<InboundEmail[]> {
     const files = (await readdir(this.dir("deferred-emails")).catch(() => [])).sort();
     const out: InboundEmail[] = [];
