@@ -8,6 +8,7 @@ import { Store } from "./store";
 import { ManagedBrowserSession, type BrowserDeps } from "./browser/stagehand";
 import { SkyvernClient } from "./browser/skyvern";
 import { approvalContinuationPrompt, systemPrompt } from "./prompts";
+import { redactInternal } from "./redact";
 import { recordUsage, type TaskRef } from "./usage";
 import type { RuntimeConfig } from "./config";
 import { log, warn } from "./log";
@@ -83,7 +84,7 @@ export class AgentRuntime {
 
   async finishRun(run: Run, status: Run["status"], summary: string): Promise<void> {
     run.status = status;
-    run.summary = summary.slice(0, 2000);
+    run.summary = redactInternal(summary).slice(0, 2000);
     run.finishedAt = status === "waiting_approval" ? null : new Date().toISOString();
     await this.store.saveRun(run);
     log("run", "завершена", { id: run.id, status });
@@ -107,19 +108,21 @@ export class AgentRuntime {
     await this.step(run.id, "model", "запрос модели", { chars: prompt.length });
     const r = await this.hermes.run(prompt, { sessionId: run.threadId ?? run.id, system, model: this.model });
     await recordUsage(this.store, this.taskRef(run), action, "hermes", r);
-    await this.step(run.id, "model", r.text.slice(0, 4000), {
+    const text = redactInternal(r.text);
+    await this.step(run.id, "model", text.slice(0, 4000), {
       promptTokens: r.promptTokens,
       completionTokens: r.completionTokens,
       costUsd: r.costUsd,
     });
-    return r.text;
+    return text;
   }
 
   // Approvals
 
   async requestApproval(runId: string, description: string): Promise<{ approved: boolean; pending: PendingApproval | null }> {
+    const safe = redactInternal(description);
     if (this.autonomous) {
-      await this.step(runId, "note", `автономно: ${description}`);
+      await this.step(runId, "note", `автономно: ${safe}`);
       return { approved: true, pending: null };
     }
     const run = await this.store.getRun(runId);
@@ -129,7 +132,7 @@ export class AgentRuntime {
       id: newId("apr"),
       runId,
       createdAt: new Date().toISOString(),
-      description,
+      description: safe,
       emailMessageId: null,
     };
 
@@ -138,7 +141,7 @@ export class AgentRuntime {
         const { messageId } = await this.controlPlane.sendEmail({
           to: this.cfg.ownerEmail,
           subject: `Нужно одобрение: ${run.title}`,
-          text: `${this.cfg.agentName} хочет:\n\n${description}\n\nОтветьте «да» или «нет» одним словом. Любой другой текст станет новой задачей.`,
+          text: `${this.cfg.agentName} хочет:\n\n${safe}\n\nОтветьте «да» или «нет» одним словом. Любой другой текст станет новой задачей.`,
           ...(run.threadId ? { inReplyTo: run.threadId, references: [run.threadId] } : {}),
         });
         pending.emailMessageId = messageId;
@@ -149,11 +152,11 @@ export class AgentRuntime {
       }
     }
 
-    await this.addChat({ role: "agent", text: `Нужно одобрение: ${description}\nОтветьте «да» или «нет».`, runId });
+    await this.addChat({ role: "agent", text: `Нужно одобрение: ${safe}\nОтветьте «да» или «нет».`, runId });
     const list = await this.store.listApprovals();
     list.push(pending);
     await this.store.saveApprovals(list);
-    await this.finishRun(run, "waiting_approval", `Ждёт одобрения: ${description}`);
+    await this.finishRun(run, "waiting_approval", `Ждёт одобрения: ${safe}`);
     return { approved: false, pending };
   }
 

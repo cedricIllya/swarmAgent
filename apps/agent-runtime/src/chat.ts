@@ -2,6 +2,7 @@ import type { Run } from "@swarm/contracts";
 import { chatTaskPrompt } from "./prompts";
 import type { AgentRuntime } from "./runtime";
 import { warn } from "./log";
+import { redactInternal } from "./redact";
 
 /** Чат на карточке агента: задание в обход подключённых сервисов. */
 export async function handleChat(rt: AgentRuntime, message: string, author: string): Promise<Run> {
@@ -18,7 +19,7 @@ export async function handleChat(rt: AgentRuntime, message: string, author: stri
       warn("chat", "задача упала", { error: String(e) });
       await rt.step(run.id, "error", String(e));
       await rt.finishRun(run, "failed", String(e));
-      await rt.addChat({ role: "agent", text: `Не получилось: ${String(e)}`, runId: run.id });
+      await rt.addChat({ role: "agent", text: redactInternal(`Не получилось: ${String(e)}`), runId: run.id });
     }
   })();
   return run;

@@ -19,6 +19,7 @@ import { processEmail } from "./inbox";
 import { handleChat } from "./chat";
 import { startTicker, tick } from "./cron";
 import { log, warn } from "./log";
+import { redactInternal } from "./redact";
 
 const cfg = loadConfig();
 const rt = new AgentRuntime(cfg);
@@ -214,7 +215,7 @@ app.post("/email/send", async (c) => {
     .object({ runId: z.string(), to: z.string(), subject: z.string(), text: z.string(), inReplyTo: z.string().optional() })
     .parse(await c.req.json());
   const { runId, ...mail } = body;
-  const { messageId } = await rt.controlPlane.sendEmail(mail);
+  const { messageId } = await rt.controlPlane.sendEmail({ ...mail, text: redactInternal(mail.text) });
   await rt.store.rememberSent(messageId, { runId, to: mail.to, approvalId: null });
   await rt.step(runId, "email", `письмо отправлено ${mail.to}`, { messageId });
   return c.json({ messageId });
@@ -228,7 +229,7 @@ app.post("/runs/:id/step", async (c) => {
       data: z.record(z.string(), z.unknown()).optional(),
     })
     .parse(await c.req.json());
-  await rt.step(c.req.param("id"), body.kind, body.text, body.data);
+  await rt.step(c.req.param("id"), body.kind, redactInternal(body.text), body.data);
   return c.json({ ok: true });
 });
 
