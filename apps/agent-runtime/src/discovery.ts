@@ -617,8 +617,17 @@ export async function discoverService(input: DiscoveryInput, deps: DiscoveryDeps
   if (!mcp && docMcp) {
     const transport: McpTransport = findings.mcpTransport ?? (/\/sse\b/.test(docMcp) ? "sse" : "streamable_http");
     const probe = await probeMcp(docMcp, transport, fetchImpl);
-    mcp = { url: probe?.url ?? docMcp, transport, auth: probe?.auth ?? "bearer", source: "docs", verified: probe?.ok ?? false };
-    await step(probe?.ok ? `MCP из документации подтверждён: ${docMcp}` : `MCP из документации не ответил: ${docMcp}`);
+    if (probe?.ok) {
+      mcp = { url: probe.url ?? docMcp, transport, auth: probe.auth, source: "docs", verified: true };
+      await step(`MCP из документации подтверждён: ${mcp.url}`);
+    } else if (probe === null) {
+      // Сеть не ответила — адрес из документации остаётся как непроверенная подсказка.
+      mcp = { url: docMcp, transport, auth: "bearer", source: "docs", verified: false };
+      await step(`MCP из документации не ответил: ${docMcp}`);
+    } else {
+      // Сервер ответил, но это не MCP: модель выдумала адрес или он устарел.
+      await step(`адрес MCP из документации не подтвердился: ${docMcp} (${probe.status})`);
+    }
   }
 
   const api: ApiFinding | null =
@@ -645,6 +654,7 @@ export async function discoverService(input: DiscoveryInput, deps: DiscoveryDeps
   ]
     .filter(Boolean)
     .join(" ")
+    .replace(/\s+/g, " ")
     .slice(0, 1000);
 
   const draftRecipe = composeRecipe({ slug, name: service, domain, mcp, api, browser, notes, agentId: deps.agentId });
