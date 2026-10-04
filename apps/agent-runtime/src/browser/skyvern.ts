@@ -56,6 +56,7 @@ export class SkyvernClient {
       provider: "skyvern",
       purpose: `${args.purpose}: ${args.url}`,
       hasVideo: false,
+      liveUrl: null,
     };
     await this.store.saveBrowserSession(meta);
     await this.store.appendBrowserAction(meta.id, { type: "skyvern.start", purpose: args.purpose, url: args.url });

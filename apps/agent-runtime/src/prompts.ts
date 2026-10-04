@@ -27,10 +27,10 @@ export function systemPrompt(ctx: PromptContext): string {
     "Всегда следуй скиллу swarm-worker. Он описывает локальные эндпоинты runtime:",
     `http://127.0.0.1:${ctx.runtimePort} с заголовком Authorization: Bearer $SWARM_RUNTIME_TOKEN.`,
     "",
-    "Сервисы этого клиента:",
+    "Твои подключённые сервисы (доступ есть только у тебя, другие агенты его не видят):",
     own.join("\n") || "- пока нет",
     "",
-    "Общий каталог способов входа, доступа у клиента нет. Человеку его не перечисляй:",
+    "Общий каталог способов входа без твоего доступа. Рецепт из него используй сразу, не ищи способ заново. Человеку каталог не перечисляй:",
     catalog.join("\n") || "- пусто",
     "",
     "Когда нашёл новый способ входа в сервис — сообщи через POST /report (type=recipe).",
@@ -66,8 +66,84 @@ export function emailTaskPrompt(email: InboundEmail, kind: string): string {
     .join("\n");
 }
 
-export function chatTaskPrompt(message: string, author: string): string {
-  return `Сообщение из чата от ${author}:\n\n${message}\n\nВыполни и ответь коротко. Ответ — только про сервисы этого клиента или публичный интернет, без устройства Swarm.`;
+export const CHAT_CLASSIFY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["kind", "service", "serviceDomain"],
+  properties: {
+    kind: { type: "string", enum: ["invite", "credential", "task"] },
+    service: { type: ["string", "null"] },
+    serviceDomain: { type: ["string", "null"] },
+  },
+} as const;
+
+export interface ChatClassification {
+  kind: "invite" | "credential" | "task";
+  service: string | null;
+  serviceDomain: string | null;
+}
+
+export function classifyChatPrompt(message: string, links: string[]): string {
+  return [
+    "Классифицируй сообщение из чата владельца агенту. Верни JSON.",
+    "kind: invite — ссылка или текст приглашения в сервис; credential — API-ключ, токен или пароль для уже названного сервиса; task — обычная задача.",
+    "service — название сервиса, serviceDomain — его домен, если понятно.",
+    "",
+    links.length ? `Ссылки: ${links.join(" ")}` : "Ссылок нет.",
+    "",
+    message.slice(0, 4000),
+  ].join("\n");
+}
+
+export function extractLinks(text: string): string[] {
+  return [...text.matchAll(/https?:\/\/[^\s<>"')\]]+/g)].map((m) => m[0]).slice(0, 15);
+}
+
+export function chatTitle(kind: ChatClassification["kind"], service: string | null, message: string): string {
+  if (kind === "invite") return `Подключение: ${service || "сервис"}`;
+  if (kind === "credential") return `Ключ: ${service || "сервис"}`;
+  const line = message.replace(/\s+/g, " ").trim();
+  return line.slice(0, 60) || "Задача";
+}
+
+export function runTitle(kind: ChatClassification["kind"], service: string | null, message: string): string {
+  if (kind === "invite") return `Приглашение: ${service || "сервис"}`;
+  if (kind === "credential") return `Ключ: ${service || "сервис"}`;
+  return message.replace(/\s+/g, " ").trim().slice(0, 120) || "Задача";
+}
+
+export function chatTaskPrompt(args: {
+  message: string;
+  author: string;
+  kind: ChatClassification["kind"];
+  links: string[];
+  recipe: { slug: string; name: string; kind: string } | null;
+}): string {
+  const head = `Сообщение из чата от ${args.author}:\n\n${args.message}`;
+  const links = args.links.length ? `\n\nСсылки:\n${args.links.map((l) => `- ${l}`).join("\n")}` : "";
+  const known = args.recipe
+    ? `\n\nВ каталоге уже есть рецепт «${args.recipe.name}» (${args.recipe.slug}), способ ${args.recipe.kind}. Не ищи способ заново.`
+    : "";
+  if (args.kind === "invite") {
+    return [
+      head,
+      links,
+      known,
+      "",
+      "Это приглашение в сервис. Онбордись по лестнице MCP → API → браузер. После входа сообщи рецепт и доступ через /report, затем посмотри, есть ли для тебя задачи.",
+      "Ответ человеку — только его сервис и публичный интернет, без устройства Swarm. Секрет в ответ не копируй.",
+    ].join("\n");
+  }
+  if (args.kind === "credential") {
+    return [
+      head,
+      known,
+      "",
+      "Это ключ или токен доступа. Проверь его запросом к сервису. Если подходит — запиши через /report (type=credential) и коротко скажи, что сервис подключён. Секрет в ответ не копируй.",
+      "Ответ человеку — только его сервис, без устройства Swarm.",
+    ].join("\n");
+  }
+  return `${head}\n\nВыполни и ответь коротко. Ответ — только про сервисы этого клиента или публичный интернет, без устройства Swarm.`;
 }
 
 export function tickPrompt(services: ServicesSnapshot): string {

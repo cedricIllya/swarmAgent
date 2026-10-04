@@ -18,6 +18,8 @@ import { AgentRuntime } from "./runtime";
 import { processEmail } from "./inbox";
 import { handleChat } from "./chat";
 import { startTicker, tick } from "./cron";
+import { streamRuntimeEvents } from "./events-http";
+import { syncHermesMcp } from "./hermes-config-sync";
 import { machineIsIdle, markSleepy, noteActivity, startIdleWatch } from "./idle";
 import { log, warn } from "./log";
 import { redactInternal } from "./redact";
@@ -53,6 +55,15 @@ app.onError((err, c) => {
 
 app.get("/state", async (c) => c.json(await rt.state()));
 
+app.get("/events", (c) => streamRuntimeEvents(c, rt));
+
+async function refreshHermesMcp(): Promise<void> {
+  const snap = await rt.store.readServices();
+  if (!snap) return;
+  await syncHermesMcp(cfg.dataDir, snap, Boolean(cfg.skyvernApiKey));
+  await rt.publishServices();
+}
+
 app.post("/email", async (c) => {
   noteActivity();
   const body = DeliverEmailRequestSchema.parse(await c.req.json());
@@ -63,8 +74,37 @@ app.post("/email", async (c) => {
 app.post("/chat", async (c) => {
   noteActivity();
   const body = ChatRequestSchema.parse(await c.req.json());
-  const run = await handleChat(rt, body.message, body.author);
-  return c.json({ runId: run.id }, 202);
+  const result = await handleChat(rt, { message: body.message, author: body.author, chatId: body.chatId });
+  if (!result) return c.json({ error: "chat not found" }, 404);
+  return c.json({ runId: result.run.id, chatId: result.chatId }, 202);
+});
+
+app.get("/chats", async (c) => c.json(await rt.store.listChats()));
+
+app.post("/chats", async (c) => {
+  noteActivity();
+  const body = z.object({ title: z.string().optional() }).parse(await c.req.json().catch(() => ({})));
+  const chat = await rt.store.createChat(body.title?.trim() || "Новый чат");
+  return c.json(chat, 201);
+});
+
+app.get("/chats/:id/messages", async (c) => {
+  const chat = await rt.store.getChat(c.req.param("id"));
+  if (!chat) return c.json({ error: "not found" }, 404);
+  return c.json(await rt.store.listChatMessages(chat.id));
+});
+
+app.patch("/chats/:id", async (c) => {
+  noteActivity();
+  const body = z.object({ title: z.string().min(1).max(80) }).parse(await c.req.json());
+  const chat = await rt.store.renameChat(c.req.param("id"), body.title);
+  return chat ? c.json(chat) : c.json({ error: "not found" }, 404);
+});
+
+app.delete("/chats/:id", async (c) => {
+  noteActivity();
+  const ok = await rt.store.deleteChat(c.req.param("id"));
+  return ok ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
 });
 
 app.post("/settings", async (c) => {
@@ -78,6 +118,7 @@ app.post("/services", async (c) => {
   noteActivity();
   const body = SyncServicesRequestSchema.parse(await c.req.json());
   await rt.store.writeServices(body.snapshot);
+  await refreshHermesMcp();
   return c.json({ ok: true, recipes: body.snapshot.recipes.length, credentials: body.snapshot.credentials.length });
 });
 
@@ -221,6 +262,10 @@ app.post("/report", async (c) => {
   const body = RuntimeReportSchema.parse(await c.req.json());
   await rt.controlPlane.report(body);
   const snap = await rt.store.readServices();
+  const reported =
+    body.type === "recipe"
+      ? { name: body.recipe.name, kind: body.recipe.kind, slug: body.recipe.slug }
+      : { name: body.credential.slug, kind: body.credential.kind, slug: body.credential.slug };
   if (snap) {
     if (body.type === "recipe") {
       snap.recipes = [...snap.recipes.filter((r) => r.slug !== body.recipe.slug), body.recipe];
@@ -228,6 +273,14 @@ app.post("/report", async (c) => {
       snap.credentials = [...snap.credentials.filter((r) => r.slug !== body.credential.slug), body.credential];
     }
     await rt.store.writeServices(snap);
+    await refreshHermesMcp();
+  }
+  const kindLabel = { mcp: "MCP", api: "API", browser: "браузер" } as const;
+  const running = body.runId
+    ? await rt.store.getRun(body.runId)
+    : (await rt.store.listRuns(20)).find((r) => r.status === "running");
+  if (running) {
+    await rt.step(running.id, "note", `подключён сервис ${reported.name} (${kindLabel[reported.kind]})`);
   }
   return c.json({ ok: true });
 });

@@ -1,4 +1,5 @@
 import { tick } from "./cron";
+import { closeAllStreams } from "./events";
 import type { AgentRuntime } from "./runtime";
 import { warn } from "./log";
 
@@ -37,6 +38,8 @@ async function maybeSuspend(rt: AgentRuntime): Promise<void> {
   }
   suspending = true;
   try {
+    closeAllStreams();
+    await new Promise((r) => setTimeout(r, 40));
     await rt.controlPlane.requestSuspend();
   } catch (e) {
     warn("idle", "не удалось уснуть", { error: String(e) });

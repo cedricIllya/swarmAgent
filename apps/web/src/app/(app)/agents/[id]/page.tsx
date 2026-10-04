@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { getAgent, toAgentView } from "@swarm/agents";
 import { requireViewer } from "@/lib/session";
@@ -11,5 +12,9 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
   const { id } = await params;
   const row = await getAgent(db(), viewer.tenant.id, id);
   if (!row) notFound();
-  return <AgentDashboard initialAgent={toAgentView(row)} />;
+  return (
+    <Suspense fallback={null}>
+      <AgentDashboard initialAgent={toAgentView(row)} />
+    </Suspense>
+  );
 }

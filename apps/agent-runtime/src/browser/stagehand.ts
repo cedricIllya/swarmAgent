@@ -70,11 +70,20 @@ export class ManagedBrowserSession {
         ...(contextId ? { context: { id: contextId, persist: true } } : {}),
       },
     });
+    let liveUrl: string | null = null;
+    try {
+      const links = await deps.bb.sessions.debug(session.id);
+      const url = links.debuggerFullscreenUrl;
+      liveUrl = url ? `${url}${url.includes("?") ? "&" : "?"}navbar=false` : null;
+    } catch (e) {
+      warn("browser", "live view недоступен", { error: String(e) });
+    }
     const s = new ManagedBrowserSession(deps, task, session.id, {
       runId: args.runId,
       startedAt: new Date().toISOString(),
       provider: "browserbase",
       purpose: args.purpose,
+      liveUrl,
     });
     await deps.store.saveBrowserSession(s.meta);
     await s.connect();
@@ -236,6 +245,7 @@ export class ManagedBrowserSession {
     );
     this.meta.finishedAt = new Date().toISOString();
     this.meta.hasVideo = hasVideo;
+    this.meta.liveUrl = null;
     await this.deps.store.saveBrowserSession(this.meta);
     log("browser", "сессия закрыта", { id: this.id, hasVideo });
     return this.meta;

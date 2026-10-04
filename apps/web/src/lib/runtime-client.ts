@@ -1,5 +1,7 @@
 import type {
+  ChatMessage,
   ChatRequest,
+  ChatThread,
   DeliverEmailRequest,
   GoogleTokenRequest,
   RuntimeState,
@@ -86,8 +88,35 @@ export class RuntimeClient {
     return this.call("POST", "/email", body);
   }
 
-  chat(body: ChatRequest): Promise<{ runId: string }> {
-    return this.call("POST", "/chat", body);
+  chat(body: ChatRequest): Promise<{ runId: string; chatId: string }> {
+    return this.call("POST", "/chat", body, 60_000);
+  }
+
+  chats(): Promise<ChatThread[]> {
+    return this.call("GET", "/chats");
+  }
+
+  createChat(title?: string): Promise<ChatThread> {
+    return this.call("POST", "/chats", title ? { title } : {});
+  }
+
+  chatMessages(id: string): Promise<ChatMessage[]> {
+    return this.call("GET", `/chats/${id}/messages`);
+  }
+
+  renameChat(id: string, title: string): Promise<ChatThread> {
+    return this.call("PATCH", `/chats/${id}`, { title });
+  }
+
+  deleteChat(id: string): Promise<{ ok: boolean }> {
+    return this.call("DELETE", `/chats/${id}`);
+  }
+
+  events(signal: AbortSignal): Promise<Response> {
+    return fetch(`${this.baseUrl}/events`, {
+      headers: { Authorization: `Bearer ${this.token}`, Accept: "text/event-stream" },
+      signal,
+    });
   }
 
   updateSettings(body: UpdateSettingsRequest): Promise<{ ok: boolean }> {

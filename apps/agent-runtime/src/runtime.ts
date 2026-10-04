@@ -1,5 +1,6 @@
 import Browserbase from "@browserbasehq/sdk";
-import type { ChatMessage, PendingApproval, Run, RunStep, RuntimeState, ServiceRecipe } from "@swarm/contracts";
+import type { ChatMessage, PendingApproval, Run, RunStep, RuntimeState } from "@swarm/contracts";
+import { emitRuntime } from "./events";
 import { emptyUsage } from "@swarm/usage";
 import { ControlPlaneClient } from "./control-plane";
 import { HermesClient } from "./hermes";
@@ -130,12 +131,15 @@ export class AgentRuntime {
     const run = await this.store.getRun(runId);
     if (!run) throw new Error("run не найден");
 
+    const chatId =
+      run.trigger === "chat" && run.threadId ? run.threadId : (await this.store.ensureSystemChat()).id;
     const pending: PendingApproval = {
       id: newId("apr"),
       runId,
       createdAt: new Date().toISOString(),
       description: safe,
       emailMessageId: null,
+      chatId,
     };
 
     if (this.cfg.ownerEmail && this.controlPlane.enabled) {
@@ -154,7 +158,12 @@ export class AgentRuntime {
       }
     }
 
-    await this.addChat({ role: "agent", text: `Нужно одобрение: ${safe}\nОтветьте «да» или «нет».`, runId });
+    await this.addChat({
+      role: "agent",
+      text: `Нужно одобрение: ${safe}\nОтветьте «да» или «нет».`,
+      runId,
+      chatId,
+    });
     const list = await this.store.listApprovals();
     list.push(pending);
     await this.store.saveApprovals(list);
@@ -174,7 +183,8 @@ export class AgentRuntime {
     await this.step(run.id, "note", approved ? "одобрено человеком" : "отклонено человеком");
     const text = await this.think(run, approvalContinuationPrompt(pending.description, approved), "hermes.approval");
     await this.finishRun(run, "done", text);
-    await this.addChat({ role: "agent", text, runId: run.id });
+    const chatId = pending.chatId ?? (await this.store.ensureSystemChat()).id;
+    await this.addChat({ role: "agent", text, runId: run.id, chatId });
     return run;
   }
 
@@ -186,8 +196,9 @@ export class AgentRuntime {
 
   // Chat
 
-  async addChat(msg: Omit<ChatMessage, "at">): Promise<void> {
-    await this.store.addChat({ at: new Date().toISOString(), ...msg });
+  async addChat(msg: Omit<ChatMessage, "at" | "chatId"> & { chatId?: string | null }): Promise<void> {
+    const chatId = msg.chatId || (await this.store.ensureSystemChat()).id;
+    await this.store.addChatMessage(chatId, { at: new Date().toISOString(), ...msg, chatId });
   }
 
   // Browser
@@ -245,18 +256,24 @@ export class AgentRuntime {
   async connectedServices(): Promise<RuntimeState["connectedServices"]> {
     const snap = await this.store.readServices();
     if (!snap) return [];
-    return snap.recipes.map((r: ServiceRecipe) => ({
-      slug: r.slug,
-      name: r.name,
-      kind: r.kind,
-      hasCredential: snap.credentials.some((c) => c.slug === r.slug),
-    }));
+    return snap.recipes
+      .filter((r) => snap.credentials.some((c) => c.slug === r.slug))
+      .map((r) => ({
+        slug: r.slug,
+        name: r.name,
+        kind: r.kind,
+        hasCredential: true,
+      }));
+  }
+
+  async publishServices(): Promise<void> {
+    emitRuntime({ type: "services", connectedServices: await this.connectedServices() });
   }
 
   async state(): Promise<RuntimeState> {
-    const [runs, chat, browserSessions, pendingApprovals, usage, connectedServices] = await Promise.all([
+    const [runs, chats, browserSessions, pendingApprovals, usage, connectedServices] = await Promise.all([
       this.store.listRuns(100),
-      this.store.listChat(200),
+      this.store.listChats(),
       this.store.listBrowserSessions(),
       this.store.listApprovals(),
       this.store.usageSummary().catch(() => emptyUsage()),
@@ -270,7 +287,7 @@ export class AgentRuntime {
       busyInBrowser: this.busyInBrowser,
       pendingApprovals,
       runs,
-      chat,
+      chats,
       browserSessions,
       usage,
       connectedServices,

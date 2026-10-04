@@ -11,12 +11,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const agent = await getAgent(db(), viewer.tenant.id, id);
   if (!agent) return NextResponse.json({ error: "not found" }, { status: 404 });
-  const body = ChatRequestSchema.pick({ message: true }).safeParse(await req.json().catch(() => null));
+  const body = ChatRequestSchema.pick({ message: true, chatId: true }).safeParse(await req.json().catch(() => null));
   if (!body.success) return NextResponse.json({ error: "bad input" }, { status: 400 });
   const client = await awakeRuntime(agent);
   if (!client) {
     return NextResponse.json({ error: "Агент ещё не запущен" }, { status: 409 });
   }
-  const r = await client.chat({ message: body.data.message, author: viewer.user.email });
+  const r = await client.chat({
+    message: body.data.message,
+    author: viewer.user.email,
+    ...(body.data.chatId ? { chatId: body.data.chatId } : {}),
+  });
   return NextResponse.json(r, { status: 202 });
 }
