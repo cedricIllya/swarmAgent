@@ -24,6 +24,8 @@ export class SkyvernClient {
     /** Что передать на форму: email агента, пароль из хранилища. Не логируется. */
     credentials: Record<string, string>;
     timeoutMs?: number;
+    /** Сессия создана и сохранена — можно показать её владельцу. */
+    onSession?: (session: BrowserSession) => Promise<void>;
   }): Promise<{ session: BrowserSession; status: string; output: unknown }> {
     const res = await this.fetchImpl(`${this.base}/v1/run/tasks`, {
       method: "POST",
@@ -60,6 +62,7 @@ export class SkyvernClient {
     };
     await this.store.saveBrowserSession(meta);
     await this.store.appendBrowserAction(meta.id, { type: "skyvern.start", purpose: args.purpose, url: args.url });
+    await args.onSession?.(meta);
 
     const deadline = Date.now() + (args.timeoutMs ?? 15 * 60 * 1000);
     let status = "running";

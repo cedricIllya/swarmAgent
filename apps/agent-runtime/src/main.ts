@@ -181,7 +181,7 @@ app.post("/browser/open", async (c) => {
     serviceSlug: body.serviceSlug,
     ...(body.url ? { url: body.url } : {}),
   });
-  return c.json({ sessionId: s.id });
+  return c.json({ sessionId: s.id, liveUrl: s.meta.liveUrl });
 });
 
 const Session = z.object({ sessionId: z.string() });
@@ -250,7 +250,7 @@ app.post("/skyvern/login", async (c) => {
   const run = await rt.store.getRun(body.runId);
   if (!run) return c.json({ error: "run not found" }, 404);
   await rt.step(run.id, "browser", `skyvern ${body.purpose}: ${body.url}`);
-  const r = await rt.skyvern.runLoginOrSignup(body);
+  const r = await rt.skyvern.runLoginOrSignup({ ...body, onSession: (s) => rt.announceBrowser(run, s) });
   return c.json({ status: r.status, output: r.output, sessionId: r.session.id, hasVideo: r.session.hasVideo });
 });
 

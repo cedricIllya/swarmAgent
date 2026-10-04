@@ -1,5 +1,5 @@
 import Browserbase from "@browserbasehq/sdk";
-import type { ChatMessage, PendingApproval, Run, RunStep, RuntimeState } from "@swarm/contracts";
+import type { BrowserSession, ChatMessage, PendingApproval, Run, RunStep, RuntimeState } from "@swarm/contracts";
 import { emitRuntime } from "./events";
 import { emptyUsage } from "@swarm/usage";
 import { ControlPlaneClient } from "./control-plane";
@@ -131,8 +131,7 @@ export class AgentRuntime {
     const run = await this.store.getRun(runId);
     if (!run) throw new Error("run не найден");
 
-    const chatId =
-      run.trigger === "chat" && run.threadId ? run.threadId : (await this.store.ensureSystemChat()).id;
+    const chatId = await this.chatIdForRun(run);
     const pending: PendingApproval = {
       id: newId("apr"),
       runId,
@@ -201,6 +200,23 @@ export class AgentRuntime {
     await this.store.addChatMessage(chatId, { at: new Date().toISOString(), ...msg, chatId });
   }
 
+  /** Чат, в котором владелец видит ход задачи: её собственный или «Почта и расписание». */
+  async chatIdForRun(run: Run): Promise<string> {
+    return run.trigger === "chat" && run.threadId ? run.threadId : (await this.store.ensureSystemChat()).id;
+  }
+
+  /** Карточка сессии в чате: живой экран, пока открыта, после закрытия — видео. */
+  async announceBrowser(run: Run, session: BrowserSession): Promise<void> {
+    await this.addChat({
+      role: "agent",
+      kind: "browser",
+      sessionId: session.id,
+      text: `Работаю в браузере: ${session.purpose}`,
+      runId: run.id,
+      chatId: await this.chatIdForRun(run),
+    });
+  }
+
   // Browser
 
   browserDeps(): BrowserDeps {
@@ -218,7 +234,8 @@ export class AgentRuntime {
   async openBrowser(run: Run, args: { purpose: string; serviceSlug: string | null; url?: string }): Promise<ManagedBrowserSession> {
     const s = await ManagedBrowserSession.open(this.browserDeps(), this.taskRef(run), { runId: run.id, ...args });
     this.sessions.set(s.id, s);
-    await this.step(run.id, "browser", `открыт браузер: ${args.purpose}`, { sessionId: s.id });
+    await this.step(run.id, "browser", `открыт браузер: ${args.purpose}`, { sessionId: s.id, liveUrl: s.meta.liveUrl });
+    await this.announceBrowser(run, s.meta);
     return s;
   }
 

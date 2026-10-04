@@ -55,7 +55,8 @@ curl -s -X POST http://127.0.0.1:8787/skyvern/login \
 curl -s -X POST http://127.0.0.1:8787/browser/open -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"runId":"<runId>","purpose":"создать задачу в трекере","serviceSlug":"example","url":"https://app.example.com"}'
-# → {"sessionId":"..."}
+# → {"sessionId":"...","liveUrl":"https://..."} — liveUrl: живой экран сессии (null, если недоступен).
+#   Владелец и так видит его в чате; если спрашивают «что ты делаешь» — можно дать liveUrl ссылкой.
 
 curl -s -X POST http://127.0.0.1:8787/browser/act      -d '{"sessionId":"...","instruction":"нажми New issue"}' ...
 curl -s -X POST http://127.0.0.1:8787/browser/extract  -d '{"sessionId":"...","instruction":"список задач на меня","schema":{...json schema...}}' ...

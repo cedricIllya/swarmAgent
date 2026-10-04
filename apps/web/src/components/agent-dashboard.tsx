@@ -201,9 +201,8 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
       )}
 
       <EmailCard agent={agent} />
-      <ChatCard agent={agent} state={state} onChatMessage={onChatMessage} />
+      <ChatCard agent={agent} state={state} onChatMessage={onChatMessage} actionsBySession={actionsBySession} />
       <ServicesCard agent={agent} state={state} />
-      <LiveBrowserCard agent={agent} state={state} actionsBySession={actionsBySession} />
       <LogsCard agent={agent} state={state} stepsByRun={stepsByRun} />
       <UsageCard state={state} />
     </>
@@ -247,10 +246,12 @@ function ChatCard({
   agent,
   state,
   onChatMessage,
+  actionsBySession,
 }: {
   agent: Agent;
   state: RuntimeState | null;
   onChatMessage: { current: (event: Extract<RuntimeEvent, { type: "chatMessage" }>) => void };
+  actionsBySession: Record<string, Array<Record<string, unknown>>>;
 }) {
   const params = useSearchParams();
   const router = useRouter();
@@ -438,12 +439,22 @@ function ChatCard({
 
           <div className="chat">
             {!messages.length && <p className="faint small" style={{ margin: 0 }}>Сообщений пока нет. Ссылка-приглашение, ключ или задача.</p>}
-            {messages.map((m, i) => (
-              <div key={`${m.at}-${i}`} className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-agent"}`}>
-                {m.text}
-                <span className="bubble-time">{fmtTime(m.at)}</span>
-              </div>
-            ))}
+            {messages.map((m, i) =>
+              m.kind === "browser" && m.sessionId ? (
+                <BrowserBubble
+                  key={`${m.at}-${i}`}
+                  agent={agent}
+                  message={m}
+                  session={state?.browserSessions.find((s) => s.id === m.sessionId) ?? null}
+                  liveActions={actionsBySession[m.sessionId] ?? []}
+                />
+              ) : (
+                <div key={`${m.at}-${i}`} className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-agent"}`}>
+                  <Linkified text={m.text} />
+                  <span className="bubble-time">{fmtTime(m.at)}</span>
+                </div>
+              ),
+            )}
             {working && <p className="faint small" style={{ margin: 0 }}>Агент работает…</p>}
             <div ref={bottom} />
           </div>
@@ -544,59 +555,118 @@ function actionLine(action: Record<string, unknown>): string {
   return extra ? `${type}: ${String(extra)}` : type;
 }
 
-function LiveBrowserCard({
+const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
+
+/** Текст сообщения, где ссылки кликабельны и открываются в новой вкладке. */
+function Linkified({ text }: { text: string }) {
+  const parts: Array<string | { href: string }> = [];
+  let last = 0;
+  for (const m of text.matchAll(URL_RE)) {
+    const start = m.index ?? 0;
+    // завершающая пунктуация обычно не часть ссылки
+    const href = m[0].replace(/[.,;:!?]+$/, "");
+    if (start > last) parts.push(text.slice(last, start));
+    parts.push({ href });
+    last = start + href.length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return (
+    <>
+      {parts.map((p, i) =>
+        typeof p === "string" ? (
+          p
+        ) : (
+          <a key={i} href={p.href} target="_blank" rel="noopener noreferrer">
+            {p.href}
+          </a>
+        ),
+      )}
+    </>
+  );
+}
+
+/** Сессия браузера в ленте чата: живой экран, пока открыта, после закрытия — запись. */
+function BrowserBubble({
   agent,
-  state,
-  actionsBySession,
+  message,
+  session,
+  liveActions,
 }: {
   agent: Agent;
-  state: RuntimeState | null;
-  actionsBySession: Record<string, Array<Record<string, unknown>>>;
+  message: ChatMessage;
+  session: BrowserSession | null;
+  liveActions: Array<Record<string, unknown>>;
 }) {
-  const live = (state?.browserSessions ?? []).filter((s) => !s.finishedAt && s.liveUrl);
-  const [loaded, setLoaded] = useState<Record<string, Array<Record<string, unknown>>>>({});
-  const asked = useRef(new Set<string>());
+  const [loaded, setLoaded] = useState<Array<Record<string, unknown>>>([]);
+  const live = Boolean(session && !session.finishedAt && session.liveUrl);
+  const sessionId = message.sessionId!;
 
   useEffect(() => {
-    for (const session of live) {
-      if (asked.current.has(session.id)) continue;
-      asked.current.add(session.id);
-      void fetch(`/api/agents/${agent.id}/browser-sessions/${session.id}/actions`).then(async (res) => {
-        if (!res.ok) return;
-        const rows = (await res.json()) as Array<Record<string, unknown>>;
-        setLoaded((prev) => ({ ...prev, [session.id]: rows }));
-      });
-    }
-  }, [agent.id, live]);
+    if (!live) return;
+    let cancel = false;
+    void fetch(`/api/agents/${agent.id}/browser-sessions/${sessionId}/actions`).then(async (res) => {
+      if (!res.ok || cancel) return;
+      const data = (await res.json()) as { actions?: Array<Record<string, unknown>> };
+      setLoaded(data.actions ?? []);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [agent.id, sessionId, live]);
 
-  if (!live.length) return null;
+  const seen = new Set<string>();
+  const actions = [...loaded, ...liveActions].filter((a) => {
+    const key = JSON.stringify(a);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
   return (
-    <section className="card">
-      <div className="card-head">
-        <h2>Сейчас в браузере</h2>
-        <span className="muted small">Живой экран сессии</span>
+    <div className="bubble bubble-agent bubble-browser">
+      <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>
+        <span>
+          {live && <span className="badge-dot pulse" style={{ marginRight: 6 }} />}
+          {message.text}
+        </span>
+        {live && session?.liveUrl && (
+          <a className="small" href={session.liveUrl} target="_blank" rel="noopener noreferrer">
+            открыть в новой вкладке
+          </a>
+        )}
       </div>
-      {live.map((session) => {
-        const actions = [...(loaded[session.id] ?? []), ...(actionsBySession[session.id] ?? [])];
-        return (
-          <div key={session.id} style={{ marginBottom: 16 }}>
-            <div className="small muted" style={{ marginBottom: 8 }}>{session.purpose}</div>
-            <iframe
-              className="live-frame"
-              src={session.liveUrl ?? undefined}
-              sandbox="allow-same-origin allow-scripts"
-              allow="clipboard-read; clipboard-write"
-              title={session.purpose}
-            />
+      {live && session?.liveUrl ? (
+        <>
+          <iframe
+            className="live-frame"
+            src={session.liveUrl}
+            sandbox="allow-same-origin allow-scripts"
+            allow="clipboard-read; clipboard-write"
+            title={session.purpose}
+          />
+          {actions.length > 0 && (
             <div className="steps">
-              {actions.slice(-12).map((a, i) => (
+              {actions.slice(-8).map((a, i) => (
                 <div key={i} className="step">{actionLine(a)}</div>
               ))}
             </div>
-          </div>
-        );
-      })}
-    </section>
+          )}
+        </>
+      ) : session?.hasVideo ? (
+        <video controls preload="none" src={`/api/agents/${agent.id}/browser-sessions/${session.id}/video`} />
+      ) : (
+        <span className="faint small">
+          {!session
+            ? "сессия не найдена"
+            : session.finishedAt
+              ? "сессия завершена, видео недоступно"
+              : session.provider === "skyvern"
+                ? "сессия идёт, живой экран для Skyvern недоступен — видео появится после"
+                : "сессия идёт, видео появится после"}
+        </span>
+      )}
+      <span className="bubble-time">{fmtTime(message.at)}</span>
+    </div>
   );
 }
 

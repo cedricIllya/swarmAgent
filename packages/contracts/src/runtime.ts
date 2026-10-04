@@ -89,6 +89,10 @@ export const ChatMessageSchema = z.object({
   text: z.string(),
   runId: z.string().nullable(),
   chatId: z.string(),
+  /** `browser` — карточка сессии браузера: живой экран, пока открыта, потом видео. Нет — обычный текст. */
+  kind: z.enum(["text", "browser"]).optional(),
+  /** Для `kind: "browser"` — id сессии из `browserSessions`. */
+  sessionId: z.string().optional(),
 });
 
 export const PendingApprovalSchema = z.object({
