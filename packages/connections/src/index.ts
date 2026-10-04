@@ -6,7 +6,7 @@ import {
   type ServicesSnapshot,
 } from "@swarm/contracts";
 import { decryptJson, encryptJson } from "@swarm/crypto";
-import { and, eq, newId, schema, type Db } from "@swarm/db";
+import { and, desc, eq, newId, schema, type Db } from "@swarm/db";
 
 type RecipeRow = typeof schema.serviceRecipes.$inferSelect;
 
@@ -133,6 +133,69 @@ export async function deleteCredential(db: Db, agentId: string, slug: string): P
   await db
     .delete(schema.serviceCredentials)
     .where(and(eq(schema.serviceCredentials.agentId, agentId), eq(schema.serviceCredentials.slug, slug)));
+}
+
+/** Один сохранённый доступ в сводке тенанта. Секрет сюда не попадает. */
+export interface TenantConnectionAgent {
+  agentId: string;
+  agentName: string;
+  agentEmail: string;
+  kind: ServiceRecipe["kind"];
+  accountEmail: string | null;
+  updatedAt: string;
+}
+
+/** Сервис из каталога и агенты тенанта, у которых в него уже есть вход. */
+export interface TenantConnection {
+  slug: string;
+  name: string;
+  kind: ServiceRecipe["kind"];
+  domains: string[];
+  agents: TenantConnectionAgent[];
+}
+
+/**
+ * Сводка по тенанту: какие сервисы подключены и через кого.
+ * Секреты не расшифровываются — только метаданные для списка.
+ */
+export async function listTenantConnections(db: Db, tenantId: string): Promise<TenantConnection[]> {
+  const rows = await db
+    .select({
+      slug: schema.serviceRecipes.slug,
+      name: schema.serviceRecipes.name,
+      recipeKind: schema.serviceRecipes.kind,
+      domains: schema.serviceRecipes.domains,
+      credentialKind: schema.serviceCredentials.kind,
+      accountEmail: schema.serviceCredentials.accountEmail,
+      updatedAt: schema.serviceCredentials.updatedAt,
+      agentId: schema.agents.id,
+      agentName: schema.agents.name,
+      agentLocalPart: schema.agents.localPart,
+      agentDomain: schema.agents.domain,
+    })
+    .from(schema.serviceCredentials)
+    .innerJoin(schema.serviceRecipes, eq(schema.serviceRecipes.slug, schema.serviceCredentials.slug))
+    .innerJoin(schema.agents, eq(schema.agents.id, schema.serviceCredentials.agentId))
+    .where(eq(schema.serviceCredentials.tenantId, tenantId))
+    .orderBy(desc(schema.serviceCredentials.updatedAt));
+
+  const bySlug = new Map<string, TenantConnection>();
+  for (const row of rows) {
+    let entry = bySlug.get(row.slug);
+    if (!entry) {
+      entry = { slug: row.slug, name: row.name, kind: row.recipeKind, domains: row.domains, agents: [] };
+      bySlug.set(row.slug, entry);
+    }
+    entry.agents.push({
+      agentId: row.agentId,
+      agentName: row.agentName,
+      agentEmail: `${row.agentLocalPart}@${row.agentDomain}`,
+      kind: row.credentialKind,
+      accountEmail: row.accountEmail,
+      updatedAt: row.updatedAt.toISOString(),
+    });
+  }
+  return [...bySlug.values()].sort((a, b) => a.name.localeCompare(b.name, "ru"));
 }
 
 /** Агенты, у которых есть хотя бы один доступ. Остальным плановый тик смотреть нечего. */

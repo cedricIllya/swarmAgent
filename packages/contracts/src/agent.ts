@@ -27,6 +27,8 @@ export const AgentSchema = z.object({
   /** Приватный URL runtime внутри сети Fly. */
   runtimeUrl: z.string().nullable(),
   googleConnected: z.boolean(),
+  /** Google-аккаунт, под которым агент вошёл. Пусто, пока Google не подключён. */
+  googleEmail: z.string().nullable(),
   createdAt: z.string(),
 });
 

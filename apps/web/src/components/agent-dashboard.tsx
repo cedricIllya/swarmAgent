@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type {
@@ -169,9 +170,12 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
 
   return (
     <>
-      <div className="card-head" style={{ marginBottom: 18 }}>
+      <div className="page-head">
         <div>
-          <div className="row" style={{ gap: 10 }}>
+          <Link href="/" className="kicker">
+            ← Все агенты
+          </Link>
+          <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
             <h1>{agent.name}</h1>
             <StatusBadge status={agent.status} />
             {asleep && <span className="badge">спит</span>}
@@ -231,8 +235,13 @@ function EmailCard({ agent }: { agent: Agent }) {
         </button>
       </div>
       <div className="row" style={{ marginTop: 12, justifyContent: "space-between" }}>
-        <span className="muted small">
-          Google: {agent.googleConnected ? <span style={{ color: "var(--ok)" }}>подключён</span> : "не подключён"}
+        <span className="muted small row" style={{ gap: 8 }}>
+          Google:
+          {agent.googleConnected ? (
+            <span className="badge badge-ok">{agent.googleEmail ?? "подключён"}</span>
+          ) : (
+            <span className="badge">не подключён</span>
+          )}
         </span>
         <a className="btn btn-sm" href={`/api/agents/${agent.id}/google`}>
           {agent.googleConnected ? "Переподключить Google" : "Подключить Google"}
@@ -506,9 +515,9 @@ function ChatListItem({
 
 function ApprovalRow({ approval, onDecide }: { approval: PendingApproval; onDecide: (approved: boolean) => void }) {
   return (
-    <div className="list-item" style={{ borderColor: "rgba(245,184,79,0.4)" }}>
+    <div className="list-item list-item-warn">
       <div>
-        <div className="small" style={{ color: "var(--warn)" }}>Нужно одобрение</div>
+        <div className="small" style={{ color: "var(--warn)", fontWeight: 500 }}>Нужно одобрение</div>
         <div>{approval.description}</div>
       </div>
       <div className="row">
@@ -525,8 +534,13 @@ function ServicesCard({ agent, state }: { agent: Agent; state: RuntimeState | nu
   return (
     <section className="card">
       <div className="card-head">
-        <h2>Подключённые сервисы</h2>
-        <span className="muted small">Только те, куда доступ уже сохранён</span>
+        <div>
+          <h2>Подключённые сервисы</h2>
+          <span className="muted small">Только те, куда доступ уже сохранён</span>
+        </div>
+        <Link href="/services" className="small">
+          Все сервисы →
+        </Link>
       </div>
       {list.length === 0 ? (
         <p className="faint small" style={{ margin: 0 }}>

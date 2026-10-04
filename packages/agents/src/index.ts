@@ -20,6 +20,7 @@ export function toAgentView(row: Row): Agent {
     flyMachineId: row.flyMachineId,
     runtimeUrl: row.runtimeUrl,
     googleConnected: Boolean(row.googleRefreshTokenEnc),
+    googleEmail: row.googleRefreshTokenEnc ? row.googleEmail : null,
     createdAt: row.createdAt.toISOString(),
   };
 }
