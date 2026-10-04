@@ -9,9 +9,9 @@ function Shell({ title, subtitle, children }: { title: string; subtitle: string;
   return (
     <div className="auth-wrap">
       <div className="card auth-card">
-        <div className="brand" style={{ marginBottom: 18 }}>
-          <span className="brand-dot" />
-          Swarm Agent
+        <div className="brand" style={{ marginBottom: 22 }}>
+          <span className="brand-mark" aria-hidden />
+          Swarm
         </div>
         <h1 style={{ marginBottom: 6 }}>{title}</h1>
         <p className="muted small" style={{ marginTop: 0, marginBottom: 18 }}>

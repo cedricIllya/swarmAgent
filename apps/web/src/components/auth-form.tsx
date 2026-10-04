@@ -33,9 +33,9 @@ export function AuthForm({ mode, notice = null }: { mode: "login" | "register"; 
   return (
     <div className="auth-wrap">
       <form className="card auth-card" onSubmit={submit}>
-        <div className="brand" style={{ marginBottom: 18 }}>
-          <span className="brand-dot" />
-          Swarm Agent
+        <div className="brand" style={{ marginBottom: 22 }}>
+          <span className="brand-mark" aria-hidden />
+          Swarm
         </div>
         <h1 style={{ marginBottom: 6 }}>{mode === "login" ? "Вход" : "Регистрация"}</h1>
         <p className="muted small" style={{ marginTop: 0, marginBottom: 18 }}>

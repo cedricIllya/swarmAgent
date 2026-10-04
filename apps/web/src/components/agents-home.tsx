@@ -23,12 +23,11 @@ export function AgentsHome({ initialAgents, ownerLogin }: { initialAgents: Agent
 
   return (
     <>
-      <div className="card-head" style={{ marginBottom: 20 }}>
+      <div className="page-head">
         <div>
+          <span className="kicker">Рабочее пространство</span>
           <h1>Агенты</h1>
-          <p className="muted small" style={{ margin: "4px 0 0" }}>
-            У каждого — свой адрес для приглашений и своя машина.
-          </p>
+          <p className="lead">У каждого — свой адрес для приглашений и своя машина.</p>
         </div>
         <button className="btn btn-primary" onClick={() => setOpen((v) => !v)}>
           {open ? "Скрыть" : "Создать агента"}
@@ -48,24 +47,35 @@ export function AgentsHome({ initialAgents, ownerLogin }: { initialAgents: Agent
       )}
 
       {agents.length === 0 ? (
-        <div className="card" style={{ textAlign: "center", padding: 40 }}>
-          <p className="muted" style={{ margin: 0 }}>
-            Агентов пока нет. Создайте первого — он получит адрес вида <code>{ownerLogin}.имя@домен</code>.
+        <div className="card empty">
+          <div className="empty-art" aria-hidden>
+            <span />
+            <span />
+            <span />
+          </div>
+          <h2>Агентов пока нет</h2>
+          <p className="muted" style={{ margin: "6px 0 0" }}>
+            Создайте первого — он получит адрес вида <code>{ownerLogin}.имя@домен</code>.
           </p>
         </div>
       ) : (
         <div className="grid grid-2">
           {agents.map((a) => (
-            <Link key={a.id} href={`/agents/${a.id}`} className="card" style={{ color: "inherit", textDecoration: "none" }}>
-              <div className="card-head" style={{ marginBottom: 8 }}>
+            <Link key={a.id} href={`/agents/${a.id}`} className="card card-link">
+              <div className="card-head" style={{ marginBottom: 10 }}>
                 <h2>{a.name}</h2>
                 <StatusBadge status={a.status} />
               </div>
-              <div className="mono muted" style={{ marginBottom: 6 }}>
-                {a.email}
+              <div className="mono muted">{a.email}</div>
+              {a.statusMessage && (
+                <div className="small" style={{ marginTop: 8, color: a.status === "failed" ? "var(--danger)" : "var(--text-muted)" }}>
+                  {a.statusMessage}
+                </div>
+              )}
+              <div className="card-foot">
+                <span className="faint small">{a.model}</span>
+                {a.googleConnected && <span className="badge badge-ok">Google</span>}
               </div>
-              <div className="faint small">{a.model}</div>
-              {a.statusMessage && <div className="small" style={{ marginTop: 8, color: a.status === "failed" ? "var(--danger)" : "var(--text-muted)" }}>{a.statusMessage}</div>}
             </Link>
           ))}
         </div>
