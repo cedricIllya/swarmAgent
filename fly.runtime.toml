@@ -1,0 +1,7 @@
+# Только сборка образа агента. HTTP-сервиса нет: этот файл нельзя путать с fly.toml
+# control plane. Выкладка: fly deploy --build-only --push --image-label latest -c fly.runtime.toml
+app = "swarm-agent-runtime"
+primary_region = "ams"
+
+[build]
+  dockerfile = "apps/agent-runtime/Dockerfile"
