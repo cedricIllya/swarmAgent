@@ -70,6 +70,24 @@ describe("chats", () => {
     expect((await store.listChats()).find((c) => c.id === chat.id)?.busy).toBe(false);
   });
 
+  it("marks the mail chat busy while a letter is being handled", async () => {
+    const store = await tmpStore();
+    const mail = await store.ensureSystemChat();
+    await store.saveRun({
+      id: "run_mail",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      finishedAt: null,
+      status: "running",
+      trigger: "email",
+      title: "Письмо",
+      summary: "",
+      threadId: "<msg@example.com>",
+    });
+    const listed = await store.listChats();
+    expect(listed.find((c) => c.id === mail.id)?.busy).toBe(true);
+    expect(listed.find((c) => c.id === mail.id)?.kind).toBe("mail");
+  });
+
   it("writes services.json world-readable for the hermes container", async () => {
     const prev = process.umask(0o077);
     try {

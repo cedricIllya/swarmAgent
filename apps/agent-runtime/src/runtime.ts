@@ -159,7 +159,7 @@ export class AgentRuntime {
         const { messageId } = await this.controlPlane.sendEmail({
           to: this.cfg.ownerEmail,
           subject: `Нужно одобрение: ${run.title}`,
-          text: `${this.cfg.agentName} хочет:\n\n${safe}\n\nОтветьте «да» или «нет» одним словом. Любой другой текст станет новой задачей.`,
+          text: `${this.cfg.agentName} хочет:\n\n${safe}\n\nВ чате есть кнопки «Да» и «Нет». Можно ответить на это письмо одним словом: «да» или «нет». Любой другой текст станет новой задачей.`,
           ...(run.threadId ? { inReplyTo: run.threadId, references: [run.threadId] } : {}),
         });
         pending.emailMessageId = messageId;
@@ -172,7 +172,9 @@ export class AgentRuntime {
 
     await this.addChat({
       role: "agent",
-      text: `Нужно одобрение: ${safe}\nОтветьте «да» или «нет».`,
+      kind: "approval",
+      approvalId: pending.id,
+      text: safe,
       runId,
       chatId,
     });
@@ -183,19 +185,30 @@ export class AgentRuntime {
     return { approved: false, pending };
   }
 
-  async resolveApproval(approvalId: string, approved: boolean): Promise<Run | null> {
+  async resolveApproval(approvalId: string, approved: boolean, opts?: { announce?: boolean }): Promise<Run | null> {
     const list = await this.store.listApprovals();
     const pending = list.find((p) => p.id === approvalId);
     if (!pending) return null;
     await this.store.saveApprovals(list.filter((p) => p.id !== approvalId));
     const run = await this.store.getRun(pending.runId);
     if (!run) return null;
+    const chatId = pending.chatId ?? (await this.store.ensureSystemChat()).id;
+    if (opts?.announce !== false) {
+      await this.addChat({
+        role: "user",
+        kind: "approval",
+        approvalId,
+        decision: approved ? "approved" : "rejected",
+        text: approved ? "Да" : "Нет",
+        runId: run.id,
+        chatId,
+      });
+    }
     run.status = "running";
     await this.store.saveRun(run);
     await this.step(run.id, "note", approved ? "одобрено человеком" : "отклонено человеком");
     const text = await this.think(run, approvalContinuationPrompt(pending.description, approved), "hermes.approval");
     await this.finishRun(run, "done", text);
-    const chatId = pending.chatId ?? (await this.store.ensureSystemChat()).id;
     await this.addChat({ role: "agent", text, runId: run.id, chatId });
     return run;
   }

@@ -205,7 +205,13 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
       )}
 
       <EmailCard agent={agent} />
-      <ChatCard agent={agent} state={state} onChatMessage={onChatMessage} actionsBySession={actionsBySession} />
+      <ChatCard
+        agent={agent}
+        state={state}
+        onChatMessage={onChatMessage}
+        actionsBySession={actionsBySession}
+        stepsByRun={stepsByRun}
+      />
       <ServicesCard agent={agent} state={state} />
       <LogsCard agent={agent} state={state} stepsByRun={stepsByRun} />
       <UsageCard state={state} />
@@ -251,16 +257,24 @@ function EmailCard({ agent }: { agent: Agent }) {
   );
 }
 
+function runBelongs(run: Run, chat: ChatThread | null): boolean {
+  if (!chat) return false;
+  if (run.trigger === "chat") return run.threadId === chat.id;
+  return chat.kind === "mail";
+}
+
 function ChatCard({
   agent,
   state,
   onChatMessage,
   actionsBySession,
+  stepsByRun,
 }: {
   agent: Agent;
   state: RuntimeState | null;
   onChatMessage: { current: (event: Extract<RuntimeEvent, { type: "chatMessage" }>) => void };
   actionsBySession: Record<string, Array<Record<string, unknown>>>;
+  stepsByRun: Record<string, RunStep[]>;
 }) {
   const params = useSearchParams();
   const router = useRouter();
@@ -271,6 +285,8 @@ function ChatCard({
   const [autonomous, setAutonomous] = useState(agent.autonomous);
   const [renaming, setRenaming] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [awaiting, setAwaiting] = useState(false);
+  const [deciding, setDeciding] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const chats = state?.chats ?? [];
   const activeId = selected && selected !== "new" && chats.some((c) => c.id === selected) ? selected : null;
@@ -318,13 +334,18 @@ function ChatCard({
   }, [activeId, onChatMessage]);
 
   useEffect(() => {
-    void bottom.current?.scrollIntoView({ block: "end" });
-  }, [messages.length]);
+    setAwaiting(false);
+  }, [activeId]);
+
+  useEffect(() => {
+    if (messages.at(-1)?.role === "agent") setAwaiting(false);
+  }, [messages]);
 
   async function send(e: FormEvent) {
     e.preventDefault();
     if (!text.trim()) return;
     setBusy(true);
+    setAwaiting(true);
     const res = await fetch(`/api/agents/${agent.id}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -332,7 +353,10 @@ function ChatCard({
     });
     setText("");
     setBusy(false);
-    if (!res.ok) return;
+    if (!res.ok) {
+      setAwaiting(false);
+      return;
+    }
     const data = (await res.json()) as { chatId: string };
     if (data.chatId && data.chatId !== activeId) select(data.chatId);
   }
@@ -347,11 +371,16 @@ function ChatCard({
   }
 
   async function decide(id: string, approved: boolean) {
-    await fetch(`/api/agents/${agent.id}/approvals/${id}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ approved }),
-    });
+    setDeciding(id);
+    try {
+      await fetch(`/api/agents/${agent.id}/approvals/${id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved }),
+      });
+    } finally {
+      setDeciding(null);
+    }
   }
 
   async function saveTitle() {
@@ -374,8 +403,20 @@ function ChatCard({
   }
 
   const running = agent.status === "running";
-  const working = Boolean(active?.busy);
+  const liveRun =
+    (state?.runs ?? []).find((r) => (r.status === "running" || r.status === "queued") && runBelongs(r, active)) ?? null;
+  const working = Boolean(active?.busy) || awaiting || Boolean(liveRun);
+  const activity =
+    (liveRun ? stepsByRun[liveRun.id]?.at(-1)?.text : undefined)?.replace(/\s+/g, " ").trim() || "Агент работает…";
   const approvals = (state?.pendingApprovals ?? []).filter((p) => !activeId || p.chatId === activeId || p.chatId === null);
+  const inlineApprovalIds = new Set(
+    messages.filter((m) => m.kind === "approval" && m.approvalId).map((m) => m.approvalId),
+  );
+  const looseApprovals = approvals.filter((p) => !inlineApprovalIds.has(p.id));
+
+  useEffect(() => {
+    void bottom.current?.scrollIntoView({ block: "end" });
+  }, [messages.length, working, activity]);
 
   return (
     <section className="card">
@@ -438,9 +479,9 @@ function ChatCard({
             )}
           </div>
 
-          {approvals.length > 0 && (
+          {looseApprovals.length > 0 && (
             <div className="list" style={{ marginBottom: 12 }}>
-              {approvals.map((p) => (
+              {looseApprovals.map((p) => (
                 <ApprovalRow key={p.id} approval={p} onDecide={(approved) => void decide(p.id, approved)} />
               ))}
             </div>
@@ -457,6 +498,14 @@ function ChatCard({
                   session={state?.browserSessions.find((s) => s.id === m.sessionId) ?? null}
                   liveActions={actionsBySession[m.sessionId] ?? []}
                 />
+              ) : m.kind === "approval" && m.role === "agent" ? (
+                <ApprovalBubble
+                  key={`${m.at}-${i}`}
+                  message={m}
+                  open={approvals.some((p) => p.id === m.approvalId)}
+                  busy={deciding === m.approvalId}
+                  onDecide={(approved) => void decide(m.approvalId ?? "", approved)}
+                />
               ) : (
                 <div key={`${m.at}-${i}`} className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-agent"}`}>
                   <Linkified text={m.text} />
@@ -464,7 +513,16 @@ function ChatCard({
                 </div>
               ),
             )}
-            {working && <p className="faint small" style={{ margin: 0 }}>Агент работает…</p>}
+            {working && (
+              <div className="bubble bubble-agent bubble-working">
+                <span className="typing" aria-hidden>
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                <span>{activity}</span>
+              </div>
+            )}
             <div ref={bottom} />
           </div>
 
@@ -510,6 +568,40 @@ function ChatListItem({
       {chat.lastMessage && <span className="faint small chat-preview">{chat.lastMessage}</span>}
       <span className="faint small">{fmtTime(chat.updatedAt)}</span>
     </button>
+  );
+}
+
+function ApprovalBubble({
+  message,
+  open,
+  busy,
+  onDecide,
+}: {
+  message: ChatMessage;
+  open: boolean;
+  busy: boolean;
+  onDecide: (approved: boolean) => void;
+}) {
+  return (
+    <div className="bubble bubble-agent bubble-approval">
+      <div className="small" style={{ color: "var(--warn)", fontWeight: 500 }}>
+        Нужно одобрение
+      </div>
+      <div>{message.text}</div>
+      {open ? (
+        <div className="approval-actions">
+          <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => onDecide(true)}>
+            Да
+          </button>
+          <button className="btn btn-sm" disabled={busy} onClick={() => onDecide(false)}>
+            Нет
+          </button>
+        </div>
+      ) : (
+        <span className="faint small">Решение принято</span>
+      )}
+      <span className="bubble-time">{fmtTime(message.at)}</span>
+    </div>
   );
 }
 

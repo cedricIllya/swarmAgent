@@ -1,4 +1,5 @@
 import type { Run } from "@swarm/contracts";
+import { classifyReply } from "./approval";
 import {
   CHAT_CLASSIFY_SCHEMA,
   chatTaskPrompt,
@@ -37,6 +38,24 @@ export async function handleChat(
   rt: AgentRuntime,
   args: { chatId?: string | undefined; message: string; author: string },
 ): Promise<{ run: Run; chatId: string } | null> {
+  if (args.chatId) {
+    const verdict = classifyReply(args.message);
+    if (verdict === "approve" || verdict === "reject") {
+      const pending = (await rt.store.listApprovals())
+        .filter((p) => p.chatId === args.chatId)
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+      if (pending) {
+        const run = await rt.store.getRun(pending.runId);
+        if (!run) return null;
+        await rt.addChat({ role: "user", text: args.message, runId: run.id, chatId: args.chatId });
+        void rt.resolveApproval(pending.id, verdict === "approve", { announce: false }).catch((e) => {
+          warn("chat", "одобрение не разобралось", { error: String(e) });
+        });
+        return { run, chatId: args.chatId };
+      }
+    }
+  }
+
   const links = extractLinks(args.message);
   const classification = await classifyChat(rt, args.message, links);
   const hosts = [...links.map(hostOf), classification.serviceDomain ?? ""].filter(Boolean);

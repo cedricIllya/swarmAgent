@@ -548,6 +548,46 @@ code {
   display: inline-block;
   color: var(--warn);
 }
+.bubble-working {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+}
+.typing {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
+.typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.25;
+  animation: typing 1.2s infinite;
+}
+.typing span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typing span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes typing {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.bubble-approval .approval-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
 
 .switch {
   position: relative;

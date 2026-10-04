@@ -208,9 +208,13 @@ export class Store {
 
   async listChats(): Promise<ChatThread[]> {
     const [metas, runs] = await Promise.all([this.listChatMetas(), this.listRuns(200)]);
-    const busy = new Set(
-      runs.filter((r) => (r.status === "running" || r.status === "queued") && r.threadId).map((r) => r.threadId),
-    );
+    const mailId = metas.find((m) => m.kind === "mail")?.id ?? null;
+    const busy = new Set<string>();
+    for (const r of runs) {
+      if (r.status !== "running" && r.status !== "queued") continue;
+      if (r.trigger === "chat" && r.threadId) busy.add(r.threadId);
+      else if (mailId) busy.add(mailId);
+    }
     return metas
       .map((m) => ({
         id: m.id,
@@ -219,6 +223,7 @@ export class Store {
         updatedAt: m.updatedAt,
         lastMessage: m.lastMessage,
         busy: busy.has(m.id),
+        ...(m.kind ? { kind: m.kind } : {}),
       }))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }

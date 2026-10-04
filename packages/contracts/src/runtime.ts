@@ -81,6 +81,8 @@ export const ChatThreadSchema = z.object({
   lastMessage: z.string().nullable(),
   /** В этом чате сейчас идёт задача. */
   busy: z.boolean(),
+  /** `mail` — чат почты и расписания. */
+  kind: z.enum(["mail"]).optional(),
 });
 
 export const ChatMessageSchema = z.object({
@@ -89,10 +91,18 @@ export const ChatMessageSchema = z.object({
   text: z.string(),
   runId: z.string().nullable(),
   chatId: z.string(),
-  /** `browser` — карточка сессии браузера: живой экран, пока открыта, потом видео. Нет — обычный текст. */
-  kind: z.enum(["text", "browser"]).optional(),
+  /**
+   * `browser` — карточка сессии браузера: живой экран, пока открыта, потом видео.
+   * `approval` — от агента: вопрос с кнопками «Да»/«Нет», пока id есть в `pendingApprovals`;
+   * от пользователя: нажатое решение. Нет — обычный текст.
+   */
+  kind: z.enum(["text", "browser", "approval"]).optional(),
   /** Для `kind: "browser"` — id сессии из `browserSessions`. */
   sessionId: z.string().optional(),
+  /** Для `kind: "approval"` — id из `pendingApprovals`. */
+  approvalId: z.string().optional(),
+  /** Для `kind: "approval"` от пользователя — что нажали. */
+  decision: z.enum(["approved", "rejected"]).optional(),
 });
 
 export const PendingApprovalSchema = z.object({
