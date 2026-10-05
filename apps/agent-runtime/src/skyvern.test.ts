@@ -27,6 +27,9 @@ describe("inviteTaskPrompt", () => {
     expect(p).toContain("bot@agents.test");
     expect(p).toContain("«Bot»");
     expect(p).toContain("pw!A9");
+    expect(p).toMatch(/Сам введи его в поле пароля/);
+    expect(p).toMatch(/Имя вводи сам/);
+    expect(p).not.toMatch(/Если просят задать пароль/);
     expect(p).toMatch(/жди/i);
     expect(p).toMatch(/Google, Microsoft/);
     expect(p).toContain("pending_approval");

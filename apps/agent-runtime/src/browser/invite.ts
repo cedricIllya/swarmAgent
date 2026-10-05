@@ -44,8 +44,8 @@ export const PAGE_STATE_SCHEMA = {
 export const PAGE_STATE_INSTRUCTION = [
   "Определи, на каком шаге принятия приглашения находится страница. Верни state и hint.",
   "accept_button — видна кнопка принять приглашение / присоединиться / Accept / Join, без форм.",
-  "email_form — просят только адрес электронной почты.",
-  "signup_form — форма регистрации: имя и/или пароль (и, возможно, email).",
+  "email_form — просят только адрес электронной почты, полей имени и пароля на странице нет.",
+  "signup_form — форма регистрации: есть имя и/или пароль (и, возможно, email). Если кроме почты видно имя или пароль — это signup_form, не email_form.",
   "password_form — просят только пароль для уже известного адреса.",
   "auth_choice — выбор способа входа: Google, Microsoft, SSO, email.",
   "code_prompt — просят ввести код подтверждения из письма.",
@@ -206,7 +206,16 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
         break;
 
       case "email_form":
-        await browser.act(`Введи адрес ${args.email} в поле электронной почты и отправь форму (Continue, Next, Продолжить)`);
+        await browser.act(
+          [
+            `Введи адрес ${args.email} в поле почты.`,
+            `Если на странице всё же есть имя, first name, last name или username — введи «${args.agentName}» сам, до отправки (одно слово — в оба поля).`,
+            password
+              ? `Если есть пароль или его подтверждение — введи ${password}. Форму с пустым именем или паролем не отправляй.`
+              : "Поля пароля здесь быть не должно: если оно есть, не отправляй форму.",
+            "Отправь форму (Continue, Next, Продолжить).",
+          ].join(" "),
+        );
         break;
 
       case "signup_form": {
@@ -223,8 +232,9 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
         passwordCreated = true;
         await browser.act(
           [
-            `Заполни форму регистрации: имя ${args.agentName}, адрес ${args.email}, пароль ${password}`,
-            "(и подтверждение пароля, если есть). Отметь согласие с условиями, если просят. Отправь форму.",
+            `Заполни форму регистрации сам, до отправки: имя «${args.agentName}», адрес ${args.email}, пароль ${password}`,
+            "(и подтверждение пароля, если есть). Одно слово имени — и в имя, и в фамилию. Пустыми имя и пароль не оставляй.",
+            "Отметь согласие с условиями, если просят. Отправь форму только после этого.",
             "Если на этой же странице есть ссылка «уже есть аккаунт» или «войти» — не нажимай её: сначала регистрация.",
           ].join(" "),
         );
