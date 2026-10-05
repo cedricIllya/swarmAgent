@@ -4,6 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import { loadConfig } from "./config";
 import { applyBootstrap } from "./bootstrap";
 import { AgentRuntime } from "./runtime";
+import { resumeConnect } from "./onboarding";
 import { startTicker } from "./cron";
 import { startIdleWatch } from "./idle";
 import { controlPlaneRoutes } from "./http/control-plane-routes";
@@ -17,6 +18,7 @@ process.umask(0o022);
 
 const cfg = loadConfig();
 const rt = new AgentRuntime(cfg);
+rt.handoffs.useResume(resumeConnect);
 await rt.init();
 if (process.env.BOOTSTRAP_DIR) await applyBootstrap(process.env.BOOTSTRAP_DIR, cfg.dataDir);
 

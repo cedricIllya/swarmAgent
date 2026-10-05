@@ -381,6 +381,8 @@ describe("doc link ranking", () => {
       loginUrl: null,
       appUrl: null,
       notes: "",
+      keyPageUrl: null,
+      readEndpoints: [],
     };
     expect(searchCovers(findings, [{ url: "https://docs.acme.io/api", title: "API", content: "" }])).toBe(true);
     expect(searchCovers(findings, [{ url: "https://example.com/unrelated", title: "", content: "" }])).toBe(false);

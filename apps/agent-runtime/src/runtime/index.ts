@@ -12,6 +12,7 @@ import type { RuntimeConfig } from "../config";
 import { log } from "../log";
 import { Approvals } from "./approvals";
 import { BrowserControl } from "./browser";
+import { Handoffs } from "./handoffs";
 import { newId } from "./ids";
 import { Research } from "./research";
 import { ServiceCatalog } from "./services";
@@ -27,6 +28,7 @@ export class AgentRuntime {
   readonly controlPlane: ControlPlaneClient;
   readonly skyvern: SkyvernClient | null;
   readonly approvals: Approvals;
+  readonly handoffs: Handoffs;
   readonly browser: BrowserControl;
   readonly services: ServiceCatalog;
   readonly research: Research;
@@ -42,6 +44,7 @@ export class AgentRuntime {
     this.controlPlane = new ControlPlaneClient(cfg.controlPlaneUrl, cfg.agentId, cfg.runtimeToken);
     this.skyvern = cfg.skyvernApiKey ? new SkyvernClient(cfg.skyvernApiKey, this.store, cfg.email) : null;
     this.approvals = new Approvals(this);
+    this.handoffs = new Handoffs(this);
     this.browser = new BrowserControl(this);
     this.services = new ServiceCatalog(this);
     this.research = new Research(this);

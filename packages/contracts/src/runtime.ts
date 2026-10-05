@@ -38,7 +38,7 @@ export const GoogleTokenRequestSchema = z.object({
   token: z.record(z.string(), z.unknown()),
 });
 
-export const RunStatus = z.enum(["queued", "running", "waiting_approval", "done", "failed"]);
+export const RunStatus = z.enum(["queued", "running", "waiting_approval", "done", "failed", "escalated"]);
 
 export const RunSchema = z.object({
   id: z.string(),
@@ -103,6 +103,10 @@ export const ChatMessageSchema = z.object({
   approvalId: z.string().optional(),
   /** Для `kind: "approval"` от пользователя — что нажали. */
   decision: z.enum(["approved", "rejected"]).optional(),
+  /** Для `kind: "approval"`: агент застрял в браузере и просит человека доделать, а не одобрить. */
+  handoff: z.boolean().optional(),
+  /** Живой экран браузера, где человек может взять управление. */
+  liveUrl: z.string().nullable().optional(),
 });
 
 export const PendingApprovalSchema = z.object({
@@ -115,6 +119,9 @@ export const PendingApprovalSchema = z.object({
   emailMessageId: z.string().nullable(),
   /** Чат, в котором спрашиваем. У старых вопросов может не быть. */
   chatId: z.string().nullable(),
+  /** `handoff` — человек доделывает вход в браузере; «да» значит «я доделал». */
+  kind: z.enum(["approval", "handoff"]).optional(),
+  liveUrl: z.string().nullable().optional(),
 });
 
 const ConnectedServiceSchema = z.object({

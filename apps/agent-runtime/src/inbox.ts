@@ -4,7 +4,9 @@ import { prepareOnboarding } from "./onboarding";
 import {
   EMAIL_CLASSIFY_SCHEMA,
   classifyEmailPrompt,
+  connectedFollowupPrompt,
   emailTaskPrompt,
+  escalationNote,
   type EmailClassification,
 } from "./prompts";
 import type { AgentRuntime } from "./runtime";
@@ -26,7 +28,32 @@ function bareAddress(raw: string): string {
  * 2. Агент сейчас в браузере — код или ссылка в ждущую сессию, письмо отложено и перечитается.
  * 3. Иначе задача: модель решает, приглашение это или просьба.
  */
+let flushing = false;
+
+/** Отложенные письма читаются, как только браузер освободился, а не на следующем тике. */
+async function flushDeferred(rt: AgentRuntime): Promise<void> {
+  if (flushing || rt.busyInBrowser) return;
+  flushing = true;
+  try {
+    const emails = await rt.store.takeDeferredEmails();
+    for (const email of emails) {
+      if (rt.busyInBrowser) {
+        await rt.store.deferEmail(email);
+        continue;
+      }
+      await routeEmail(rt, email);
+    }
+  } finally {
+    flushing = false;
+  }
+}
+
 export async function processEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> {
+  await routeEmail(rt, email);
+  await flushDeferred(rt);
+}
+
+async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> {
   const sent = await rt.store.sentMessages();
   const threadId = matchesThread(email, Object.keys(sent));
 
@@ -50,13 +77,15 @@ export async function processEmail(rt: AgentRuntime, email: InboundEmail): Promi
     const code = findDigitCode(`${email.subject}\n${email.replyText || email.text}`);
     if (code) {
       rt.browser.deliverCode({ kind: "code", value: code });
-      log("inbox", "код из письма придержан для открытой сессии");
+      await rt.store.deferEmail(email);
+      log("inbox", "код из письма отдан в браузер и письмо сохранено");
       return;
     }
-    known = await classifyEmail(rt, email, "classify.email.browser-open");
-    if (known.kind === "verification" && known.hasLoginLink && email.links.length > 0) {
+    known = await classifyEmail(rt, email, "classify.email.browser-open").catch(() => null);
+    if (known?.kind === "verification" && known.hasLoginLink && email.links.length > 0) {
       rt.browser.deliverCode({ kind: "link", value: pickLoginLink(email.links) });
-      log("inbox", "ссылка для входа придержана для открытой сессии");
+      await rt.store.deferEmail(email);
+      log("inbox", "ссылка для входа отдана в браузер и письмо сохранено");
       return;
     }
   }
@@ -106,8 +135,8 @@ async function handleWhileInBrowser(rt: AgentRuntime, email: InboundEmail): Prom
     return;
   }
 
-  const c = await classifyEmail(rt, email, "classify.email.in-browser");
-  if (c.kind === "verification" && c.hasLoginLink && email.links.length > 0) {
+  const c = await classifyEmail(rt, email, "classify.email.in-browser").catch(() => null);
+  if (c?.kind === "verification" && c.hasLoginLink && email.links.length > 0) {
     const delivered = rt.browser.deliverCode({ kind: "link", value: pickLoginLink(email.links) });
     log("inbox", "ссылка для входа в браузер", { delivered });
     return;
@@ -116,7 +145,16 @@ async function handleWhileInBrowser(rt: AgentRuntime, email: InboundEmail): Prom
 }
 
 async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: EmailClassification | null = null): Promise<void> {
-  const c = known ?? (await classifyEmail(rt, email, "classify.email"));
+  let c: EmailClassification;
+  try {
+    c = known ?? (await classifyEmail(rt, email, "classify.email"));
+  } catch (e) {
+    warn("inbox", "классификация не удалась", { error: String(e) });
+    const run = await rt.createRun("email", email.subject || "Письмо", email.messageId);
+    await rt.step(run.id, "error", "модель не разобрала письмо");
+    await rt.finishRun(run, "escalated", "письмо не разобрано: модель не вернула ответ");
+    return;
+  }
   log("inbox", "письмо классифицировано", { kind: c.kind, service: c.service });
 
   if (c.kind === "notification" || c.kind === "other" || c.kind === "verification") {
@@ -129,16 +167,33 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
   const run = await rt.createRun("email", email.subject || (c.kind === "invite" ? "Приглашение" : "Задача"), email.messageId);
   await rt.step(run.id, "email", `${c.kind} от ${email.from}`, { service: c.service, domain: c.serviceDomain });
   try {
-    const onboarding =
-      c.kind === "invite"
-        ? await prepareOnboarding(rt, run, {
-            service: c.service,
-            domain: c.serviceDomain,
-            links: email.links,
-            extraHosts: email.dkimDomains,
-          })
-        : undefined;
-    const text = await rt.think(run, emailTaskPrompt(email, c.kind, onboarding));
+    if (c.kind === "invite") {
+      const onboarding = await prepareOnboarding(rt, run, {
+        service: c.service,
+        domain: c.serviceDomain,
+        links: email.links,
+        extraHosts: email.dkimDomains,
+      });
+      const engine = onboarding.engine;
+      if (engine.status === "ready") {
+        const service = c.service || onboarding.discovery?.service || "сервис";
+        try {
+          const text = await rt.think(run, connectedFollowupPrompt(service, engine.mode ?? "browser"));
+          const current = await rt.store.getRun(run.id);
+          if (current?.status === "waiting_approval") return;
+          await rt.finishRun(run, "done", text);
+        } catch (e) {
+          await rt.finishRun(run, "done", `Подключение готово (${engine.mode ?? "browser"}). Задачи не проверены: ${String(e)}`);
+        }
+        return;
+      }
+      const note = engine.status === "escalated" ? escalationNote(engine.reason, engine.liveUrl) : engine.reason;
+      // Карточка с кнопками уже в чате, если открыт handoff.
+      if (!engine.handoffId) await rt.addChat({ role: "agent", text: note, runId: run.id });
+      await rt.finishRun(run, engine.status === "failed" ? "failed" : engine.status === "escalated" ? "escalated" : "done", note);
+      return;
+    }
+    const text = await rt.think(run, emailTaskPrompt(email, c.kind));
     const current = await rt.store.getRun(run.id);
     if (current?.status === "waiting_approval") return;
     await rt.finishRun(run, "done", text);
@@ -160,8 +215,8 @@ async function classifyEmail(rt: AgentRuntime, email: InboundEmail, action: stri
     await recordUsage(rt.store, { taskId: "inbox", taskTitle: "Разбор почты" }, action, "runtime", r);
     return JSON.parse(r.text) as EmailClassification;
   } catch (e) {
-    warn("inbox", "классификация не удалась, считаем задачей", { error: String(e) });
-    return { kind: "task", service: null, serviceDomain: null, summary: email.subject, hasLoginLink: false };
+    warn("inbox", "классификация не удалась", { error: String(e) });
+    throw e;
   }
 }
 

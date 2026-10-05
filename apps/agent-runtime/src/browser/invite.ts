@@ -96,6 +96,10 @@ export interface AcceptInviteResult {
   notes: string;
   /** Кто принимал приглашение: Skyvern или сессия Stagehand на Browserbase. */
   provider?: "skyvern" | "browserbase";
+  /** Закрытая причина барьера, если она из списка. Свободный текст остаётся в notes. */
+  barrierKind?: string | null;
+  liveUrl?: string | null;
+  browserSessionId?: string | null;
 }
 
 export function generatePassword(): string {
@@ -178,6 +182,15 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
         break;
 
       case "signup_form": {
+        if (password && args.password) {
+          await browser.act(
+            [
+              `Это уже существующий аккаунт ${args.email}. Не регистрируй новый и не нажимай «забыли пароль».`,
+              `Найди вход и войди: адрес ${args.email}, пароль ${password}. Если предлагают код на почту — предпочти его.`,
+            ].join(" "),
+          );
+          break;
+        }
         if (!password) {
           password = generatePassword();
           passwordCreated = true;
@@ -193,11 +206,13 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
 
       case "password_form": {
         if (!password) {
-          const r = await browser.act("Если есть вход по коду на почту или по ссылке (magic link, email me a code) — выбери его. Иначе нажми «забыли пароль»");
+          const r = await browser.act(
+            "Если есть вход по коду на почту или magic link — выбери его. Не нажимай «забыли пароль» и не меняй пароль.",
+          );
           if (!r.success) return finish("needs_human", i, `просят пароль, а у агента его нет: ${seen.hint}`);
           break;
         }
-        await browser.act(`Введи пароль ${password} и отправь форму`);
+        await browser.act(`Введи пароль ${password} и отправь форму. Если предлагают код на почту — предпочти его паролю.`);
         break;
       }
 

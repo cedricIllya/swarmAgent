@@ -94,11 +94,16 @@ export class BrowserControl {
    * После входа записываем доступ (`type=credential`: почта, имя, пароль), а если рецепта
    * ещё нет — минимальный браузерный.
    */
-  async acceptInvite(run: Run, args: { url: string; slug: string; service: string }): Promise<AcceptInviteResult> {
+  async acceptInvite(
+    run: Run,
+    args: { url: string; slug: string; service: string },
+    opts?: { persist?: boolean; password?: string | null },
+  ): Promise<AcceptInviteResult> {
     const { rt } = this;
     if (!this.canOnboard) throw new Error("браузер для онбординга не настроен: нужен SKYVERN_API_KEY или Browserbase");
     const snap = await rt.store.readServices();
-    const existing = snap?.credentials.find((c) => c.slug === args.slug) ?? null;
+    const found = snap?.credentials.find((c) => c.slug === args.slug) ?? null;
+    const existing: ServiceCredential | null = opts?.password ? { ...(found ?? { slug: args.slug, kind: "browser" }), password: opts.password } : found;
 
     let result: AcceptInviteResult | null = null;
     if (rt.skyvern) {
@@ -140,6 +145,8 @@ export class BrowserControl {
       await rt.step(run.id, "note", `приглашение в ${args.service} не принято: ${result.notes}`);
       return result;
     }
+
+    if (opts?.persist === false) return result;
 
     const recipeKnown = snap?.recipes.some((r) => r.slug === args.slug) ?? false;
     if (!recipeKnown) {
@@ -189,8 +196,9 @@ export class BrowserControl {
   ): Promise<AcceptInviteResult> {
     const { rt } = this;
     const session = await this.open(run, { purpose: `принять приглашение в ${args.service}`, serviceSlug: args.slug });
+    let result: AcceptInviteResult;
     try {
-      return await acceptInvite(session, {
+      result = await acceptInvite(session, {
         url: args.url,
         service: args.service,
         agentName: rt.cfg.agentName,
@@ -198,8 +206,13 @@ export class BrowserControl {
         password: existing?.password ?? null,
         onStep: (text, data) => rt.step(run.id, "browser", text, data),
       });
-    } finally {
+    } catch (e) {
       await this.close(session.id);
+      throw e;
     }
+    result.liveUrl = session.meta.liveUrl;
+    result.browserSessionId = session.id;
+    if (result.status !== "needs_human") await this.close(session.id);
+    return result;
   }
 }

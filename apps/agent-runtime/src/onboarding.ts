@@ -1,9 +1,23 @@
-import type { Run } from "@swarm/contracts";
+import type { Run, ServiceCredential, ServiceRecipe } from "@swarm/contracts";
 import type { AcceptInviteResult } from "./browser/invite";
-import type { DiscoveryResult } from "./discovery";
-import { hostOf, isNoiseDomain, pickServiceDomain, sameBrand, slugFor } from "./domains";
+import {
+  API_KEY_SCHEMA,
+  apiKeyPrompt,
+  blockerKind,
+  credentialHostAllowed,
+  decideConnection,
+  interpretApiKeyOutput,
+  proveApiKey,
+  readPagePrompt,
+  type ConnectDecision,
+  type Proof,
+} from "./connect";
+import { generatePassword } from "./browser/invite";
+import { mcpToolNames, type DiscoveryResult } from "./discovery";
+import { hostOf, isNoiseDomain, matchRecipe, pickServiceDomain, rootDomain, sameBrand, slugFor } from "./domains";
 import type { KnownRecipeRef } from "./prompts";
 import type { AgentRuntime } from "./runtime";
+import type { HandoffContext, ResumeConnect } from "./runtime/handoffs";
 import { warn } from "./log";
 
 /**
@@ -19,6 +33,17 @@ export interface OnboardingContext {
   inviteSkipped: string | null;
   /** У агента есть свой браузер (Browserbase) для работы внутри сервиса и ручного дожима. */
   browserAvailable: boolean;
+  /** Чем кончился сам движок, до хода Hermes. */
+  engine: EngineResult;
+}
+
+export interface EngineResult {
+  status: "ready" | "escalated" | "ignored" | "failed";
+  mode: "mcp" | "api" | "browser" | null;
+  reason: string;
+  liveUrl: string | null;
+  /** Карточка «нужен человек» уже в чате: вызывающему не надо писать второе сообщение. */
+  handoffId: string | null;
 }
 
 export interface OnboardingInput {
@@ -64,19 +89,392 @@ export async function prepareOnboarding(rt: AgentRuntime, run: Run, input: Onboa
 
   let invite: AcceptInviteResult | null = null;
   let inviteSkipped: string | null = null;
+  let engine: EngineResult;
   if (!inviteUrl) {
     inviteSkipped = "в приглашении нет ссылки";
+    engine = { status: "ignored", mode: null, reason: inviteSkipped, liveUrl: null, handoffId: null };
   } else if (!rt.browser.canOnboard) {
     inviteSkipped = "браузер не настроен";
+    engine = { status: "failed", mode: null, reason: inviteSkipped, liveUrl: null, handoffId: null };
   } else {
+    const connected = await connectInvite(rt, run, { url: inviteUrl, slug, service, discovery }, null);
+    invite = connected.invite;
+    engine = connected.engine;
+    if (invite && invite.status !== "accepted") inviteSkipped = invite.notes;
+  }
+
+  return { recipe, discovery, inviteUrl, invite, inviteSkipped, browserAvailable: rt.browser.available, engine };
+}
+
+/** Человек нажал «я доделал»: тот же конвейер, та же сессия, тот же пароль. */
+export const resumeConnect: ResumeConnect = async (rt, run, ctx) => {
+  const { engine } = await connectInvite(
+    rt,
+    run,
+    { url: ctx.url, slug: ctx.slug, service: ctx.service, discovery: ctx.discovery },
+    { provider: ctx.provider, browserSessionId: ctx.browserSessionId, password: ctx.password },
+  );
+  return engine;
+};
+
+async function storedPassword(rt: AgentRuntime, slug: string, inviteUrl: string): Promise<string | null> {
+  const snap = await rt.store.readServices();
+  if (!snap) return null;
+  const host = hostOf(inviteUrl);
+  const known = matchRecipe(snap.recipes, [host, rootDomain(host)]);
+  const cred = snap.credentials.find((c) => c.slug === (known?.slug ?? slug));
+  return cred?.password ?? null;
+}
+
+function originOf(url: string): string | null {
+  try {
+    return new URL(url).origin + "/";
+  } catch {
+    return null;
+  }
+}
+
+interface ResumeArgs {
+  provider: "skyvern" | "browserbase";
+  browserSessionId: string | null;
+  password: string | null;
+}
+
+interface ConnectArgs {
+  url: string;
+  slug: string;
+  service: string;
+  discovery: DiscoveryResult | null;
+}
+
+/**
+ * Регистрация и поиск ключа в одной сессии браузера. Готово — только MCP с инструментами,
+ * доказанный API-вызов или пароль, которым можно войти снова. Барьер в продукте оставляет
+ * браузер открытым и вешает в чат карточку «нужен человек» с кнопками.
+ */
+async function connectInvite(
+  rt: AgentRuntime,
+  run: Run,
+  args: ConnectArgs,
+  resume: ResumeArgs | null,
+): Promise<{ invite: AcceptInviteResult | null; engine: EngineResult }> {
+  const stored = await storedPassword(rt, args.slug, args.url);
+  const existing = Boolean(stored) || resume !== null;
+  const typed = resume?.password ?? stored ?? generatePassword();
+
+  const escalate = async (
+    decision: ConnectDecision,
+    invite: AcceptInviteResult | null,
+    ctx: Omit<HandoffContext, "url" | "slug" | "service" | "discovery">,
+  ): Promise<{ invite: AcceptInviteResult | null; engine: EngineResult }> => {
+    if (decision.status === "escalated" && !decision.closeBrowser && ctx.browserSessionId) {
+      const pending = await rt.handoffs.open(run, decision.reason, { ...ctx, url: args.url, slug: args.slug, service: args.service, discovery: args.discovery });
+      return { invite, engine: { ...toEngine(decision, ctx.liveUrl), handoffId: pending.id } };
+    }
+    return { invite, engine: toEngine(decision, decision.closeBrowser ? null : ctx.liveUrl) };
+  };
+
+  if (rt.skyvern) {
+    const skyvern = rt.skyvern;
+    const reuse = resume?.provider === "skyvern" && resume.browserSessionId && skyvern.sessionAlive(resume.browserSessionId) ? resume.browserSessionId : null;
+    let sessionId: string | null = null;
+    const close = async () => {
+      if (!sessionId) return;
+      const id = sessionId;
+      sessionId = null;
+      await skyvern.closeBrowserSession(id);
+    };
     try {
-      invite = await rt.browser.acceptInvite(run, { url: inviteUrl, slug, service });
+      const session = reuse ? { browserSessionId: reuse, liveUrl: null as string | null } : await skyvern.openBrowserSession();
+      sessionId = session.browserSessionId;
+      if (resume && !reuse) await rt.step(run.id, "note", "прежняя сессия браузера уже закрыта, вхожу заново");
+      const invite = await skyvern.acceptInvite({
+        runId: run.id,
+        url: args.url,
+        service: args.service,
+        agentName: rt.cfg.agentName,
+        email: rt.cfg.email,
+        password: typed,
+        existing,
+        browserSessionId: session.browserSessionId,
+        onSession: (s) => rt.announceBrowser(run, s),
+        onStep: (text, data) => rt.step(run.id, "browser", text, data),
+      });
+      const liveUrl = invite.liveUrl ?? session.liveUrl;
+      const handoffCtx = { provider: "skyvern" as const, browserSessionId: session.browserSessionId, password: typed, liveUrl };
+      if (invite.status !== "accepted") {
+        const decision = decideConnection({
+          onboard: invite.status === "failed" && invite.barrierKind !== "invite_spent" ? "failed" : "blocked",
+          inviteUrl: args.url,
+          landedUrl: invite.finalUrl,
+          passwordTyped: false,
+          password: null,
+          barrierKind: blockerKind(invite.barrierKind) ?? (invite.status === "needs_human" ? "other" : null),
+          notes: invite.notes,
+          apiBaseUrl: null,
+          apiKeyUsable: false,
+          proof: "not_tried",
+          mcpReady: false,
+        });
+        if (decision.closeBrowser) await close();
+        return escalate(decision, invite, handoffCtx);
+      }
+      const landed = invite.finalUrl || args.url;
+      let sought = {
+        token: null as string | null,
+        proof: "not_tried" as Proof,
+        baseUrl: args.discovery?.api?.baseUrl ?? null,
+        authHeader: args.discovery?.api?.authHeader ?? null,
+        docsUrl: args.discovery?.api?.docsUrl ?? null,
+      };
+      try {
+        sought = await seekApiKey(rt, run, session.browserSessionId, args, landed);
+      } catch (e) {
+        warn("onboarding", "поиск ключа не удался", { error: String(e) });
+        await rt.step(run.id, "error", `поиск ключа не удался: ${String(e)}`);
+      }
+      const mcpReady = await mcpIsReady(args.discovery, sought.token, sought.proof).catch(() => false);
+      // После handoff пароль печатал человек: мы дали ему тот же, считаем, что он его и поставил.
+      const password = invite.password ?? (resume ? typed : null);
+      const decision = decideConnection({
+        onboard: "landed",
+        inviteUrl: args.url,
+        landedUrl: landed,
+        passwordTyped: Boolean(invite.password),
+        password,
+        barrierKind: null,
+        notes: invite.notes,
+        apiBaseUrl: sought.baseUrl,
+        apiKeyUsable: Boolean(sought.token),
+        proof: sought.proof,
+        mcpReady,
+      });
+      if (decision.status === "ready") {
+        await persistConnection(rt, run, {
+          slug: args.slug,
+          service: args.service,
+          domain: rootDomain(hostOf(args.url)),
+          mode: decision.mode ?? "browser",
+          password: decision.savePassword ? password : null,
+          token: decision.saveToken ? sought.token : null,
+          baseUrl: sought.baseUrl,
+          authHeader: sought.authHeader,
+          docsUrl: sought.docsUrl,
+          loginUrl: args.url,
+          appUrl: originOf(landed) ?? originOf(args.url) ?? args.url,
+        });
+      }
+      if (decision.closeBrowser) await close();
+      await rt.step(run.id, "note", decision.reason);
+      return escalate(decision, invite, handoffCtx);
     } catch (e) {
-      warn("onboarding", "принять приглашение не удалось", { error: String(e) });
-      await rt.step(run.id, "error", `принять приглашение не удалось: ${String(e)}`);
-      invite = { status: "failed", accountEmail: rt.cfg.email, password: null, steps: 0, finalUrl: "", notes: String(e) };
+      warn("onboarding", "Skyvern не довёл подключение", { error: String(e) });
+      await close();
+      const decision = decideConnection({
+        onboard: "runtime",
+        inviteUrl: args.url,
+        landedUrl: "",
+        passwordTyped: false,
+        password: null,
+        barrierKind: null,
+        notes: `Skyvern: ${e instanceof Error ? e.message : String(e)}`,
+        apiBaseUrl: null,
+        apiKeyUsable: false,
+        proof: "not_tried",
+        mcpReady: false,
+      });
+      return { invite: null, engine: toEngine(decision, null) };
     }
   }
 
-  return { recipe, discovery, inviteUrl, invite, inviteSkipped, browserAvailable: rt.browser.available };
+  // Stagehand: cookies живут в контексте сервиса, поэтому после handoff просто входим заново.
+  if (resume?.provider === "browserbase" && resume.browserSessionId) await rt.browser.close(resume.browserSessionId);
+  try {
+    const invite = await rt.browser.acceptInvite(
+      run,
+      { url: args.url, slug: args.slug, service: args.service },
+      { persist: false, ...(resume ? { password: typed } : {}) },
+    );
+    const landed = invite.status === "accepted";
+    const password = landed ? (invite.password ?? stored ?? (resume ? typed : null)) : null;
+    const decision = decideConnection({
+      onboard: landed ? "landed" : "blocked",
+      inviteUrl: args.url,
+      landedUrl: invite.finalUrl,
+      passwordTyped: Boolean(invite.password),
+      password,
+      barrierKind: invite.barrierKind === "captcha" ? "captcha" : landed ? null : "other",
+      notes: invite.notes,
+      apiBaseUrl: args.discovery?.api?.baseUrl ?? null,
+      apiKeyUsable: false,
+      proof: "not_tried",
+      mcpReady: false,
+    });
+    if (decision.status === "ready") {
+      await persistConnection(rt, run, {
+        slug: args.slug,
+        service: args.service,
+        domain: rootDomain(hostOf(args.url)),
+        mode: "browser",
+        password: decision.savePassword ? password : null,
+        token: null,
+        baseUrl: null,
+        authHeader: null,
+        docsUrl: null,
+        loginUrl: args.url,
+        appUrl: originOf(invite.finalUrl) ?? originOf(args.url) ?? args.url,
+      });
+    }
+    await rt.step(run.id, "note", decision.reason);
+    return escalate(decision, invite, {
+      provider: "browserbase",
+      browserSessionId: invite.browserSessionId ?? null,
+      password: invite.password ?? stored ?? null,
+      liveUrl: invite.liveUrl ?? null,
+    });
+  } catch (e) {
+    warn("onboarding", "принять приглашение не удалось", { error: String(e) });
+    await rt.step(run.id, "error", `принять приглашение не удалось: ${String(e)}`);
+    return {
+      invite: { status: "failed", accountEmail: rt.cfg.email, password: null, steps: 0, finalUrl: "", notes: String(e) },
+      engine: { status: "failed", mode: null, reason: String(e), liveUrl: null, handoffId: null },
+    };
+  }
+}
+
+function toEngine(decision: ConnectDecision, liveUrl: string | null): EngineResult {
+  return { status: decision.status, mode: decision.mode, reason: decision.reason, liveUrl, handoffId: null };
+}
+
+async function seekApiKey(
+  rt: AgentRuntime,
+  run: Run,
+  browserSessionId: string,
+  args: { service: string; discovery: DiscoveryResult | null },
+  landedUrl: string,
+): Promise<{ token: string | null; proof: Proof; baseUrl: string | null; authHeader: string | null; docsUrl: string | null }> {
+  const skyvern = rt.skyvern;
+  if (!skyvern) return { token: null, proof: "not_tried", baseUrl: null, authHeader: null, docsUrl: null };
+  const hinted = args.discovery?.api?.keyPageUrl ?? null;
+  const baseUrl = args.discovery?.api?.baseUrl ?? null;
+  const authHeader = args.discovery?.api?.authHeader || null;
+  const docsUrl = args.discovery?.api?.docsUrl ?? null;
+  const anchors = [landedUrl, hinted, baseUrl, docsUrl].filter((u): u is string => Boolean(u));
+  const start = hinted && credentialHostAllowed(hinted, anchors) ? hinted : landedUrl;
+
+  let feedback: string | null = null;
+  let forceRead = false;
+  let token: string | null = null;
+  let notes = "";
+  for (let i = 0; i < 3 && !token; i++) {
+    const prompt = forceRead ? readPagePrompt() : apiKeyPrompt({ agentName: rt.cfg.agentName, keyPageUrl: hinted, feedback });
+    forceRead = false;
+    feedback = null;
+    const extracted = await skyvern.extract({
+      runId: run.id,
+      url: start,
+      prompt,
+      purpose: `найти API-ключ ${args.service}`,
+      schema: API_KEY_SCHEMA,
+      browserSessionId,
+      maxSteps: i === 0 ? 20 : 8,
+      onStep: (text, data) => rt.step(run.id, "browser", text, data),
+    });
+    if (extracted.status !== "completed") {
+      notes = extracted.failureReason ?? extracted.status;
+      break;
+    }
+    if (extracted.output == null) {
+      forceRead = true;
+      continue;
+    }
+    const parsed = interpretApiKeyOutput(extracted.output);
+    notes = parsed.notes;
+    if (parsed.found && parsed.apiKey) {
+      token = parsed.apiKey;
+      break;
+    }
+    if (parsed.rejectReason) feedback = `значение отклонено: ${parsed.rejectReason}`;
+  }
+  if (notes) await rt.step(run.id, "note", notes.slice(0, 300));
+
+  const endpoints = (args.discovery?.api?.readEndpoints ?? []).filter((u) => credentialHostAllowed(u, anchors));
+  const proveUrls = endpoints.length ? endpoints : baseUrl && credentialHostAllowed(baseUrl, anchors) ? [baseUrl] : [];
+  if (!token || !authHeader || !proveUrls.length) {
+    return { token, proof: token ? "not_tried" : "not_tried", baseUrl, authHeader, docsUrl };
+  }
+  const proof = await proveApiKey({ urls: proveUrls, headerName: authHeader, token });
+  await rt.step(run.id, "api", proof.detail);
+  return { token, proof: proof.verdict, baseUrl, authHeader, docsUrl };
+}
+
+async function mcpIsReady(discovery: DiscoveryResult | null, token: string | null, proof: Proof): Promise<boolean> {
+  const mcp = discovery?.mcp;
+  if (!mcp?.verified) return false;
+  const bearer = mcp.auth === "none" ? undefined : proof === "green" && token ? token : undefined;
+  if (mcp.auth !== "none" && !bearer) return false;
+  const names = await mcpToolNames(mcp.url, fetch, bearer);
+  return (names?.length ?? 0) > 0;
+}
+
+async function persistConnection(
+  rt: AgentRuntime,
+  run: Run,
+  args: {
+    slug: string;
+    service: string;
+    domain: string;
+    mode: "mcp" | "api" | "browser";
+    password: string | null;
+    token: string | null;
+    baseUrl: string | null;
+    authHeader: string | null;
+    docsUrl: string | null;
+    loginUrl: string;
+    appUrl: string;
+  },
+): Promise<void> {
+  const domains = args.domain ? [args.domain] : [];
+  const browser = /^https?:\/\//i.test(args.loginUrl) && /^https?:\/\//i.test(args.appUrl) ? { loginUrl: args.loginUrl, appUrl: args.appUrl } : undefined;
+  if (args.mode === "api" && args.baseUrl) {
+    const recipe: ServiceRecipe = {
+      slug: args.slug,
+      name: args.service,
+      kind: "api",
+      domains,
+      api: {
+        baseUrl: args.baseUrl,
+        auth: args.authHeader && /^authorization$/i.test(args.authHeader) ? "bearer" : "header",
+        authHeader: args.authHeader || "Authorization",
+        ...(args.docsUrl ? { docsUrl: args.docsUrl } : {}),
+      },
+      ...(browser ? { browser } : {}),
+      notes: "Ключ доказан вызовом во время онбординга.",
+      discoveredBy: rt.cfg.agentId,
+    };
+    await rt.services.applyReport({ type: "recipe", recipe, runId: run.id });
+  } else if (args.mode === "browser") {
+    const known = (await rt.store.readServices())?.recipes.some((r) => r.slug === args.slug) ?? false;
+    if (!known && browser) {
+      const recipe: ServiceRecipe = {
+        slug: args.slug,
+        name: args.service,
+        kind: "browser",
+        domains,
+        browser,
+        notes: "Вход по паролю. Программный доступ вызовом не доказан.",
+        discoveredBy: rt.cfg.agentId,
+      };
+      await rt.services.applyReport({ type: "recipe", recipe, runId: run.id });
+    }
+  }
+  const credential: ServiceCredential = {
+    slug: args.slug,
+    kind: args.mode,
+    accountEmail: rt.cfg.email,
+    accountName: rt.cfg.agentName,
+    ...(args.password ? { password: args.password } : {}),
+    ...(args.token && args.mode !== "browser" ? { token: args.token } : {}),
+  };
+  await rt.services.applyReport({ type: "credential", credential, runId: run.id });
 }

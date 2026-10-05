@@ -5,6 +5,8 @@ import {
   chatTaskPrompt,
   chatTitle,
   classifyChatPrompt,
+  connectedFollowupPrompt,
+  escalationNote,
   extractLinks,
   runTitle,
   type ChatClassification,
@@ -80,17 +82,39 @@ export async function handleChat(
     try {
       // Приглашение: рецепт или поиск документации, затем принять приглашение под своей почтой —
       // и только потом ход модели.
-      const onboarding =
-        classification.kind === "invite"
-          ? await prepareOnboarding(rt, run, { service: classification.service, domain: classification.serviceDomain, links })
-          : undefined;
+      if (classification.kind === "invite") {
+        const onboarding = await prepareOnboarding(rt, run, {
+          service: classification.service,
+          domain: classification.serviceDomain,
+          links,
+        });
+        const engine = onboarding.engine;
+        if (engine.status === "ready") {
+          const service = classification.service || onboarding.discovery?.service || "сервис";
+          try {
+            const text = await rt.think(run, connectedFollowupPrompt(service, engine.mode ?? "browser"));
+            const current = await rt.store.getRun(run.id);
+            if (current?.status === "waiting_approval") return;
+            await rt.finishRun(run, "done", text);
+            await rt.addChat({ role: "agent", text, runId: run.id, chatId });
+          } catch (e) {
+            const note = `Подключение готово (${engine.mode ?? "browser"}). Задачи не проверены: ${String(e)}`;
+            await rt.finishRun(run, "done", note);
+            await rt.addChat({ role: "agent", text: note, runId: run.id, chatId });
+          }
+          return;
+        }
+        const note = engine.status === "escalated" ? escalationNote(engine.reason, engine.liveUrl) : engine.reason;
+        await rt.finishRun(run, engine.status === "failed" ? "failed" : engine.status === "escalated" ? "escalated" : "done", note);
+        if (!engine.handoffId) await rt.addChat({ role: "agent", text: note, runId: run.id, chatId });
+        return;
+      }
       const prompt = chatTaskPrompt({
         message: args.message,
         author: args.author,
         kind: classification.kind,
         links,
-        recipe: onboarding?.recipe ?? knownRecipe,
-        onboarding,
+        recipe: knownRecipe,
       });
       const text = await rt.think(run, prompt);
       const current = await rt.store.getRun(run.id);

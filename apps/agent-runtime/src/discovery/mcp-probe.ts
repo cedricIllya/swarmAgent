@@ -101,6 +101,50 @@ export function wellKnownMcpUrls(domain: string): Array<{ url: string; transport
   ];
 }
 
+/**
+ * `tools/list` после `initialize`. Пустой список и сетевой сбой — не доказательство MCP.
+ * Непустой список имён — сервер реально отдаёт инструменты.
+ */
+export async function mcpToolNames(url: string, fetchImpl: typeof fetch, token?: string): Promise<string[] | null> {
+  try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "MCP-Protocol-Version": PROTOCOL_VERSION,
+    };
+    if (token) headers.Authorization = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+    const init = await fetchImpl(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "swarm-agent", version: "0.1.0" } },
+      }),
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      redirect: "manual",
+    });
+    const session = init.headers.get("mcp-session-id");
+    await init.body?.cancel().catch(() => undefined);
+    if (session) headers["mcp-session-id"] = session;
+    const res = await fetchImpl(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      redirect: "manual",
+    });
+    if (!res.ok) return null;
+    const body = await readHead(res, 20_000);
+    const json = JSON.parse(body) as { result?: { tools?: Array<{ name?: string }> } };
+    if (!Array.isArray(json.result?.tools)) return null;
+    return json.result.tools.map((t) => t.name).filter((n): n is string => typeof n === "string" && n.length > 0);
+  } catch {
+    return null;
+  }
+}
+
 /** Первый подтверждённый MCP из списка кандидатов; остальные пробы не ждём. */
 export async function verifyCandidates(candidates: McpFinding[], fetchImpl: typeof fetch): Promise<McpFinding | null> {
   const seen = new Set<string>();

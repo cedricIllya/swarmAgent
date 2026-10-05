@@ -11,6 +11,7 @@ const STATUS_LABEL: Record<Run["status"], { text: string; cls: string }> = {
   waiting_approval: { text: "ждёт одобрения", cls: "badge-warn" },
   done: { text: "готово", cls: "badge-ok" },
   failed: { text: "ошибка", cls: "badge-danger" },
+  escalated: { text: "нужен человек", cls: "badge-warn" },
 };
 
 const TRIGGER_LABEL: Record<Run["trigger"], string> = {

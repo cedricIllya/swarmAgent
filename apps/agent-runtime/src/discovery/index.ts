@@ -16,7 +16,7 @@ import {
   type McpTransport,
 } from "./types";
 
-export { interpretMcpResponse, probeMcp, verifyCandidates, wellKnownMcpUrls, type McpProbe } from "./mcp-probe";
+export { interpretMcpResponse, mcpToolNames, probeMcp, verifyCandidates, wellKnownMcpUrls, type McpProbe } from "./mcp-probe";
 export { matchRegistryServers, registryNameDomain, type RegistryEntry } from "./registry";
 export { fallbackDocsUrls, fetchPage, htmlToText, pickDocsSeed, rankDocLinks, scoreDocUrl, selectDocPages, type FetchedPage } from "./pages";
 export { searchCovers } from "./model";
@@ -123,6 +123,8 @@ export async function discoverService(input: DiscoveryInput, deps: DiscoveryDeps
           docsUrl: httpsUrl(findings.apiDocsUrl) ?? docs.find((d) => belongsTo(d.url, domain))?.url ?? null,
           authHeader: findings.authHeader || "Authorization",
           howToGetKey: findings.howToGetKey ?? "",
+          keyPageUrl: httpsUrl(findings.keyPageUrl),
+          readEndpoints: (findings.readEndpoints ?? []).map((u) => httpsUrl(u)).filter((u): u is string => Boolean(u)),
         }
       : null;
 

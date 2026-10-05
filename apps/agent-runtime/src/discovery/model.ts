@@ -17,6 +17,12 @@ const FINDINGS_SCHEMA = {
     apiDocsUrl: { type: ["string", "null"], description: "Страница документации API" },
     authHeader: { type: ["string", "null"], description: "Имя HTTP-заголовка для ключа, обычно Authorization" },
     howToGetKey: { type: ["string", "null"], description: "Где в интерфейсе сервиса взять API-ключ или токен" },
+    keyPageUrl: { type: ["string", "null"], description: "Точный URL страницы, где залогиненный пользователь создаёт API-ключ. Только если он есть в источниках" },
+    readEndpoints: {
+      type: "array",
+      items: { type: "string" },
+      description: "До трёх GET без параметров пути: текущий пользователь, аккаунт, список. Только URL из источников",
+    },
     loginUrl: { type: ["string", "null"] },
     appUrl: { type: ["string", "null"] },
     notes: { type: "string", description: "Короткая заметка для следующего агента, без секретов" },
@@ -33,6 +39,8 @@ export interface ModelFindings {
   loginUrl: string | null;
   appUrl: string | null;
   notes: string;
+  keyPageUrl: string | null;
+  readEndpoints: string[];
 }
 
 export const EMPTY_FINDINGS: ModelFindings = {
@@ -45,6 +53,8 @@ export const EMPTY_FINDINGS: ModelFindings = {
   loginUrl: null,
   appUrl: null,
   notes: "",
+  keyPageUrl: null,
+  readEndpoints: [],
 };
 
 function parseFindings(text: string): ModelFindings {
@@ -62,6 +72,10 @@ function parseFindings(text: string): ModelFindings {
       loginUrl: str(raw.loginUrl),
       appUrl: str(raw.appUrl),
       notes: str(raw.notes) ?? "",
+      keyPageUrl: str(raw.keyPageUrl),
+      readEndpoints: Array.isArray(raw.readEndpoints)
+        ? raw.readEndpoints.filter((v): v is string => typeof v === "string" && /^https?:\/\//i.test(v)).slice(0, 3)
+        : [],
     };
   } catch {
     return EMPTY_FINDINGS;
@@ -80,6 +94,8 @@ export function mergeFindings(prior: ModelFindings, next: ModelFindings): ModelF
     loginUrl: next.loginUrl ?? prior.loginUrl,
     appUrl: next.appUrl ?? prior.appUrl,
     notes: next.notes || prior.notes,
+    keyPageUrl: next.keyPageUrl ?? prior.keyPageUrl,
+    readEndpoints: next.readEndpoints.length ? next.readEndpoints : prior.readEndpoints,
   };
 }
 
@@ -110,7 +126,7 @@ export function searchPrompt(service: string, domain: string | null): string {
     `Нужно подключиться к сервису «${service}»${domain ? ` (${domain})` : ""} программно.`,
     "По результатам поиска найди в официальной документации:",
     "1) есть ли у сервиса официальный удалённый MCP-сервер (URL вида https://mcp.<домен>/mcp или из раздела интеграций);",
-    "2) публичный REST или GraphQL API: базовый URL, страница документации, заголовок авторизации, где взять ключ;",
+    "2) публичный REST или GraphQL API: базовый URL, страница документации, заголовок авторизации (если не уверен — null, не угадывай Authorization), точный URL страницы создания ключа, два-три GET без параметров;",
     "3) адрес входа в веб-приложение.",
     "Указывай только URL, которые встречаются в результатах. Не выдумывай адреса. Верни JSON.",
   ].join("\n");

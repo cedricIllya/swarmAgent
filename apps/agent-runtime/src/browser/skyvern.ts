@@ -1,6 +1,7 @@
 import type { BrowserSession } from "@swarm/contracts";
 import type { Store } from "../store";
 import { downloadUrlTo } from "./recordings";
+import { blockerKind } from "../connect";
 import { generatePassword, type AcceptInviteResult } from "./invite";
 import { log, warn } from "../log";
 
@@ -22,9 +23,13 @@ export const INVITE_OUTPUT_SCHEMA = {
   properties: {
     outcome: {
       type: "string",
-      enum: ["accepted", "captcha", "expired", "needs_human", "failed"],
+      enum: ["landed", "accepted", "blocked", "captcha", "expired", "needs_human", "failed"],
       description:
-        "accepted — вошли в приложение под адресом агента; captcha — капча или проверка на робота; expired — приглашение недействительно; needs_human — нужен человек (SSO, оплата, вопрос, которого нет в инструкции); failed — иначе",
+        "landed — внутри приложения, без форм входа; blocked — барьер (SSO, оплата, телефон, капча после ожидания); expired — приглашение недействительно; failed — иначе",
+    },
+    blocker_kind: {
+      type: "string",
+      enum: ["captcha", "sso_only", "two_factor", "phone", "payment", "password_rejected", "email_rejected", "invite_spent", "other"],
     },
     account_email: { type: "string" },
     password_set: { type: "boolean", description: "true, если на форме регистрации задали пароль из инструкции" },
@@ -50,6 +55,10 @@ export interface SkyvernInviteArgs {
   email: string;
   /** Пароль, если у агента уже есть аккаунт в сервисе. Иначе придумаем свой. */
   password?: string | null;
+  /** Аккаунт уже есть: только вход, без регистрации и смены пароля. По умолчанию — есть ли пароль. */
+  existing?: boolean;
+  /** Уже открытая сессия: регистрация и поиск ключа делят cookies. */
+  browserSessionId?: string | null;
   maxSteps?: number;
   timeoutMs?: number;
   onSession?: (session: BrowserSession) => Promise<void>;
@@ -72,21 +81,43 @@ interface ActiveRun {
   startedAt: number;
 }
 
-/** Текст задачи Skyvern: принять приглашение и зарегистрироваться под почтой агента. */
-export function inviteTaskPrompt(args: { service: string; agentName: string; email: string; password: string }): string {
+/** Текст задачи Skyvern: принять приглашение. Существующий аккаунт — только вход, без нового пароля. */
+export function inviteTaskPrompt(args: {
+  service: string;
+  agentName: string;
+  email: string;
+  password: string;
+  existing?: boolean;
+}): string {
+  const identity = [
+    `Везде, где спрашивают имя, вводи «${args.agentName}». Адрес электронной почты — только ${args.email}.`,
+    "Способ входа — только почта (Continue with email). Google, Microsoft, GitHub, Apple и SSO не выбирай, если есть обычный путь.",
+    "Если просят код из письма или magic link — жди: письмо придёт на этот адрес, код или ссылка появятся сами. Код не выдумывай.",
+    "Капча решается сама. Подожди и продолжи. outcome=blocked и blocker_kind=captcha — только если после ожидания страница всё ещё не пускает.",
+    "SSO без почты, аппаратный 2FA, телефон или оплата — outcome=blocked и blocker_kind (sso_only, two_factor, phone, payment). Не обходи.",
+    "Не нажимай unsubscribe и help. Не меняй настройки, никого не приглашай, ничего не оплачивай.",
+    "Страница «приглашение принято» без рабочего интерфейса — это ещё не конец. landed только когда видишь приложение: навигацию или список, и нет формы входа.",
+  ];
+  const mode = args.existing
+    ? [
+        `Войди в уже существующий аккаунт ${args.service} под ${args.email}. Новый аккаунт не регистрируй.`,
+        "Если страница уже показывает рабочий интерфейс без формы входа — ничего не делай и сразу верни outcome=landed.",
+        "Если продукт предлагает код на почту или magic link — предпочти его паролю.",
+        `Иначе пароль ровно этот: ${args.password}.`,
+        "Никогда не меняй пароль и не ходи по «forgot/reset password», даже если продукт предлагает и даже если такое письмо пришло.",
+        "Если пароль отклонён и нет пути через код — outcome=blocked, blocker_kind=password_rejected.",
+      ]
+    : [
+        `Прими приглашение в ${args.service} и зарегистрируйся под ${args.email}. Если аккаунт уже есть — войди, второй не создавай.`,
+        `Если просят задать пароль — ровно этот: ${args.password} (и его же в подтверждении).`,
+      ];
   return [
-    `Прими приглашение в ${args.service} и зарегистрируйся (или войди) под адресом ${args.email}. Цель — оказаться внутри приложения: рабочее пространство, список проектов или задач.`,
+    ...mode,
     "",
     "Правила:",
-    `- Везде, где спрашивают имя, вводи «${args.agentName}»; адрес электронной почты — только ${args.email}.`,
-    `- Если предлагают задать пароль — используй ровно этот: ${args.password} (и его же в подтверждении). Если просят существующий пароль для этого адреса — тоже этот.`,
-    "- Способ входа выбирай только по электронной почте (Continue with email, Sign up with email). Google, Microsoft, GitHub, Apple, SSO не выбирай.",
-    "- Если просят код подтверждения из письма — дождись его: код придёт сам, введи его и продолжи. Если написано, что отправлена ссылка для входа (magic link) — тоже жди, ссылка откроется сама.",
-    "- Отмечай согласие с условиями, если это нужно для продолжения. Закрывай подсказки и всплывающие окна об обучении.",
-    "- Не меняй настройки рабочего пространства, никого не приглашай, ничего не оплачивай, не создавай записей внутри приложения.",
-    "- Капча или проверка «я не робот» — остановись с outcome=captcha. Приглашение недействительно или истекло — outcome=expired. Требуют SSO, оплату или данные, которых нет в инструкции — outcome=needs_human.",
+    ...identity.map((line) => `- ${line}`),
     "",
-    "Задача завершена, когда ты внутри приложения под этим адресом: outcome=accepted, в final_url — адрес страницы, password_set — задавал ли ты пароль из инструкции.",
+    "Закончи JSON: outcome=landed и final_url, когда ты внутри приложения. password_set — задавал ли ты пароль из инструкции.",
   ].join("\n");
 }
 
@@ -105,21 +136,25 @@ export function interpretInviteOutput(
   };
   const notes = typeof o.notes === "string" && o.notes.trim() ? o.notes.trim().slice(0, 400) : "";
   const finalUrl = typeof o.final_url === "string" ? o.final_url : "";
+  const kind = blockerKind((o as { blocker_kind?: unknown }).blocker_kind);
   const base = {
     accountEmail: ctx.email,
     password: o.password_set ? ctx.password : null,
     steps: 0,
     finalUrl,
     provider: "skyvern" as const,
+    barrierKind: kind,
   };
-  if (status === "completed" && o.outcome === "accepted") {
-    return { ...base, status: "accepted", notes: notes || `приглашение принято, аккаунт ${ctx.email}` };
+  const outcome = o.outcome ?? "";
+  if (status === "completed" && (outcome === "accepted" || outcome === "landed" || outcome === "")) {
+    return { ...base, status: "accepted", notes: notes || (outcome ? `вход выполнен, аккаунт ${ctx.email}` : "пустой outcome, считаем что вошли") };
   }
-  if (o.outcome === "captcha" || o.outcome === "needs_human") {
-    return { ...base, status: "needs_human", notes: notes || (o.outcome === "captcha" ? "капча" : "нужен человек") };
+  if (outcome === "captcha" || outcome === "blocked" || outcome === "needs_human" || status === "terminated") {
+    const barrier = kind ?? (outcome === "captcha" ? "captcha" : "other");
+    return { ...base, status: "needs_human", barrierKind: barrier, notes: notes || (outcome === "captcha" ? "капча" : "нужен человек") };
   }
-  if (o.outcome === "expired") {
-    return { ...base, status: "failed", notes: notes || "приглашение недействительно" };
+  if (outcome === "expired") {
+    return { ...base, status: "failed", barrierKind: "invite_spent", notes: notes || "приглашение недействительно" };
   }
   const reason = ctx.failureReason?.trim() || notes || `Skyvern завершил задачу со статусом ${status}`;
   return { ...base, status: "failed", notes: reason.slice(0, 400) };
@@ -127,6 +162,12 @@ export function interpretInviteOutput(
 
 export class SkyvernClient {
   private readonly active = new Map<string, ActiveRun>();
+  /** Сессия жива до close или до таймаута: почта в это время удерживается. */
+  private readonly held = new Map<string, number>();
+  private readonly sessionLive = new Map<string, string | null>();
+  private readonly metas = new Map<string, BrowserSession>();
+  /** Код пришёл между задачами одной сессии — отдадим в следующую. */
+  private readonly pendingTotp: string[] = [];
 
   constructor(
     private readonly apiKey: string,
@@ -137,33 +178,126 @@ export class SkyvernClient {
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
-  /** Идёт хотя бы одна задача Skyvern: почта с кодом должна уйти в неё. */
+  /** Идёт задача или открыта сессия онбординга: почта с кодом должна уйти в неё. */
   get busy(): boolean {
-    return this.active.size > 0;
+    const now = Date.now();
+    for (const [id, until] of this.held) if (until <= now) this.held.delete(id);
+    return this.active.size > 0 || this.held.size > 0;
+  }
+
+  /** Одна сессия на весь онбординг: captcha-solver и общие cookies. */
+  async openBrowserSession(): Promise<{ browserSessionId: string; liveUrl: string | null }> {
+    const res = await this.fetchImpl(`${this.base}/v1/browser_sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": this.apiKey },
+      body: JSON.stringify({ timeout: 45, extensions: ["captcha-solver"] }),
+    });
+    if (!res.ok) throw new Error(`Skyvern session ${res.status}: ${await res.text()}`);
+    const json = (await res.json()) as { browser_session_id?: string; app_url?: string | null };
+    if (!json.browser_session_id) throw new Error("Skyvern не вернул browser_session_id");
+    // Страница сессии в Skyvern: живой экран и кнопка Take Control.
+    const liveUrl = json.app_url ?? `https://app.skyvern.com/browser-session/${json.browser_session_id}`;
+    this.held.set(json.browser_session_id, Date.now() + 45 * 60 * 1000);
+    this.sessionLive.set(json.browser_session_id, liveUrl);
+    log("skyvern", "сессия открыта", { browserSessionId: json.browser_session_id, extensions: ["captcha-solver"] });
+    return { browserSessionId: json.browser_session_id, liveUrl };
+  }
+
+  /** Сессия ещё жива у нас (не закрыта и не вышла по таймауту). */
+  sessionAlive(browserSessionId: string): boolean {
+    const until = this.held.get(browserSessionId);
+    return until !== undefined && until > Date.now();
+  }
+
+  async closeBrowserSession(browserSessionId: string): Promise<void> {
+    this.held.delete(browserSessionId);
+    this.sessionLive.delete(browserSessionId);
+    this.pendingTotp.length = 0;
+    const meta = this.metas.get(`skyvern-${browserSessionId}`);
+    this.metas.delete(`skyvern-${browserSessionId}`);
+    if (meta) {
+      meta.finishedAt = new Date().toISOString();
+      meta.liveUrl = null;
+      await this.store.saveBrowserSession(meta);
+    }
+    try {
+      await this.fetchImpl(`${this.base}/v1/browser_sessions/${browserSessionId}/close`, {
+        method: "POST",
+        headers: { "x-api-key": this.apiKey },
+      });
+    } catch (e) {
+      warn("skyvern", "не удалось закрыть сессию", { error: String(e) });
+    }
   }
 
   /**
-   * Принять приглашение и зарегистрироваться под почтой агента одной задачей Skyvern.
-   * Пароль придумывается здесь и попадает в итог только если Skyvern его действительно задал.
+   * Принять приглашение под почтой агента. Своя сессия создаётся с captcha-solver
+   * и закрывается, если человек не нужен. Переданная сессия остаётся открытой.
    */
   async acceptInvite(args: SkyvernInviteArgs): Promise<AcceptInviteResult & { session: BrowserSession }> {
+    const owned = !args.browserSessionId;
+    const opened = args.browserSessionId
+      ? { browserSessionId: args.browserSessionId, liveUrl: this.sessionLive.get(args.browserSessionId) ?? null }
+      : await this.openBrowserSession();
     const password = args.password ?? generatePassword();
-    const prompt = inviteTaskPrompt({ service: args.service, agentName: args.agentName, email: args.email, password });
+    const existing = args.existing ?? Boolean(args.password);
+    try {
+      const prompt = inviteTaskPrompt({
+        service: args.service,
+        agentName: args.agentName,
+        email: args.email,
+        password,
+        existing,
+      });
+      const r = await this.runTask({
+        runId: args.runId,
+        url: args.url,
+        prompt,
+        purpose: `принять приглашение в ${args.service}`,
+        schema: INVITE_OUTPUT_SCHEMA,
+        maxSteps: args.maxSteps ?? 30,
+        timeoutMs: args.timeoutMs,
+        browserSessionId: opened.browserSessionId,
+        leaveOpen: true,
+        onSession: args.onSession,
+        onStep: args.onStep,
+      });
+      const result = interpretInviteOutput(r.status, r.output, { email: args.email, password, failureReason: r.failureReason });
+      // Пароль существующего аккаунта остаётся его паролем, что бы Skyvern ни решил.
+      if (existing && args.password && result.status === "accepted") result.password = args.password;
+      result.liveUrl = opened.liveUrl;
+      result.browserSessionId = opened.browserSessionId;
+      if (owned && result.status !== "needs_human") await this.closeBrowserSession(opened.browserSessionId);
+      return { ...result, session: r.session };
+    } catch (e) {
+      if (owned) await this.closeBrowserSession(opened.browserSessionId);
+      throw e;
+    }
+  }
+
+  /** Задача в уже открытой сессии: прочитать ключ или доки, не закрывая браузер. */
+  async extract(args: {
+    runId: string;
+    url: string;
+    prompt: string;
+    purpose: string;
+    schema: unknown;
+    browserSessionId: string;
+    maxSteps?: number;
+    onStep?: (text: string, data?: Record<string, unknown>) => Promise<void> | void;
+  }): Promise<{ status: string; output: unknown; failureReason: string | null }> {
     const r = await this.runTask({
       runId: args.runId,
       url: args.url,
-      prompt,
-      purpose: `принять приглашение в ${args.service}`,
-      schema: INVITE_OUTPUT_SCHEMA,
-      maxSteps: args.maxSteps ?? 30,
-      timeoutMs: args.timeoutMs,
-      onSession: args.onSession,
+      prompt: args.prompt,
+      purpose: args.purpose,
+      schema: args.schema,
+      maxSteps: args.maxSteps ?? 20,
+      browserSessionId: args.browserSessionId,
+      leaveOpen: true,
       onStep: args.onStep,
     });
-    const result = interpretInviteOutput(r.status, r.output, { email: args.email, password, failureReason: r.failureReason });
-    // Пароль уже был у агента — он и остаётся паролем аккаунта, что бы Skyvern ни решил.
-    if (args.password && result.status === "accepted") result.password = args.password;
-    return { ...result, session: r.session };
+    return { status: r.status, output: r.output, failureReason: r.failureReason };
   }
 
   /** Вход или регистрация по готовой инструкции агента (`POST /skyvern/login`). */
@@ -194,24 +328,34 @@ export class SkyvernClient {
    * чтобы при нескольких задачах код не ушёл не туда.
    */
   async pushCode(v: { kind: "code" | "link"; value: string }): Promise<boolean> {
+    const content = v.kind === "code" ? `Your verification code is ${v.value}` : v.value;
     const latest = [...this.active.values()].sort((a, b) => b.startedAt - a.startedAt)[0];
-    if (!latest) return false;
+    if (!latest) {
+      if (this.held.size === 0) return false;
+      this.pendingTotp.push(content);
+      log("skyvern", "код придержан до следующей задачи сессии");
+      return true;
+    }
+    return this.postTotp(latest, content, v.kind);
+  }
+
+  private async postTotp(target: ActiveRun, content: string, kind: "code" | "link" | "buffered"): Promise<boolean> {
     const res = await this.fetchImpl(`${this.base}/v1/credentials/totp`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": this.apiKey },
       body: JSON.stringify({
         totp_identifier: this.totpIdentifier,
-        content: v.kind === "code" ? `Your verification code is ${v.value}` : v.value,
+        content,
         source: "swarm-inbox",
-        task_id: latest.skyvernRunId,
+        task_id: target.skyvernRunId,
       }),
     });
-    await this.store.appendBrowserAction(latest.sessionId, { type: "code-from-email", kind: v.kind, delivered: res.ok });
+    await this.store.appendBrowserAction(target.sessionId, { type: "code-from-email", kind, delivered: res.ok });
     if (!res.ok) {
       warn("skyvern", "не удалось передать код", { status: res.status, body: (await res.text()).slice(0, 300) });
       return false;
     }
-    log("skyvern", "код из письма передан", { kind: v.kind, skyvernRunId: latest.skyvernRunId });
+    log("skyvern", "код из письма передан", { kind, skyvernRunId: target.skyvernRunId });
     return true;
   }
 
@@ -223,6 +367,9 @@ export class SkyvernClient {
     schema: unknown;
     maxSteps: number;
     timeoutMs?: number | undefined;
+    browserSessionId?: string | undefined;
+    /** Не помечать сессию закрытой: следующая задача или человек ещё в ней. */
+    leaveOpen?: boolean | undefined;
     onSession?: ((session: BrowserSession) => Promise<void>) | undefined;
     onStep?: ((text: string, data?: Record<string, unknown>) => Promise<void> | void) | undefined;
   }): Promise<{ session: BrowserSession; status: string; output: unknown; failureReason: string | null }> {
@@ -237,23 +384,31 @@ export class SkyvernClient {
         max_steps: args.maxSteps,
         data_extraction_schema: args.schema,
         totp_identifier: this.totpIdentifier,
+        ...(args.browserSessionId ? { browser_session_id: args.browserSessionId } : {}),
       }),
     });
     if (!res.ok) throw new Error(`Skyvern ${res.status}: ${await res.text()}`);
     const created = (await res.json()) as { run_id: string; app_url?: string | null };
     const skyvernRunId = created.run_id;
 
-    const meta: BrowserSession = {
-      id: `skyvern-${skyvernRunId}`,
+    const metaId = args.browserSessionId ? `skyvern-${args.browserSessionId}` : `skyvern-${skyvernRunId}`;
+    const meta: BrowserSession = this.metas.get(metaId) ?? {
+      id: metaId,
       runId: args.runId,
       startedAt: new Date().toISOString(),
       finishedAt: null,
       provider: "skyvern",
       purpose: args.purpose,
       hasVideo: false,
-      liveUrl: null,
+      liveUrl: (args.browserSessionId ? this.sessionLive.get(args.browserSessionId) : null) ?? created.app_url ?? null,
     };
-    this.active.set(skyvernRunId, { skyvernRunId, sessionId: meta.id, startedAt: Date.now() });
+    meta.purpose = args.purpose;
+    if (!meta.liveUrl) meta.liveUrl = created.app_url ?? null;
+    const run = { skyvernRunId, sessionId: meta.id, startedAt: Date.now() };
+    this.active.set(skyvernRunId, run);
+    this.metas.set(meta.id, meta);
+    const buffered = this.pendingTotp.splice(0);
+    for (const content of buffered) await this.postTotp(run, content, "buffered");
     await this.store.saveBrowserSession(meta);
     await this.store.appendBrowserAction(meta.id, { type: "skyvern.start", purpose: args.purpose, url: args.url, appUrl: created.app_url ?? null });
     await args.onSession?.(meta);
@@ -304,7 +459,10 @@ export class SkyvernClient {
         warn("skyvern", "не удалось скачать ролик", { error: String(e) });
       }
     }
-    meta.finishedAt = new Date().toISOString();
+    if (!args.leaveOpen) {
+      meta.finishedAt = new Date().toISOString();
+      this.metas.delete(meta.id);
+    }
     await this.store.saveBrowserSession(meta);
     log("skyvern", "задача завершена", { skyvernRunId, status, hasVideo: meta.hasVideo });
     return { session: meta, status, output, failureReason };

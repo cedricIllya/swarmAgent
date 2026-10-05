@@ -27,8 +27,21 @@ describe("inviteTaskPrompt", () => {
     expect(p).toContain("bot@agents.test");
     expect(p).toContain("«Bot»");
     expect(p).toContain("pw!A9");
-    expect(p).toMatch(/код.*придёт сам/i);
+    expect(p).toMatch(/жди/i);
     expect(p).toMatch(/Google, Microsoft/);
+  });
+
+  it("signs in to an existing account without resetting the password", () => {
+    const p = inviteTaskPrompt({
+      service: "Acme",
+      agentName: "Bot",
+      email: "bot@agents.test",
+      password: "known-pw",
+      existing: true,
+    });
+    expect(p).toMatch(/Новый аккаунт не регистрируй/);
+    expect(p).toMatch(/forgot\/reset password/);
+    expect(p).toContain("known-pw");
   });
 });
 
@@ -72,6 +85,8 @@ describe("SkyvernClient", () => {
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const u = String(url);
       calls.push({ url: u, body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (u.endsWith("/v1/browser_sessions")) return json({ browser_session_id: "pbs_1", app_url: "https://app.skyvern.com/sessions/pbs_1" });
+      if (u.endsWith("/close")) return json({ ok: true });
       if (u.endsWith("/v1/run/tasks")) return json({ run_id: "tsk_1", app_url: "https://app.skyvern.com/runs/tsk_1" });
       if (u.endsWith("/v1/credentials/totp")) return json({ totp_code_id: "tc_1", code: "482913" });
       if (u.endsWith("/v1/runs/tsk_1")) {
@@ -100,6 +115,9 @@ describe("SkyvernClient", () => {
     const start = calls.find((c) => c.url.endsWith("/v1/run/tasks"))!.body as Record<string, unknown>;
     expect(start.totp_identifier).toBe("bot@agents.test");
     expect(start.url).toBe("https://app.acme.io/invite/abc");
+    expect(start.browser_session_id).toBe("pbs_1");
+    const session = calls.find((c) => c.url.endsWith("/v1/browser_sessions"))!.body as Record<string, unknown>;
+    expect(session.extensions).toEqual(["captcha-solver"]);
     expect(String(start.prompt)).toContain("bot@agents.test");
 
     expect(await client.pushCode({ kind: "code", value: "482913" })).toBe(true);
@@ -123,6 +141,8 @@ describe("SkyvernClient", () => {
     let startBody: Record<string, unknown> | null = null;
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const u = String(url);
+      if (u.endsWith("/v1/browser_sessions")) return json({ browser_session_id: "pbs_2", app_url: null });
+      if (u.endsWith("/close")) return json({ ok: true });
       if (u.endsWith("/v1/run/tasks")) {
         startBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
         return json({ run_id: "tsk_2" });

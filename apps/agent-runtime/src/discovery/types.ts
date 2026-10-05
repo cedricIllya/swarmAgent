@@ -21,6 +21,10 @@ export interface ApiFinding {
   docsUrl: string | null;
   authHeader: string;
   howToGetKey: string;
+  /** Точный URL страницы, где залогиненный пользователь создаёт ключ. */
+  keyPageUrl?: string | null;
+  /** 2–3 GET без параметров, которыми можно доказать ключ. */
+  readEndpoints?: string[];
 }
 
 export interface DocFinding {

@@ -72,17 +72,20 @@ export class Approvals {
     const run = await rt.store.getRun(pending.runId);
     if (!run) return null;
     const chatId = pending.chatId ?? (await rt.store.chats.ensureSystem()).id;
+    const handoff = pending.kind === "handoff";
     if (opts?.announce !== false) {
       await rt.addChat({
         role: "user",
         kind: "approval",
         approvalId,
+        handoff,
         decision: approved ? "approved" : "rejected",
-        text: approved ? "Да" : "Нет",
+        text: handoff ? (approved ? "Я доделал" : "Отменить") : approved ? "Да" : "Нет",
         runId: run.id,
         chatId,
       });
     }
+    if (handoff) return rt.handoffs.resolve(pending, approved, chatId);
     run.status = "running";
     await rt.store.saveRun(run);
     await rt.step(run.id, "note", approved ? "одобрено человеком" : "отклонено человеком");
