@@ -3,7 +3,7 @@ import type { Store } from "../store";
 import { downloadUrlTo } from "./recordings";
 import { blockerKind, looksLikeServiceApprovalWait } from "../connect";
 import { generatePassword, type AcceptInviteResult } from "./invite";
-import { exportStorageFromCdp, type BrowserStorageState } from "./session-transfer";
+import { currentUrlFromCdp, exportStorageFromCdp, type BrowserStorageState } from "./session-transfer";
 import { log, warn } from "../log";
 
 /**
@@ -432,6 +432,18 @@ export class SkyvernClient {
     const cdpUrl = await this.browserAddress(browserSessionId);
     if (!cdpUrl) throw new Error("у сессии Skyvern нет browser_address");
     return exportStorageFromCdp({ cdpUrl, apiKey: this.apiKey });
+  }
+
+  /** Настоящий адрес вкладки живой сессии; null, если CDP недоступен. */
+  async currentUrl(browserSessionId: string): Promise<string | null> {
+    const cdpUrl = await this.browserAddress(browserSessionId);
+    if (!cdpUrl) return null;
+    try {
+      return await currentUrlFromCdp({ cdpUrl, apiKey: this.apiKey });
+    } catch (e) {
+      warn("skyvern", "адрес вкладки по CDP не прочитался", { error: String(e) });
+      return null;
+    }
   }
 
   private async fetchBrowserAddress(browserSessionId: string): Promise<string | null> {

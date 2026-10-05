@@ -68,6 +68,30 @@ export async function exportStorageFromCdp(args: {
   }
 }
 
+/**
+ * Адрес открытой вкладки живого браузера по CDP. Skyvern в final_url иногда называет не ту
+ * страницу, на которой стоит; поиск ключа должен начинаться с настоящей.
+ */
+export async function currentUrlFromCdp(args: {
+  cdpUrl: string;
+  apiKey?: string;
+  connect?: ConnectOverCdp;
+  timeoutMs?: number;
+}): Promise<string | null> {
+  const connect = args.connect ?? defaultConnect();
+  const browser = await connect(args.cdpUrl, {
+    ...(args.apiKey ? { headers: { "x-api-key": args.apiKey } } : {}),
+    timeout: args.timeoutMs ?? 20_000,
+  });
+  try {
+    const pages = browser.contexts().flatMap((c) => c.pages());
+    const urls = pages.map((p) => p.url()).filter((u) => /^https?:\/\//i.test(u));
+    return urls.at(-1) ?? null;
+  } finally {
+    await browser.close().catch(() => undefined);
+  }
+}
+
 /** Записать cookies и localStorage в userDataDir своего Chromium. */
 export async function seedStorageIntoProfile(args: {
   profileDir: string;

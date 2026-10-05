@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  currentUrlFromCdp,
   exportStorageFromCdp,
   seedStorageIntoProfile,
   transferSessionToProfile,
@@ -48,6 +49,20 @@ describe("exportStorageFromCdp", () => {
     expect(state.cookies).toHaveLength(1);
     expect(state.origins[0]?.localStorage).toEqual([{ name: "token", value: "t1" }]);
     expect(close).toHaveBeenCalled();
+  });
+});
+
+describe("currentUrlFromCdp", () => {
+  it("возвращает адрес последней http-вкладки и отключается", async () => {
+    const close = vi.fn(async () => undefined);
+    const connect = vi.fn(async () => ({
+      contexts: () => [{ pages: () => [{ url: () => "about:blank" }, { url: () => "https://gensite.ru/dashboard" }] }],
+      close,
+    }));
+    await expect(currentUrlFromCdp({ cdpUrl: "wss://x", connect: connect as never })).resolves.toBe("https://gensite.ru/dashboard");
+    expect(close).toHaveBeenCalled();
+    const empty = vi.fn(async () => ({ contexts: () => [{ pages: () => [{ url: () => "about:blank" }] }], close }));
+    await expect(currentUrlFromCdp({ cdpUrl: "wss://x", connect: empty as never })).resolves.toBeNull();
   });
 });
 

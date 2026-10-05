@@ -359,7 +359,11 @@ async function connectInvite(
           return escalate(decision, invite, handoffCtx);
         }
       } else {
-        const landed = invite.finalUrl || args.url;
+        // Skyvern в final_url иногда называет не ту страницу (например, /projects вместо /dashboard):
+        // поиск ключа с несуществующего адреса упирается в 404. Адрес вкладки надёжнее.
+        const liveUrl0 = await skyvern.currentUrl(session.browserSessionId);
+        const landed = liveUrl0 || invite.finalUrl || args.url;
+        if (liveUrl0 && liveUrl0 !== invite.finalUrl) invite.finalUrl = liveUrl0;
         // Пароль уже стоит в сервисе. Сохранить до поиска ключа: обрыв, остановка или перезапуск
         // машины не должны оставить аккаунт с паролем, которого никто не знает.
         if (invite.password) await rememberPassword(rt, run, args.slug, invite.password);
