@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import type { Agent } from "@swarm/contracts";
 import { useConfirm } from "../confirm-dialog";
 import { StatusBadge } from "../status-badge";
@@ -16,17 +17,28 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
   const { detail, stepsByRun, actionsBySession, onChatMessage } = useAgentLive(initialAgent);
   const router = useRouter();
   const confirm = useConfirm();
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const { agent, state, runtimeError, asleep, waking } = detail;
 
   async function remove() {
+    if (removing) return;
     const ok = await confirm({
       title: `Удалить агента ${agent.name}?`,
       body: "Машина и диск будут уничтожены, адрес освободится.",
       confirmLabel: "Удалить",
     });
     if (!ok) return;
+    setRemoving(true);
+    setRemoveError(null);
     const res = await fetch(`/api/agents/${agent.id}`, { method: "DELETE" });
-    if (res.ok) router.push("/");
+    if (res.ok) {
+      router.push("/");
+      return;
+    }
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    setRemoving(false);
+    setRemoveError(body?.error ?? "Не получилось удалить агента");
   }
 
   return (
@@ -48,10 +60,16 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
             {agent.statusMessage ? ` · ${agent.statusMessage}` : ""}
           </div>
         </div>
-        <button className="btn btn-sm btn-danger" onClick={remove}>
-          Удалить
+        <button className="btn btn-sm btn-danger" type="button" onClick={remove} disabled={removing}>
+          {removing ? "Удаляем…" : "Удалить"}
         </button>
       </div>
+
+      {removeError && (
+        <div className="notice notice-warn" style={{ marginBottom: 16 }}>
+          {removeError}
+        </div>
+      )}
 
       {asleep && (
         <div className="notice" style={{ marginBottom: 16 }}>

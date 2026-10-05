@@ -2,11 +2,17 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
 import { getDb, newId, schema } from "@swarm/db";
+import { originsFromRequest } from "./origins";
 import { ensurePersonalTenant } from "./tenants";
 
 export interface AuthOptions {
   secret: string;
   baseURL: string;
+  /**
+   * Хосты помимо baseURL, которым можно доверять всегда.
+   * Origin текущего запроса добавляется отдельно, если его host совпал с Host.
+   */
+  trustedOrigins?: string[] | ((request?: Request) => string[] | Promise<string[]>) | undefined;
   databaseUrl?: string | undefined;
   /** Доставить ссылку сброса пароля. `url` ведёт на /api/auth и редиректит на страницу нового пароля. */
   sendResetPassword?: (data: { email: string; name: string; url: string }) => Promise<void>;
@@ -29,6 +35,11 @@ export function createAuth(opts: AuthOptions) {
   return betterAuth({
     secret: opts.secret,
     baseURL: opts.baseURL,
+    trustedOrigins: async (request) => {
+      const configured = opts.trustedOrigins;
+      const extra = typeof configured === "function" ? await configured(request) : (configured ?? []);
+      return originsFromRequest(request, extra);
+    },
     database: drizzleAdapter(db, {
       provider: "pg",
       schema: {
