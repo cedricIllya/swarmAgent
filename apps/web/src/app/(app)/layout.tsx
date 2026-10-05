@@ -10,13 +10,11 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     <>
       <header className="topbar">
         <div className="topbar-inner">
-          <div className="topbar-left">
-            <Link href="/" className="brand">
-              <span className="brand-mark" aria-hidden />
-              Swarm
-            </Link>
-            <MainNav />
-          </div>
+          <Link href="/" className="brand">
+            <span className="brand-mark" aria-hidden />
+            Swarm
+          </Link>
+          <MainNav />
           <div className="topbar-right">
             <span className="viewer">
               <span className="viewer-tenant">{viewer.tenant.name}</span>
