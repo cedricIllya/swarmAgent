@@ -192,6 +192,22 @@ async function storedPassword(rt: AgentRuntime, slug: string, inviteUrl: string)
   return cred?.password ?? null;
 }
 
+/** Только пароль, без рецепта и способа входа: подключённым сервис станет после разбора. */
+async function rememberPassword(rt: AgentRuntime, run: Run, slug: string, password: string): Promise<void> {
+  try {
+    await rt.services.applyReport(
+      {
+        type: "credential",
+        credential: { slug, kind: "browser", accountEmail: rt.cfg.email, accountName: rt.cfg.agentName, password },
+        runId: run.id,
+      },
+      { quiet: true },
+    );
+  } catch (e) {
+    warn("onboarding", "пароль не сохранён до поиска ключа", { error: String(e) });
+  }
+}
+
 function originOf(url: string): string | null {
   try {
     return new URL(url).origin + "/";
@@ -343,6 +359,9 @@ async function connectInvite(
         }
       } else {
         const landed = invite.finalUrl || args.url;
+        // Пароль уже стоит в сервисе. Сохранить до поиска ключа: обрыв, остановка или перезапуск
+        // машины не должны оставить аккаунт с паролем, которого никто не знает.
+        if (invite.password) await rememberPassword(rt, run, args.slug, invite.password);
         let sought = {
           token: null as string | null,
           proof: "not_tried" as Proof,

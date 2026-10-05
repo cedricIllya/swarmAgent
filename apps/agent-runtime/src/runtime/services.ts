@@ -47,7 +47,10 @@ export class ServiceCatalog {
    * Новый рецепт или секрет: на control plane, в локальный `services.json`,
    * в `config.yaml` Hermes и строкой в журнал задачи.
    */
-  async applyReport(input: RuntimeReport): Promise<{ slug: string; name: string; kind: "mcp" | "api" | "browser" }> {
+  async applyReport(
+    input: RuntimeReport,
+    opts: { quiet?: boolean } = {},
+  ): Promise<{ slug: string; name: string; kind: "mcp" | "api" | "browser" }> {
     const { rt } = this;
     const prev =
       input.type === "credential"
@@ -70,9 +73,11 @@ export class ServiceCatalog {
       await this.refreshHermesMcp();
     }
     const kindLabel = { mcp: "MCP", api: "API", browser: "браузер" } as const;
-    const running = body.runId
-      ? await rt.store.getRun(body.runId)
-      : (await rt.store.listRuns(20)).find((r) => r.status === "running");
+    const running = opts.quiet
+      ? null
+      : body.runId
+        ? await rt.store.getRun(body.runId)
+        : (await rt.store.listRuns(20)).find((r) => r.status === "running");
     if (running) {
       const what = body.type === "recipe" ? "найден способ входа в" : "подключён сервис";
       await rt.step(running.id, "note", `${what} ${reported.name} (${kindLabel[reported.kind]})`);
