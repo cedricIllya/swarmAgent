@@ -105,6 +105,8 @@ export const ChatMessageSchema = z.object({
   decision: z.enum(["approved", "rejected"]).optional(),
   /** Для `kind: "approval"`: агент застрял в браузере и просит человека доделать, а не одобрить. */
   handoff: z.boolean().optional(),
+  /** Заявка ждёт одобрения в сервисе: кнопки без живого браузера. */
+  serviceWait: z.boolean().optional(),
   /** Живой экран браузера, где человек может взять управление. */
   liveUrl: z.string().nullable().optional(),
 });
@@ -122,6 +124,8 @@ export const PendingApprovalSchema = z.object({
   /** `handoff` — человек доделывает вход в браузере; «да» значит «я доделал». */
   kind: z.enum(["approval", "handoff"]).optional(),
   liveUrl: z.string().nullable().optional(),
+  /** Заявка ждёт одобрения администратора сервиса, браузер уже закрыт. */
+  serviceWait: z.boolean().optional(),
 });
 
 const ConnectedServiceSchema = z.object({

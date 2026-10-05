@@ -89,6 +89,15 @@ export class Store {
     emitRuntime({ type: "approvals", approvals: list });
   }
 
+  /** Контекст передачи человеку, включая пароль. В чат и в state не попадает. */
+  async readHandoffContexts<T>(): Promise<Record<string, T>> {
+    return readJson(this.dir("handoffs.json"), {});
+  }
+
+  async writeHandoffContexts(all: Record<string, unknown>): Promise<void> {
+    await writeJson(this.dir("handoffs.json"), all, 0o600);
+  }
+
   // Browser sessions
 
   async saveBrowserSession(s: BrowserSession): Promise<void> {

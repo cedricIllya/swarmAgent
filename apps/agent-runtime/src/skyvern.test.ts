@@ -29,6 +29,7 @@ describe("inviteTaskPrompt", () => {
     expect(p).toContain("pw!A9");
     expect(p).toMatch(/жди/i);
     expect(p).toMatch(/Google, Microsoft/);
+    expect(p).toContain("pending_approval");
   });
 
   it("signs in to an existing account without resetting the password", () => {
@@ -68,6 +69,16 @@ describe("interpretInviteOutput", () => {
     });
     expect(interpretInviteOutput("completed", { outcome: "needs_human" }, ctx).status).toBe("needs_human");
     expect(interpretInviteOutput("completed", { outcome: "expired" }, ctx).status).toBe("failed");
+  });
+
+  it("does not treat a pending registration as a finished login", () => {
+    const waiting = interpretInviteOutput(
+      "completed",
+      { outcome: "landed", password_set: true, notes: "Заявка на регистрацию ждёт одобрения администратора" },
+      ctx,
+    );
+    expect(waiting).toMatchObject({ status: "needs_human", barrierKind: "pending_approval", password: "pw" });
+    expect(interpretInviteOutput("completed", { outcome: "pending_approval", password_set: true }, ctx).barrierKind).toBe("pending_approval");
   });
 
   it("failed runs carry Skyvern's failure reason", () => {

@@ -1,7 +1,7 @@
 import type { BrowserSession } from "@swarm/contracts";
 import type { Store } from "../store";
 import { downloadUrlTo } from "./recordings";
-import { blockerKind } from "../connect";
+import { blockerKind, looksLikeServiceApprovalWait } from "../connect";
 import { generatePassword, type AcceptInviteResult } from "./invite";
 import { log, warn } from "../log";
 
@@ -23,13 +23,13 @@ export const INVITE_OUTPUT_SCHEMA = {
   properties: {
     outcome: {
       type: "string",
-      enum: ["landed", "accepted", "blocked", "captcha", "expired", "needs_human", "failed"],
+      enum: ["landed", "accepted", "blocked", "captcha", "expired", "needs_human", "pending_approval", "failed"],
       description:
-        "landed — внутри приложения, без форм входа; blocked — барьер (SSO, оплата, телефон, капча после ожидания); expired — приглашение недействительно; failed — иначе",
+        "landed — внутри приложения, без форм входа; pending_approval — заявка на регистрацию ждёт администратора сервиса; blocked — барьер (SSO, оплата, телефон, капча после ожидания); expired — приглашение недействительно; failed — иначе",
     },
     blocker_kind: {
       type: "string",
-      enum: ["captcha", "sso_only", "two_factor", "phone", "payment", "password_rejected", "email_rejected", "invite_spent", "other"],
+      enum: ["captcha", "sso_only", "two_factor", "phone", "payment", "password_rejected", "email_rejected", "invite_spent", "pending_approval", "other"],
     },
     account_email: { type: "string" },
     password_set: { type: "boolean", description: "true, если на форме регистрации задали пароль из инструкции" },
@@ -97,6 +97,8 @@ export function inviteTaskPrompt(args: {
     "SSO без почты, аппаратный 2FA, телефон или оплата — outcome=blocked и blocker_kind (sso_only, two_factor, phone, payment). Не обходи.",
     "Не нажимай unsubscribe и help. Не меняй настройки, никого не приглашай, ничего не оплачивай.",
     "Страница «приглашение принято» без рабочего интерфейса — это ещё не конец. landed только когда видишь приложение: навигацию или список, и нет формы входа.",
+    "Если сервис пишет, что заявка на регистрацию или вступление ждёт одобрения администратора — это не вход. outcome=pending_approval. Пароль, если уже задал, отметь password_set и больше ничего не нажимай.",
+    "Подтверждение почты кодом или ссылкой — не pending_approval: жди письмо.",
   ];
   const mode = args.existing
     ? [
@@ -146,6 +148,18 @@ export function interpretInviteOutput(
     barrierKind: kind,
   };
   const outcome = o.outcome ?? "";
+  const pending =
+    outcome === "pending_approval" ||
+    kind === "pending_approval" ||
+    ((outcome === "accepted" || outcome === "landed" || outcome === "blocked" || outcome === "") && looksLikeServiceApprovalWait(notes));
+  if (pending) {
+    return {
+      ...base,
+      status: "needs_human",
+      barrierKind: "pending_approval",
+      notes: notes || "заявка на регистрацию ждёт одобрения в сервисе",
+    };
+  }
   if (status === "completed" && (outcome === "accepted" || outcome === "landed" || outcome === "")) {
     return { ...base, status: "accepted", notes: notes || (outcome ? `вход выполнен, аккаунт ${ctx.email}` : "пустой outcome, считаем что вошли") };
   }

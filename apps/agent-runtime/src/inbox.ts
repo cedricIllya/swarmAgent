@@ -1,10 +1,10 @@
 import type { InboundEmail } from "@swarm/contracts";
 import { classifyReply, findDigitCode, matchesThread } from "./approval";
-import { prepareOnboarding } from "./onboarding";
+import { parkSource, prepareOnboarding, runConnectFollowup } from "./onboarding";
+import { looksLikeServiceApprovalWait, serviceApprovalGranted } from "./connect";
 import {
   EMAIL_CLASSIFY_SCHEMA,
   classifyEmailPrompt,
-  connectedFollowupPrompt,
   emailTaskPrompt,
   escalationNote,
   type EmailClassification,
@@ -93,6 +93,13 @@ async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> 
   await handleNewEmail(rt, email, known);
 }
 
+function shouldResumeParked(email: InboundEmail, c: EmailClassification): boolean {
+  const text = `${email.subject}\n${email.replyText || email.text}`;
+  if (looksLikeServiceApprovalWait(text) && !serviceApprovalGranted(text)) return false;
+  if (c.kind === "verification" || c.hasLoginLink) return true;
+  return serviceApprovalGranted(text);
+}
+
 function pickLoginLink(links: string[]): string {
   return links.find((l) => /verify|confirm|magic|login|signin|auth|token/i.test(l)) ?? links[0]!;
 }
@@ -157,6 +164,17 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
   }
   log("inbox", "письмо классифицировано", { kind: c.kind, service: c.service });
 
+  const parked = await rt.handoffs.matchServiceMail(email);
+  if (parked) {
+    if (shouldResumeParked(email, c)) {
+      log("inbox", "письмо сервиса продолжает регистрацию", { subject: email.subject });
+      await rt.approvals.resolve(parked.id, true);
+    } else {
+      log("inbox", "заявка всё ещё ждёт одобрения сервиса", { subject: email.subject });
+    }
+    return;
+  }
+
   if (c.kind === "notification" || c.kind === "other" || c.kind === "verification") {
     const run = await rt.createRun("email", email.subject || "Письмо", email.messageId);
     await rt.step(run.id, "email", `${c.kind}: ${c.summary}`);
@@ -175,13 +193,11 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
         extraHosts: email.dkimDomains,
       });
       const engine = onboarding.engine;
-      if (engine.status === "ready") {
+      if (engine.status === "ready" || engine.status === "needs_secret") {
         const service = c.service || onboarding.discovery?.service || "сервис";
+        const chatId = await rt.chatIdForRun(run);
         try {
-          const text = await rt.think(run, connectedFollowupPrompt(service, engine.mode ?? "browser"));
-          const current = await rt.store.getRun(run.id);
-          if (current?.status === "waiting_approval") return;
-          await rt.finishRun(run, "done", text);
+          await runConnectFollowup(rt, run, chatId, service, { status: engine.status, mode: engine.mode }, parkSource(rt, onboarding, service));
         } catch (e) {
           await rt.finishRun(run, "done", `Подключение готово (${engine.mode ?? "browser"}). Задачи не проверены: ${String(e)}`);
         }

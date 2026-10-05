@@ -12,6 +12,7 @@ interface Labels {
 const APPROVAL: Labels = { title: "Нужно одобрение", yes: "Да", no: "Нет" };
 /** Агент упёрся в барьер и ждёт человека: человек доделывает в браузере и возвращает управление. */
 const HANDOFF: Labels = { title: "Нужна помощь в браузере", yes: "Я доделал, продолжай", no: "Отменить" };
+const SERVICE_WAIT: Labels = { title: "Жду одобрения в сервисе", yes: "Одобрил, продолжай", no: "Отменить" };
 
 function LiveLink({ url }: { url: string | null | undefined }) {
   if (!url) return null;
@@ -34,7 +35,7 @@ export function ApprovalBubble({
   busy: boolean;
   onDecide: (approved: boolean) => void;
 }) {
-  const labels = message.handoff ? HANDOFF : APPROVAL;
+  const labels = message.serviceWait ? SERVICE_WAIT : message.handoff ? HANDOFF : APPROVAL;
   return (
     <div className="bubble bubble-agent bubble-approval">
       <div className="small" style={{ color: "var(--warn)", fontWeight: 500 }}>
@@ -43,7 +44,7 @@ export function ApprovalBubble({
       <div>{message.text}</div>
       {open ? (
         <div className="approval-actions">
-          {message.handoff && <LiveLink url={message.liveUrl} />}
+          {message.handoff && !message.serviceWait && <LiveLink url={message.liveUrl} />}
           <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => onDecide(true)}>
             {labels.yes}
           </button>
@@ -62,7 +63,7 @@ export function ApprovalBubble({
 /** Ожидание, у которого нет своей карточки в ленте: показывается над чатом. */
 export function ApprovalRow({ approval, onDecide }: { approval: PendingApproval; onDecide: (approved: boolean) => void }) {
   const handoff = approval.kind === "handoff";
-  const labels = handoff ? HANDOFF : APPROVAL;
+  const labels = approval.serviceWait ? SERVICE_WAIT : handoff ? HANDOFF : APPROVAL;
   return (
     <div className="list-item list-item-warn">
       <div>
@@ -70,7 +71,7 @@ export function ApprovalRow({ approval, onDecide }: { approval: PendingApproval;
         <div>{approval.description}</div>
       </div>
       <div className="row">
-        {handoff && <LiveLink url={approval.liveUrl} />}
+        {handoff && !approval.serviceWait && <LiveLink url={approval.liveUrl} />}
         <button className="btn btn-sm btn-primary" onClick={() => onDecide(true)}>{labels.yes}</button>
         <button className="btn btn-sm" onClick={() => onDecide(false)}>{labels.no}</button>
       </div>

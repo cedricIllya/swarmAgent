@@ -60,6 +60,12 @@ describe("acceptInvite", () => {
     expect(gotos).toContain("https://app.acme.io/magic/xyz");
   });
 
+  it("stops when the service must approve the registration", async () => {
+    const r = await acceptInvite(fakeBrowser(["signup_form", "pending_approval"]).browser, args);
+    expect(r).toMatchObject({ status: "needs_human", barrierKind: "pending_approval" });
+    expect(r.password).toBeTruthy();
+  });
+
   it("asks for a human when the code never arrives or a captcha shows up", async () => {
     const noCode = fakeBrowser(["email_form", "code_prompt"], { code: null });
     expect((await acceptInvite(noCode.browser, args)).status).toBe("needs_human");

@@ -52,6 +52,7 @@ export class AgentRuntime {
 
   async init(): Promise<void> {
     await this.store.init();
+    await this.handoffs.restore();
     const settings = await this.store.readSettings();
     if (settings.model) this.model = settings.model;
     if (settings.autonomous !== undefined) this.autonomous = settings.autonomous;

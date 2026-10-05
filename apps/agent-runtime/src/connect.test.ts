@@ -4,7 +4,10 @@ import {
   decideConnection,
   interpretApiKeyOutput,
   looksLikeApiKey,
+  looksLikeServiceApprovalWait,
+  mailTouchesHost,
   proveApiKey,
+  serviceApprovalGranted,
   type ConnectFacts,
 } from "./connect";
 
@@ -116,8 +119,35 @@ describe("decideConnection", () => {
     });
   });
 
+  it("parks a registration that is waiting on the service admin and keeps the password", () => {
+    const d = decideConnection(
+      facts({
+        onboard: "blocked",
+        barrierKind: "pending_approval",
+        notes: "Заявка на регистрацию ждёт одобрения",
+        password: "pw-known-value",
+      }),
+    );
+    expect(d).toMatchObject({ status: "escalated", park: true, savePassword: true, closeBrowser: true, saveToken: false });
+  });
+
   it("treats a tool-bearing MCP as ready", () => {
     expect(decideConnection(facts({ mcpReady: true, password: null })).mode).toBe("mcp");
+  });
+});
+
+describe("service approval wording", () => {
+  it("hears a pending registration and not a granted one", () => {
+    const waiting = "Подожду одобрение запроса на регистрацию в Gensite.";
+    expect(looksLikeServiceApprovalWait(waiting)).toBe(true);
+    expect(serviceApprovalGranted(waiting)).toBe(false);
+    expect(serviceApprovalGranted("Ваша заявка одобрена")).toBe(true);
+    expect(looksLikeServiceApprovalWait("одобрения владельца не нужно")).toBe(false);
+  });
+
+  it("matches mail from the service that is waiting", () => {
+    expect(mailTouchesHost({ from: "Gensite <noreply@gensite.ru>", links: [] }, "https://gensite.ru/invite/1")).toBe(true);
+    expect(mailTouchesHost({ from: "news@other.test", links: [] }, "https://gensite.ru/invite/1")).toBe(false);
   });
 });
 

@@ -17,6 +17,7 @@ export type PageState =
   | "logged_in"
   | "captcha"
   | "expired"
+  | "pending_approval"
   | "other";
 
 export interface PageObservation {
@@ -43,6 +44,7 @@ export const PAGE_STATE_SCHEMA = {
         "logged_in",
         "captcha",
         "expired",
+        "pending_approval",
         "other",
       ],
     },
@@ -62,6 +64,7 @@ export const PAGE_STATE_INSTRUCTION = [
   "logged_in — уже внутри приложения: рабочее пространство, меню, список проектов или задач.",
   "captcha — капча или проверка «я не робот».",
   "expired — приглашение недействительно, истекло или ошибка доступа.",
+  "pending_approval — заявка на регистрацию отправлена и ждёт одобрения администратора сервиса. Подтверждение почты кодом или ссылкой — это не оно.",
   "other — ничего из перечисленного.",
 ].join("\n");
 
@@ -120,6 +123,7 @@ function parseObservation(raw: unknown): PageObservation {
     "logged_in",
     "captcha",
     "expired",
+    "pending_approval",
     "other",
   ];
   return {
@@ -168,6 +172,9 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
 
       case "expired":
         return finish("failed", i, `приглашение недействительно: ${seen.hint}`);
+
+      case "pending_approval":
+        return { ...(await finish("needs_human", i, `заявка ждёт одобрения в сервисе: ${seen.hint}`)), barrierKind: "pending_approval" };
 
       case "accept_button":
         await browser.act("Нажми кнопку принять приглашение или присоединиться (Accept, Join, Continue, Принять)");

@@ -1,6 +1,8 @@
 import type { PendingApproval, Run } from "@swarm/contracts";
 import type { DiscoveryResult } from "../discovery";
-import { connectedFollowupPrompt, escalationNote } from "../prompts";
+import { mailTouchesHost } from "../connect";
+import { runConnectFollowup } from "../onboarding";
+import { escalationNote } from "../prompts";
 import { redactInternal } from "../redact";
 import { warn } from "../log";
 import { newId } from "./ids";
@@ -17,13 +19,15 @@ export interface HandoffContext {
   /** Пароль, который браузер уже напечатал: человек должен поставить тот же. */
   password: string | null;
   liveUrl: string | null;
+  /** Заявка ждёт администратора сервиса, а не человека в браузере. */
+  serviceWait?: boolean;
 }
 
 export type ResumeConnect = (
   rt: AgentRuntime,
   run: Run,
   ctx: HandoffContext,
-) => Promise<{ status: "ready" | "escalated" | "failed" | "ignored"; mode: string | null; reason: string; liveUrl: string | null; handoffId?: string | null }>;
+) => Promise<{ status: "ready" | "needs_secret" | "escalated" | "failed" | "ignored"; mode: string | null; reason: string; liveUrl: string | null; handoffId?: string | null }>;
 
 /**
  * Human in the loop для браузера: карточка с кнопками «Я доделал» и «Отменить» и ссылкой
@@ -40,6 +44,29 @@ export class Handoffs {
     this.resume = fn;
   }
 
+  /** После рестарта пароль и ссылка снова в памяти: они лежат на диске, не в чате. */
+  async restore(): Promise<void> {
+    const all = await this.rt.store.readHandoffContexts<HandoffContext>();
+    for (const [id, ctx] of Object.entries(all)) this.contexts.set(id, ctx);
+  }
+
+  private async persist(): Promise<void> {
+    const all: Record<string, HandoffContext> = {};
+    for (const [id, ctx] of this.contexts) all[id] = ctx;
+    await this.rt.store.writeHandoffContexts(all);
+  }
+
+  /** Письмо с сервиса, чья заявка ещё ждёт одобрения. */
+  async matchServiceMail(email: { from: string; links: string[] }): Promise<PendingApproval | null> {
+    const list = await this.rt.store.listApprovals();
+    for (const pending of list) {
+      const ctx = this.contexts.get(pending.id);
+      if (!ctx?.serviceWait) continue;
+      if (mailTouchesHost(email, ctx.url)) return pending;
+    }
+    return null;
+  }
+
   async open(run: Run, reason: string, ctx: HandoffContext): Promise<PendingApproval> {
     const { rt } = this;
     const safe = redactInternal(reason);
@@ -52,7 +79,8 @@ export class Handoffs {
       emailMessageId: null,
       chatId,
       kind: "handoff",
-      liveUrl: ctx.liveUrl,
+      liveUrl: ctx.serviceWait ? null : ctx.liveUrl,
+      serviceWait: Boolean(ctx.serviceWait),
     };
     this.contexts.set(pending.id, ctx);
 
@@ -60,12 +88,18 @@ export class Handoffs {
       try {
         const { messageId } = await rt.controlPlane.sendEmail({
           to: rt.cfg.ownerEmail,
-          subject: `Нужна помощь со входом: ${ctx.service}`,
-          text: [
-            `${rt.cfg.agentName} не смог войти в ${ctx.service} сам: ${safe}`,
-            ctx.liveUrl ? `Браузер оставлен открытым, можно взять управление: ${ctx.liveUrl}` : "",
-            "Когда доделаете вход, нажмите «Я доделал» в чате агента. Ответ на это письмо словом «да» делает то же самое.",
-          ]
+          subject: ctx.serviceWait ? `Жду одобрения регистрации: ${ctx.service}` : `Нужна помощь со входом: ${ctx.service}`,
+          text: (ctx.serviceWait
+            ? [
+                `${rt.cfg.agentName} отправил заявку на регистрацию в ${ctx.service} с ${rt.cfg.email}.`,
+                "Одобрите её в сервисе. Когда аккаунт включат, нажмите «Одобрил, продолжай» в чате. Письмо сервиса на почту агента продолжит вход само. Ответ на это письмо словом «да» делает то же самое.",
+              ]
+            : [
+                `${rt.cfg.agentName} не смог войти в ${ctx.service} сам: ${safe}`,
+                ctx.liveUrl ? `Браузер оставлен открытым, можно взять управление: ${ctx.liveUrl}` : "",
+                "Когда доделаете вход, нажмите «Я доделал» в чате агента. Ответ на это письмо словом «да» делает то же самое.",
+              ]
+          )
             .filter(Boolean)
             .join("\n\n"),
         });
@@ -80,8 +114,9 @@ export class Handoffs {
       role: "agent",
       kind: "approval",
       handoff: true,
+      serviceWait: Boolean(ctx.serviceWait),
       approvalId: pending.id,
-      liveUrl: ctx.liveUrl,
+      liveUrl: ctx.serviceWait ? null : ctx.liveUrl,
       text: safe,
       runId: run.id,
       chatId,
@@ -89,6 +124,7 @@ export class Handoffs {
     const list = await rt.store.listApprovals();
     list.push(pending);
     await rt.store.saveApprovals(list);
+    await this.persist();
     return pending;
   }
 
@@ -97,6 +133,7 @@ export class Handoffs {
     const { rt } = this;
     const ctx = this.contexts.get(pending.id) ?? null;
     this.contexts.delete(pending.id);
+    await this.persist();
     const original = await rt.store.getRun(pending.runId);
     const service = ctx?.service ?? original?.title ?? "сервис";
 
@@ -125,13 +162,26 @@ export class Handoffs {
         await rt.finishRun(run, "escalated", result.reason);
         return run;
       }
-      if (result.status === "ready") {
-        // Как и после обычного приглашения: доступ записан, агент смотрит задачи в сервисе.
-        const text = await rt.think(run, connectedFollowupPrompt(service, result.mode ?? "browser"));
-        const current = await rt.store.getRun(run.id);
-        if (current?.status === "waiting_approval") return run;
-        await rt.finishRun(run, "done", text);
-        await rt.addChat({ role: "agent", text, runId: run.id, chatId });
+      if (result.status === "ready" || result.status === "needs_secret") {
+        const mode = result.mode === "api" || result.mode === "mcp" || result.mode === "browser" ? result.mode : null;
+        await runConnectFollowup(
+          rt,
+          run,
+          chatId,
+          service,
+          { status: result.status, mode },
+          ctx
+            ? {
+                url: ctx.url,
+                slug: ctx.slug,
+                service: ctx.service,
+                discovery: ctx.discovery,
+                password: ctx.password,
+                provider: ctx.provider,
+                browserSessionId: ctx.browserSessionId,
+              }
+            : null,
+        );
         return run;
       }
       const text = result.status === "escalated" ? escalationNote(result.reason, result.liveUrl) : result.reason;

@@ -1,4 +1,4 @@
-import { hostOf, rootDomain } from "./domains";
+import { hostOf, rootDomain, sameBrand } from "./domains";
 
 /**
  * Решение, можно ли назвать результат онбординга подключением.
@@ -30,8 +30,48 @@ export const BLOCKER_KINDS = [
   "password_rejected",
   "email_rejected",
   "invite_spent",
+  "pending_approval",
   "other",
 ] as const;
+
+/**
+ * Сервис принял заявку, но аккаунт включит его администратор.
+ * «Подтвердите почту» сюда не входит: код и ссылка приходят сразу.
+ * «одобрение» (существительное) не совпадает — ждём «одобрена/одобрен».
+ */
+const PENDING_APPROVAL =
+  /заявк\p{L}{0,12}.{0,48}одобр|одобр\p{L}{0,12}.{0,48}заявк|запрос\p{L}{0,12}.{0,40}регистрац|регистрац\p{L}{0,16}.{0,40}одобр|ожида\p{L}{0,12}.{0,24}одобрен|pending approval|awaiting approval|waiting for (an )?admin|registration request/iu;
+
+const APPROVAL_GRANTED =
+  /(^|[^\p{L}])одобрен[аоы]?(?!\p{L})|approved\b|account (is )?active|welcome to/iu;
+
+export function looksLikeServiceApprovalWait(text: string): boolean {
+  return PENDING_APPROVAL.test(text);
+}
+
+export function serviceApprovalGranted(text: string): boolean {
+  return APPROVAL_GRANTED.test(text);
+}
+
+/** Письмо с того же сервиса, куда ушла заявка: домен отправителя или ссылка. */
+export function mailTouchesHost(email: { from: string; links: string[] }, pageUrl: string): boolean {
+  let root = "";
+  try {
+    root = rootDomain(hostOf(pageUrl));
+  } catch {
+    return false;
+  }
+  if (!root) return false;
+  const from = email.from.match(/@([a-z0-9.-]+\.[a-z]{2,})/i)?.[1]?.toLowerCase() ?? "";
+  if (from && sameBrand(from, root)) return true;
+  return email.links.some((link) => {
+    try {
+      return sameBrand(hostOf(link), root);
+    } catch {
+      return false;
+    }
+  });
+}
 
 export type BlockerKind = (typeof BLOCKER_KINDS)[number];
 
@@ -175,6 +215,11 @@ export interface ConnectDecision {
   saveToken: boolean;
   /** Закрыть сессию, которую открыли сами. Для эскалации — оставить. */
   closeBrowser: boolean;
+  /**
+   * Заявка ушла администратору сервиса. Браузер закрываем, но в чате остаётся
+   * карточка: человек одобряет заявку у себя, письмо сервиса или кнопка продолжают вход.
+   */
+  park: boolean;
 }
 
 export function decideConnection(f: ConnectFacts): ConnectDecision {
@@ -186,6 +231,19 @@ export function decideConnection(f: ConnectFacts): ConnectDecision {
       savePassword: false,
       saveToken: false,
       closeBrowser: true,
+      park: false,
+    };
+  }
+
+  if (f.barrierKind === "pending_approval") {
+    return {
+      status: "escalated",
+      mode: null,
+      reason: f.notes || "заявка на регистрацию отправлена и ждёт одобрения в сервисе",
+      savePassword: Boolean(f.password),
+      saveToken: false,
+      closeBrowser: true,
+      park: true,
     };
   }
 
@@ -199,6 +257,7 @@ export function decideConnection(f: ConnectFacts): ConnectDecision {
       saveToken: false,
       // Истраченное приглашение человеку в браузере уже не починить.
       closeBrowser: f.barrierKind === "invite_spent",
+      park: false,
     };
   }
 
@@ -210,6 +269,7 @@ export function decideConnection(f: ConnectFacts): ConnectDecision {
       savePassword: false,
       saveToken: false,
       closeBrowser: true,
+      park: false,
     };
   }
 
@@ -221,6 +281,7 @@ export function decideConnection(f: ConnectFacts): ConnectDecision {
       savePassword: Boolean(f.password),
       saveToken: f.apiKeyUsable && f.proof === "green",
       closeBrowser: true,
+      park: false,
     };
   }
 
@@ -232,6 +293,7 @@ export function decideConnection(f: ConnectFacts): ConnectDecision {
       savePassword: Boolean(f.password),
       saveToken: true,
       closeBrowser: true,
+      park: false,
     };
   }
 
@@ -244,6 +306,7 @@ export function decideConnection(f: ConnectFacts): ConnectDecision {
       savePassword: true,
       saveToken: false,
       closeBrowser: true,
+      park: false,
     };
   }
 
@@ -254,6 +317,7 @@ export function decideConnection(f: ConnectFacts): ConnectDecision {
     savePassword: false,
     saveToken: false,
     closeBrowser: false,
+    park: false,
   };
 }
 

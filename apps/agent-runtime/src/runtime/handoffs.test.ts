@@ -20,6 +20,8 @@ function fakeRuntime() {
       },
       getRun: async (id: string) => runs.get(id) ?? null,
       rememberSent: vi.fn(),
+      readHandoffContexts: async () => ({}),
+      writeHandoffContexts: vi.fn(async () => undefined),
     },
     chatIdForRun: async () => "chat-1",
     addChat: async (m: Record<string, unknown>) => {

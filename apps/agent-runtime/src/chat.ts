@@ -5,7 +5,6 @@ import {
   chatTaskPrompt,
   chatTitle,
   classifyChatPrompt,
-  connectedFollowupPrompt,
   escalationNote,
   extractLinks,
   runTitle,
@@ -13,7 +12,7 @@ import {
 } from "./prompts";
 import type { AgentRuntime } from "./runtime";
 import { hostOf } from "./domains";
-import { prepareOnboarding } from "./onboarding";
+import { parkSource, prepareOnboarding, runConnectFollowup } from "./onboarding";
 import { warn } from "./log";
 import { redactInternal } from "./redact";
 import { recordUsage } from "./usage";
@@ -89,14 +88,10 @@ export async function handleChat(
           links,
         });
         const engine = onboarding.engine;
-        if (engine.status === "ready") {
+        if (engine.status === "ready" || engine.status === "needs_secret") {
           const service = classification.service || onboarding.discovery?.service || "сервис";
           try {
-            const text = await rt.think(run, connectedFollowupPrompt(service, engine.mode ?? "browser"));
-            const current = await rt.store.getRun(run.id);
-            if (current?.status === "waiting_approval") return;
-            await rt.finishRun(run, "done", text);
-            await rt.addChat({ role: "agent", text, runId: run.id, chatId });
+            await runConnectFollowup(rt, run, chatId, service, { status: engine.status, mode: engine.mode }, parkSource(rt, onboarding, service));
           } catch (e) {
             const note = `Подключение готово (${engine.mode ?? "browser"}). Задачи не проверены: ${String(e)}`;
             await rt.finishRun(run, "done", note);
