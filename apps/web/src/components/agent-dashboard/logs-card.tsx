@@ -59,7 +59,6 @@ export function LogsCard({
         <h2>Логи работы</h2>
         {pending ? <Skeleton width={64} height={14} /> : <span className="muted small">{runs.length} задач</span>}
       </div>
-      <div className="stable-slot">
       {pending ? (
         <ListSkeleton />
       ) : runs.length === 0 ? (
@@ -85,7 +84,6 @@ export function LogsCard({
           ))}
         </div>
       )}
-      </div>
     </section>
   );
 }

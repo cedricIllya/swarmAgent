@@ -64,7 +64,6 @@ export function ServicesCard({ agent, state, pending }: { agent: Agent; state: R
           Все сервисы →
         </Link>
       </div>
-      <div className="stable-slot">
       {pending || !loginsReady ? (
         <ListSkeleton />
       ) : list.length === 0 ? (
@@ -99,7 +98,6 @@ export function ServicesCard({ agent, state, pending }: { agent: Agent; state: R
           ))}
         </div>
       )}
-      </div>
     </section>
   );
 }

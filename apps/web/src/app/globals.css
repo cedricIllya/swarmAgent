@@ -1249,14 +1249,7 @@ details summary::-webkit-details-marker {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 34px;
   margin-bottom: 8px;
-}
-.stable-slot {
-  min-height: 120px;
-}
-.stable-slot-usage {
-  min-height: 196px;
 }
 .chat-list {
   display: flex;

@@ -24,7 +24,6 @@ export function UsageCard({ state, pending }: { state: RuntimeState | null; pend
         <h2>Токены и деньги</h2>
         <span className="muted small">По задачам и действиям, как вернул OpenRouter</span>
       </div>
-      <div className="stable-slot stable-slot-usage">
       {pending ? (
         <UsageBodySkeleton />
       ) : (
@@ -65,7 +64,6 @@ export function UsageCard({ state, pending }: { state: RuntimeState | null; pend
           )}
         </>
       )}
-      </div>
     </section>
   );
 }

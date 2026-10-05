@@ -200,23 +200,17 @@ export function DashboardSkeleton() {
           </div>
           <Skeleton width={96} height={14} />
         </div>
-        <div className="stable-slot">
-          <ListSkeleton />
-        </div>
+        <ListSkeleton />
       </section>
 
       <section className="card">
         <CardHeadSkeleton title={130} aside={64} />
-        <div className="stable-slot">
-          <ListSkeleton />
-        </div>
+        <ListSkeleton />
       </section>
 
       <section className="card">
         <CardHeadSkeleton title={170} aside={240} />
-        <div className="stable-slot stable-slot-usage">
-          <UsageBodySkeleton />
-        </div>
+        <UsageBodySkeleton />
       </section>
     </div>
   );
