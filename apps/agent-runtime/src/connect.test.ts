@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  apiKeyPrompt,
   credentialHostAllowed,
   decideConnection,
   interpretApiKeyOutput,
@@ -30,6 +31,14 @@ function facts(patch: Partial<ConnectFacts> = {}): ConnectFacts {
     ...patch,
   };
 }
+
+describe("apiKeyPrompt", () => {
+  it("подсказка из рецепта каталога попадает в задачу, без неё строки нет", () => {
+    const withHint = apiKeyPrompt({ agentName: "Бот", keyPageUrl: null, feedback: null, hint: "Токен из кабинета: Настройки → MCP." });
+    expect(withHint).toContain("Что известно об этом продукте: Токен из кабинета: Настройки → MCP.");
+    expect(apiKeyPrompt({ agentName: "Бот", keyPageUrl: null, feedback: null, hint: "  " })).not.toContain("Что известно");
+  });
+});
 
 describe("credentialHostAllowed", () => {
   it("allows the invite host and its siblings", () => {

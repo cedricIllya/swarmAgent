@@ -417,12 +417,14 @@ export const API_KEY_SCHEMA = {
 } as const;
 
 /** Задача уже залогиненному браузеру: создать ключ. Продукт не называется способами, только адресом, если он известен. */
-export function apiKeyPrompt(args: { agentName: string; keyPageUrl: string | null; feedback: string | null }): string {
+export function apiKeyPrompt(args: { agentName: string; keyPageUrl: string | null; feedback: string | null; hint?: string | null }): string {
   const where = args.keyPageUrl
     ? `Сначала открой ${args.keyPageUrl}. Если страницы нет или ключ там не создаётся — ищи в навигации.`
     : "Ищи в навигации.";
+  const hint = args.hint?.trim() ? `Что известно об этом продукте: ${args.hint.trim().slice(0, 300)}` : "";
   return [
     "Ты уже вошёл в веб-продукт. Цель — создать новый API-ключ этого аккаунта.",
+    hint,
     where,
     "Смотри сайдбар, шестерёнку, меню аккаунта, настройки workspace, разделы Developers, API, Integrations, Tokens, Personal access tokens, Apps.",
     "Если в интерфейсе ключа нет — открой документацию этого же продукта и возьми оттуда адрес страницы ключа.",

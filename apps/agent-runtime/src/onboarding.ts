@@ -371,13 +371,16 @@ async function connectInvite(
           docsUrl: args.discovery?.api?.docsUrl ?? null,
           notes: "",
         };
+        const known = await knownRecipeFor(rt, args).catch(() => null);
         try {
-          sought = await seekApiKey(rt, run, session.browserSessionId, args, landed);
+          sought = await seekApiKey(rt, run, session.browserSessionId, { ...args, hint: known?.notes ?? null }, landed);
         } catch (e) {
           warn("onboarding", "поиск ключа не удался", { error: String(e) });
           await rt.step(run.id, "error", `поиск ключа не удался: ${String(e)}`);
         }
-        const mcpReady = await mcpIsReady(args.discovery, sought.token, sought.proof).catch(() => false);
+        const mcpReady = await mcpIsReady(mcpSpecOf(args.discovery, known), sought.token).catch(() => false);
+        // MCP отдал инструменты с этим токеном — токен доказан, даже если REST-вызова не было.
+        if (mcpReady && sought.token) sought = { ...sought, proof: "green" };
         // После handoff пароль печатал человек: мы дали ему тот же, считаем, что он его и поставил.
         const password = invite.password ?? (resume ? typed : null);
         if (looksLikeServiceApprovalWait(sought.notes)) {
@@ -523,7 +526,7 @@ async function seekApiKey(
   rt: AgentRuntime,
   run: Run,
   browserSessionId: string,
-  args: { service: string; discovery: DiscoveryResult | null; url?: string },
+  args: { service: string; discovery: DiscoveryResult | null; url?: string; hint?: string | null },
   landedUrl: string,
 ): Promise<{ token: string | null; proof: Proof; baseUrl: string | null; authHeader: string | null; docsUrl: string | null; notes: string }> {
   const skyvern = rt.skyvern;
@@ -540,7 +543,9 @@ async function seekApiKey(
   let token: string | null = null;
   let notes = "";
   for (let i = 0; i < 3 && !token; i++) {
-    const prompt = forceRead ? readPagePrompt() : apiKeyPrompt({ agentName: rt.cfg.agentName, keyPageUrl: hinted, feedback });
+    const prompt = forceRead
+      ? readPagePrompt()
+      : apiKeyPrompt({ agentName: rt.cfg.agentName, keyPageUrl: hinted, feedback, hint: args.hint ?? null });
     forceRead = false;
     feedback = null;
     const extracted = await skyvern.extract({
@@ -582,13 +587,26 @@ async function seekApiKey(
   return { token, proof: proof.verdict, baseUrl, authHeader, docsUrl, notes };
 }
 
-async function mcpIsReady(discovery: DiscoveryResult | null, token: string | null, proof: Proof): Promise<boolean> {
-  const mcp = discovery?.mcp;
-  if (!mcp?.verified) return false;
-  const bearer = mcp.auth === "none" ? undefined : proof === "green" && token ? token : undefined;
-  if (mcp.auth !== "none" && !bearer) return false;
-  const names = await mcpToolNames(mcp.url, fetch, bearer);
+/** MCP, который стоит проверить: проверенная находка поиска или рецепт каталога. */
+function mcpSpecOf(discovery: DiscoveryResult | null, known: ServiceRecipe | null): { url: string; auth: string } | null {
+  if (discovery?.mcp?.verified) return { url: discovery.mcp.url, auth: discovery.mcp.auth };
+  if (known?.kind === "mcp" && known.mcp) return { url: known.mcp.url, auth: known.mcp.auth };
+  return null;
+}
+
+/** Инструменты в ответ на initialize с этим токеном — и есть доказательство, что токен рабочий. */
+async function mcpIsReady(spec: { url: string; auth: string } | null, token: string | null): Promise<boolean> {
+  if (!spec || spec.auth === "oauth") return false;
+  const bearer = spec.auth === "none" ? undefined : (token ?? undefined);
+  if (spec.auth !== "none" && !bearer) return false;
+  const names = await mcpToolNames(spec.url, fetch, bearer);
   return (names?.length ?? 0) > 0;
+}
+
+async function knownRecipeFor(rt: AgentRuntime, args: ConnectArgs): Promise<ServiceRecipe | null> {
+  const snap = await rt.store.readServices();
+  if (!snap) return null;
+  return matchRecipe(snap.recipes, [hostOf(args.url), rootDomain(hostOf(args.url)), args.slug]) ?? null;
 }
 
 async function persistConnection(
