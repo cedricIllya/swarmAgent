@@ -6,6 +6,7 @@ import { ApprovalBubble } from "./approval-bubbles";
 import { BrowserBubble } from "./browser-bubble";
 import { fmtTime } from "./format";
 import { Linkified } from "./linkified";
+import { retryBubbleIndexes } from "./retry-anchor";
 import type { LiveActions } from "./use-agent-live";
 
 /** Лента одного чата: обычные пузыри, карточки браузера и одобрений, индикатор работы. */
@@ -19,6 +20,8 @@ export function ChatMessages({
   onDecide,
   working,
   activity,
+  retryEnabled,
+  onRetry,
 }: {
   agent: Agent;
   state: RuntimeState | null;
@@ -29,12 +32,22 @@ export function ChatMessages({
   onDecide: (approvalId: string, approved: boolean) => void;
   working: boolean;
   activity: string;
+  /** Агент на связи и в этом чате сейчас ничего не выполняется. */
+  retryEnabled: boolean;
+  onRetry: (runId: string) => void;
 }) {
   const bottom = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void bottom.current?.scrollIntoView({ block: "end" });
   }, [messages.length, working, activity]);
+
+  const failedRunIds = new Set(
+    (state?.runs ?? [])
+      .filter((r) => r.status === "failed" && r.trigger === "chat")
+      .map((r) => r.id),
+  );
+  const retryAt = retryBubbleIndexes(messages, failedRunIds);
 
   return (
     <div className="chat">
@@ -59,6 +72,13 @@ export function ChatMessages({
         ) : (
           <div key={`${m.at}-${i}`} className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-agent"}`}>
             <Linkified text={m.text} />
+            {retryAt.has(i) && m.runId && (
+              <div className="bubble-retry">
+                <button type="button" className="btn btn-ghost btn-sm" disabled={!retryEnabled} onClick={() => onRetry(m.runId!)}>
+                  Повторить
+                </button>
+              </div>
+            )}
             <span className="bubble-time">{fmtTime(m.at)}</span>
           </div>
         ),

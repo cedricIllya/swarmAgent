@@ -680,6 +680,15 @@ code {
   font-size: 11px;
   opacity: 0.7;
 }
+.bubble-retry {
+  margin-top: 8px;
+}
+.bubble-user .bubble-retry .btn {
+  color: #fff;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow: none;
+}
 .bubble a {
   color: inherit;
   text-decoration: underline;

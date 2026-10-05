@@ -116,6 +116,7 @@ describe("decideConnection", () => {
     expect(decideConnection(facts({ onboard: "runtime", notes: "Skyvern 429" }))).toMatchObject({
       status: "failed",
       closeBrowser: true,
+      reason: "Не получилось. Мы работаем над этим.",
     });
   });
 

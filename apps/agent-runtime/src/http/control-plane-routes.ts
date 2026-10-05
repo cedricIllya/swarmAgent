@@ -11,7 +11,7 @@ import {
 } from "@swarm/contracts";
 import type { AgentRuntime } from "../runtime";
 import { processEmail } from "../inbox";
-import { handleChat } from "../chat";
+import { handleChat, retryChatRun } from "../chat";
 import { tick } from "../cron";
 import { streamRuntimeEvents } from "../events-http";
 import { machineIsIdle, markSleepy, noteActivity } from "../idle";
@@ -47,6 +47,14 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
     const body = z.object({ title: z.string().optional() }).parse(await c.req.json().catch(() => ({})));
     const chat = await rt.store.chats.create(body.title?.trim() || "Новый чат");
     return c.json(chat, 201);
+  });
+
+  app.post("/chats/:id/retry", async (c) => {
+    noteActivity();
+    const body = z.object({ runId: z.string().min(1), author: z.string().min(1) }).parse(await c.req.json());
+    const result = await retryChatRun(rt, { chatId: c.req.param("id"), runId: body.runId, author: body.author });
+    if ("error" in result) return c.json({ error: result.error === "busy" ? "busy" : "not found" }, result.error === "busy" ? 409 : 404);
+    return c.json({ runId: result.run.id, chatId: result.chatId }, 202);
   });
 
   app.get("/chats/:id/messages", async (c) => {

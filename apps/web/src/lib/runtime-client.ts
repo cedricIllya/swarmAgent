@@ -92,6 +92,10 @@ export class RuntimeClient {
     return this.call("POST", "/chat", body, 60_000);
   }
 
+  retryChat(chatId: string, body: { runId: string; author: string }): Promise<{ runId: string; chatId: string }> {
+    return this.call("POST", `/chats/${chatId}/retry`, body, 60_000);
+  }
+
   chats(): Promise<ChatThread[]> {
     return this.call("GET", "/chats");
   }

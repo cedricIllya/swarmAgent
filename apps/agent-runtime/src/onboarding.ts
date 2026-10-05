@@ -6,6 +6,7 @@ import {
   blockerKind,
   credentialHostAllowed,
   decideConnection,
+  OWNER_OUTAGE,
   interpretApiKeyOutput,
   looksLikeServiceApprovalWait,
   proveApiKey,
@@ -228,7 +229,8 @@ async function connectInvite(
     return { invite, engine };
   };
 
-  if (rt.skyvern) {
+  // Повтор после своего браузера остаётся в нём: Skyvern сессию Browserbase не продолжает.
+  if (rt.skyvern && resume?.provider !== "browserbase") {
     const skyvern = rt.skyvern;
     const reuse = resume?.provider === "skyvern" && resume.browserSessionId && skyvern.sessionAlive(resume.browserSessionId) ? resume.browserSessionId : null;
     let sessionId: string | null = null;
@@ -258,105 +260,115 @@ async function connectInvite(
       const handoffCtx = { provider: "skyvern" as const, browserSessionId: session.browserSessionId, password: typed, liveUrl };
       if (invite.status !== "accepted" || looksLikeServiceApprovalWait(invite.notes)) {
         const barrier = looksLikeServiceApprovalWait(invite.notes) ? "pending_approval" : blockerKind(invite.barrierKind);
+        // Skyvern как инструмент не довёл вход. Истёкшее приглашение своим браузером не починить.
+        if (invite.status === "failed" && invite.barrierKind !== "invite_spent" && barrier !== "pending_approval" && rt.browser.available) {
+          await close();
+          await rt.step(run.id, "note", "Повторяю вход.");
+        } else {
+          const decision = decideConnection({
+            onboard: invite.status === "failed" && invite.barrierKind !== "invite_spent" && barrier !== "pending_approval" ? "failed" : "blocked",
+            inviteUrl: args.url,
+            landedUrl: invite.finalUrl,
+            passwordTyped: Boolean(invite.password),
+            password: barrier === "pending_approval" ? invite.password : null,
+            barrierKind: barrier ?? (invite.status === "needs_human" ? "other" : null),
+            notes: invite.notes,
+            apiBaseUrl: null,
+            apiKeyUsable: false,
+            proof: "not_tried",
+            mcpReady: false,
+          });
+          if (decision.closeBrowser) await close();
+          return escalate(decision, invite, handoffCtx);
+        }
+      } else {
+        const landed = invite.finalUrl || args.url;
+        let sought = {
+          token: null as string | null,
+          proof: "not_tried" as Proof,
+          baseUrl: args.discovery?.api?.baseUrl ?? null,
+          authHeader: args.discovery?.api?.authHeader ?? null,
+          docsUrl: args.discovery?.api?.docsUrl ?? null,
+          notes: "",
+        };
+        try {
+          sought = await seekApiKey(rt, run, session.browserSessionId, args, landed);
+        } catch (e) {
+          warn("onboarding", "поиск ключа не удался", { error: String(e) });
+          await rt.step(run.id, "error", `поиск ключа не удался: ${String(e)}`);
+        }
+        const mcpReady = await mcpIsReady(args.discovery, sought.token, sought.proof).catch(() => false);
+        // После handoff пароль печатал человек: мы дали ему тот же, считаем, что он его и поставил.
+        const password = invite.password ?? (resume ? typed : null);
+        if (looksLikeServiceApprovalWait(sought.notes)) {
+          const decision = decideConnection({
+            onboard: "blocked",
+            inviteUrl: args.url,
+            landedUrl: landed,
+            passwordTyped: Boolean(invite.password),
+            password,
+            barrierKind: "pending_approval",
+            notes: sought.notes,
+            apiBaseUrl: null,
+            apiKeyUsable: false,
+            proof: "not_tried",
+            mcpReady: false,
+          });
+          if (decision.closeBrowser) await close();
+          return escalate(decision, invite, handoffCtx);
+        }
         const decision = decideConnection({
-          onboard: invite.status === "failed" && invite.barrierKind !== "invite_spent" && barrier !== "pending_approval" ? "failed" : "blocked",
-          inviteUrl: args.url,
-          landedUrl: invite.finalUrl,
-          passwordTyped: Boolean(invite.password),
-          password: barrier === "pending_approval" ? invite.password : null,
-          barrierKind: barrier ?? (invite.status === "needs_human" ? "other" : null),
-          notes: invite.notes,
-          apiBaseUrl: null,
-          apiKeyUsable: false,
-          proof: "not_tried",
-          mcpReady: false,
-        });
-        if (decision.closeBrowser) await close();
-        return escalate(decision, invite, handoffCtx);
-      }
-      const landed = invite.finalUrl || args.url;
-      let sought = {
-        token: null as string | null,
-        proof: "not_tried" as Proof,
-        baseUrl: args.discovery?.api?.baseUrl ?? null,
-        authHeader: args.discovery?.api?.authHeader ?? null,
-        docsUrl: args.discovery?.api?.docsUrl ?? null,
-        notes: "",
-      };
-      try {
-        sought = await seekApiKey(rt, run, session.browserSessionId, args, landed);
-      } catch (e) {
-        warn("onboarding", "поиск ключа не удался", { error: String(e) });
-        await rt.step(run.id, "error", `поиск ключа не удался: ${String(e)}`);
-      }
-      const mcpReady = await mcpIsReady(args.discovery, sought.token, sought.proof).catch(() => false);
-      // После handoff пароль печатал человек: мы дали ему тот же, считаем, что он его и поставил.
-      const password = invite.password ?? (resume ? typed : null);
-      if (looksLikeServiceApprovalWait(sought.notes)) {
-        const decision = decideConnection({
-          onboard: "blocked",
+          onboard: "landed",
           inviteUrl: args.url,
           landedUrl: landed,
           passwordTyped: Boolean(invite.password),
           password,
-          barrierKind: "pending_approval",
-          notes: sought.notes,
+          barrierKind: null,
+          notes: invite.notes,
+          apiBaseUrl: sought.baseUrl,
+          apiKeyUsable: Boolean(sought.token),
+          proof: sought.proof,
+          mcpReady,
+        });
+        if (decision.status === "ready") {
+          await persistConnection(rt, run, {
+            slug: args.slug,
+            service: args.service,
+            domain: rootDomain(hostOf(args.url)),
+            mode: decision.mode ?? "browser",
+            password: decision.savePassword ? password : null,
+            token: decision.saveToken ? sought.token : null,
+            baseUrl: sought.baseUrl,
+            authHeader: sought.authHeader,
+            docsUrl: sought.docsUrl,
+            loginUrl: args.url,
+            appUrl: originOf(landed) ?? originOf(args.url) ?? args.url,
+          });
+        }
+        if (decision.closeBrowser) await close();
+        await rt.step(run.id, "note", decision.reason);
+        return escalate(decision, invite, handoffCtx);
+      }
+    } catch (e) {
+      warn("onboarding", "Skyvern не довёл подключение", { error: String(e) });
+      await close();
+      if (!rt.browser.available) {
+        const decision = decideConnection({
+          onboard: "runtime",
+          inviteUrl: args.url,
+          landedUrl: "",
+          passwordTyped: false,
+          password: null,
+          barrierKind: null,
+          notes: OWNER_OUTAGE,
           apiBaseUrl: null,
           apiKeyUsable: false,
           proof: "not_tried",
           mcpReady: false,
         });
-        if (decision.closeBrowser) await close();
-        return escalate(decision, invite, handoffCtx);
+        return { invite: null, engine: toEngine(decision, null) };
       }
-      const decision = decideConnection({
-        onboard: "landed",
-        inviteUrl: args.url,
-        landedUrl: landed,
-        passwordTyped: Boolean(invite.password),
-        password,
-        barrierKind: null,
-        notes: invite.notes,
-        apiBaseUrl: sought.baseUrl,
-        apiKeyUsable: Boolean(sought.token),
-        proof: sought.proof,
-        mcpReady,
-      });
-      if (decision.status === "ready") {
-        await persistConnection(rt, run, {
-          slug: args.slug,
-          service: args.service,
-          domain: rootDomain(hostOf(args.url)),
-          mode: decision.mode ?? "browser",
-          password: decision.savePassword ? password : null,
-          token: decision.saveToken ? sought.token : null,
-          baseUrl: sought.baseUrl,
-          authHeader: sought.authHeader,
-          docsUrl: sought.docsUrl,
-          loginUrl: args.url,
-          appUrl: originOf(landed) ?? originOf(args.url) ?? args.url,
-        });
-      }
-      if (decision.closeBrowser) await close();
-      await rt.step(run.id, "note", decision.reason);
-      return escalate(decision, invite, handoffCtx);
-    } catch (e) {
-      warn("onboarding", "Skyvern не довёл подключение", { error: String(e) });
-      await close();
-      const decision = decideConnection({
-        onboard: "runtime",
-        inviteUrl: args.url,
-        landedUrl: "",
-        passwordTyped: false,
-        password: null,
-        barrierKind: null,
-        notes: `Skyvern: ${e instanceof Error ? e.message : String(e)}`,
-        apiBaseUrl: null,
-        apiKeyUsable: false,
-        proof: "not_tried",
-        mcpReady: false,
-      });
-      return { invite: null, engine: toEngine(decision, null) };
+      await rt.step(run.id, "note", "Повторяю вход.");
     }
   }
 
@@ -366,7 +378,7 @@ async function connectInvite(
     const invite = await rt.browser.acceptInvite(
       run,
       { url: args.url, slug: args.slug, service: args.service },
-      { persist: false, ...(resume ? { password: typed } : {}) },
+      { persist: false, skipSkyvern: true, password: typed },
     );
     const pending = invite.barrierKind === "pending_approval" || looksLikeServiceApprovalWait(invite.notes);
     const landed = invite.status === "accepted" && !pending;
@@ -409,10 +421,10 @@ async function connectInvite(
     });
   } catch (e) {
     warn("onboarding", "принять приглашение не удалось", { error: String(e) });
-    await rt.step(run.id, "error", `принять приглашение не удалось: ${String(e)}`);
+    await rt.step(run.id, "error", OWNER_OUTAGE);
     return {
-      invite: { status: "failed", accountEmail: rt.cfg.email, password: null, steps: 0, finalUrl: "", notes: String(e) },
-      engine: { status: "failed", mode: null, reason: String(e), liveUrl: null, handoffId: null },
+      invite: { status: "failed", accountEmail: rt.cfg.email, password: null, steps: 0, finalUrl: "", notes: OWNER_OUTAGE },
+      engine: { status: "failed", mode: null, reason: OWNER_OUTAGE, liveUrl: null, handoffId: null },
     };
   }
 }

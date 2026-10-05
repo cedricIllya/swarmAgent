@@ -1,4 +1,4 @@
-import type { Run } from "@swarm/contracts";
+import type { ChatMessage, Run } from "@swarm/contracts";
 import { classifyReply } from "./approval";
 import {
   CHAT_CLASSIFY_SCHEMA,
@@ -18,6 +18,25 @@ import { redactInternal } from "./redact";
 import { recordUsage } from "./usage";
 
 const TASK: ChatClassification = { kind: "task", service: null, serviceDomain: null };
+
+/**
+ * Текст, с которого задача началась. Повтор не пишет второе сообщение человека,
+ * поэтому у новой задачи своего пузыря нет — берём ближайшее предыдущее.
+ */
+export function chatRetrySource(messages: ChatMessage[], runId: string): string | null {
+  const own = messages.filter((m) => m.runId === runId && m.role === "user" && (!m.kind || m.kind === "text"));
+  const direct = own.at(-1)?.text.trim();
+  if (direct) return direct;
+  const idx = messages.findIndex((m) => m.runId === runId);
+  if (idx < 0) return null;
+  for (let i = idx; i >= 0; i--) {
+    const m = messages[i];
+    if (!m || m.role !== "user" || (m.kind && m.kind !== "text")) continue;
+    const text = m.text.trim();
+    if (text) return text;
+  }
+  return null;
+}
 
 async function classifyChat(rt: AgentRuntime, message: string, links: string[]): Promise<ChatClassification> {
   try {
@@ -76,7 +95,67 @@ export async function handleChat(
   await rt.addChat({ role: "user", text: args.message, runId: run.id, chatId });
 
   const knownRecipe = recipe ? { slug: recipe.slug, name: recipe.name, kind: recipe.kind } : null;
+  startChatTask(rt, {
+    run,
+    chatId,
+    message: args.message,
+    author: args.author,
+    links,
+    classification,
+    recipe: knownRecipe,
+  });
+  return { run, chatId };
+}
 
+/** Повтор упавшей задачи чата: тот же текст, новая задача, без второго сообщения человека. */
+export async function retryChatRun(
+  rt: AgentRuntime,
+  args: { chatId: string; runId: string; author: string },
+): Promise<{ run: Run; chatId: string } | { error: "not_found" | "busy" }> {
+  const chat = await rt.store.chats.get(args.chatId);
+  const prior = await rt.store.getRun(args.runId);
+  if (!chat || !prior || prior.trigger !== "chat" || prior.threadId !== args.chatId || prior.status !== "failed") {
+    return { error: "not_found" };
+  }
+  const running = (await rt.store.listRuns(200)).some(
+    (r) => r.threadId === args.chatId && (r.status === "running" || r.status === "queued"),
+  );
+  if (running) return { error: "busy" };
+
+  const message = chatRetrySource(await rt.store.chats.listMessages(args.chatId, 1000), args.runId);
+  if (!message) return { error: "not_found" };
+
+  const links = extractLinks(message);
+  const classification = await classifyChat(rt, message, links);
+  const hosts = [...links.map(hostOf), classification.serviceDomain ?? ""].filter(Boolean);
+  const recipe = classification.kind === "invite" ? null : await rt.services.knownRecipe(hosts);
+  const run = await rt.createRun("chat", runTitle(classification.kind, classification.service, message), args.chatId);
+  await rt.step(run.id, "note", "Повторяю задачу.");
+  startChatTask(rt, {
+    run,
+    chatId: args.chatId,
+    message,
+    author: args.author,
+    links,
+    classification,
+    recipe: recipe ? { slug: recipe.slug, name: recipe.name, kind: recipe.kind } : null,
+  });
+  return { run, chatId: args.chatId };
+}
+
+function startChatTask(
+  rt: AgentRuntime,
+  task: {
+    run: Run;
+    chatId: string;
+    message: string;
+    author: string;
+    links: string[];
+    classification: ChatClassification;
+    recipe: { slug: string; name: string; kind: string } | null;
+  },
+): void {
+  const { run, chatId, classification, links } = task;
   void (async () => {
     try {
       // Приглашение: рецепт или поиск документации, затем принять приглашение под своей почтой —
@@ -105,11 +184,11 @@ export async function handleChat(
         return;
       }
       const prompt = chatTaskPrompt({
-        message: args.message,
-        author: args.author,
+        message: task.message,
+        author: task.author,
         kind: classification.kind,
         links,
-        recipe: knownRecipe,
+        recipe: task.recipe,
       });
       const text = await rt.think(run, prompt);
       const current = await rt.store.getRun(run.id);
@@ -123,6 +202,4 @@ export async function handleChat(
       await rt.addChat({ role: "agent", text: redactInternal(`Не получилось: ${String(e)}`), runId: run.id, chatId });
     }
   })();
-
-  return { run, chatId };
 }

@@ -222,12 +222,15 @@ export interface ConnectDecision {
   park: boolean;
 }
 
+/** Сбой нашего браузера. Человеку — без вендора, кода ответа и тела. Подробности остаются в логах. */
+export const OWNER_OUTAGE = "Не получилось. Мы работаем над этим.";
+
 export function decideConnection(f: ConnectFacts): ConnectDecision {
   if (f.onboard === "runtime") {
     return {
       status: "failed",
       mode: null,
-      reason: f.notes || "браузерный рантайм не выполнил задачу",
+      reason: OWNER_OUTAGE,
       savePassword: false,
       saveToken: false,
       closeBrowser: true,

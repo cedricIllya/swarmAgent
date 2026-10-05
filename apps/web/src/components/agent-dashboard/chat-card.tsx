@@ -43,6 +43,7 @@ export function ChatCard({
   const [autonomous, setAutonomous] = useState(agent.autonomous);
   const [awaiting, setAwaiting] = useState(false);
   const [deciding, setDeciding] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const chats = state?.chats ?? [];
   const activeId = selected && selected !== "new" && chats.some((c) => c.id === selected) ? selected : null;
   const active = chats.find((c) => c.id === activeId) ?? null;
@@ -101,6 +102,7 @@ export function ChatCard({
     if (!text.trim()) return;
     setBusy(true);
     setAwaiting(true);
+    setRetryError(null);
     const res = await fetch(`/api/agents/${agent.id}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -135,6 +137,22 @@ export function ChatCard({
       });
     } finally {
       setDeciding(null);
+    }
+  }
+
+  async function retry(runId: string) {
+    if (!activeId || !running || working) return;
+    setRetryError(null);
+    setAwaiting(true);
+    const res = await fetch(`/api/agents/${agent.id}/chats/${activeId}/retry`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runId }),
+    });
+    if (!res.ok) {
+      setAwaiting(false);
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      setRetryError(data?.error ?? "Не удалось повторить");
     }
   }
 
@@ -210,7 +228,10 @@ export function ChatCard({
             onDecide={(id, approved) => void decide(id, approved)}
             working={working}
             activity={activity}
+            retryEnabled={running && !working}
+            onRetry={(runId) => void retry(runId)}
           />
+          {retryError && <p className="small" style={{ margin: "8px 0 0", color: "var(--danger)" }}>{retryError}</p>}
 
           <form onSubmit={(e) => void send(e)} className="row" style={{ marginTop: 12, alignItems: "flex-end" }}>
             <textarea

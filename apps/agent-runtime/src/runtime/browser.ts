@@ -2,6 +2,7 @@ import Browserbase from "@browserbasehq/sdk";
 import type { Run, ServiceCredential } from "@swarm/contracts";
 import { ManagedBrowserSession, ensureContext, type BrowserDeps } from "../browser/stagehand";
 import { acceptInvite, type AcceptInviteResult } from "../browser/invite";
+import { OWNER_OUTAGE } from "../connect";
 import { hostOf, rootDomain } from "../domains";
 import { warn } from "../log";
 import type { AgentRuntime } from "./index";
@@ -97,7 +98,7 @@ export class BrowserControl {
   async acceptInvite(
     run: Run,
     args: { url: string; slug: string; service: string },
-    opts?: { persist?: boolean; password?: string | null },
+    opts?: { persist?: boolean; password?: string | null; skipSkyvern?: boolean },
   ): Promise<AcceptInviteResult> {
     const { rt } = this;
     if (!this.canOnboard) throw new Error("браузер для онбординга не настроен: нужен SKYVERN_API_KEY или Browserbase");
@@ -106,7 +107,7 @@ export class BrowserControl {
     const existing: ServiceCredential | null = opts?.password ? { ...(found ?? { slug: args.slug, kind: "browser" }), password: opts.password } : found;
 
     let result: AcceptInviteResult | null = null;
-    if (rt.skyvern) {
+    if (rt.skyvern && !opts?.skipSkyvern) {
       try {
         const r = await rt.skyvern.acceptInvite({
           runId: run.id,
@@ -122,20 +123,22 @@ export class BrowserControl {
         result = rest;
       } catch (e) {
         warn("browser", "Skyvern не принял приглашение", { error: String(e) });
-        await rt.step(run.id, "error", `Skyvern: ${String(e)}`);
         result = {
           status: "failed",
           accountEmail: rt.cfg.email,
           password: null,
           steps: 0,
           finalUrl: "",
-          notes: String(e),
+          notes: OWNER_OUTAGE,
           provider: "skyvern",
         };
       }
-      if (result.status === "failed" && this.bb) {
-        await rt.step(run.id, "note", `Skyvern не справился (${result.notes}); пробую в своём браузере`);
+      // Истёкшая ссылка своим браузером не лечится. Остальной сбой Skyvern — повтор в Stagehand.
+      if (result.status === "failed" && result.barrierKind !== "invite_spent" && this.bb) {
+        await rt.step(run.id, "note", "Повторяю вход.");
         result = await this.acceptInviteWithStagehand(run, args, existing);
+      } else if (result.notes === OWNER_OUTAGE) {
+        await rt.step(run.id, "error", OWNER_OUTAGE);
       }
     } else {
       result = await this.acceptInviteWithStagehand(run, args, existing);
