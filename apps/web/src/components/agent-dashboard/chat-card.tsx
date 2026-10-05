@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { Suspense, useEffect, useState, type FormEvent } from "react";
 import type { Agent, ChatMessage, ChatThread, Run, RunStep, RuntimeState } from "@swarm/contracts";
+import { ChatWorkspaceSkeleton } from "../skeleton";
 import { useConfirm } from "../confirm-dialog";
 import { ApprovalRow } from "./approval-bubbles";
 import { ChatList } from "./chat-list";
@@ -23,12 +24,72 @@ function runBelongs(run: Run, chat: ChatThread | null): boolean {
 export function ChatCard({
   agent,
   state,
+  livePending,
   onChatMessage,
   actionsBySession,
   stepsByRun,
 }: {
   agent: Agent;
   state: RuntimeState | null;
+  livePending: boolean;
+  onChatMessage: { current: (event: ChatMessageEvent) => void };
+  actionsBySession: LiveActions;
+  stepsByRun: Record<string, RunStep[]>;
+}) {
+  const [autonomous, setAutonomous] = useState(agent.autonomous);
+
+  useEffect(() => {
+    setAutonomous(agent.autonomous);
+  }, [agent.autonomous]);
+
+  async function toggle(v: boolean) {
+    setAutonomous(v);
+    await fetch(`/api/agents/${agent.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autonomous: v }),
+    });
+  }
+
+  return (
+    <section className="card" aria-busy={livePending}>
+      <div className="card-head">
+        <div>
+          <h2>Чаты</h2>
+          <span className="muted small">У каждого чата своя история и свой контекст</span>
+        </div>
+        <label className="switch" title="Агент не будет спрашивать одобрение перед изменениями">
+          <input type="checkbox" checked={autonomous} onChange={(e) => toggle(e.target.checked)} />
+          <span className="switch-track" />
+          <span className="small">Разрешать все действия без человека</span>
+        </label>
+      </div>
+
+      <Suspense fallback={<ChatWorkspaceSkeleton />}>
+        <ChatWorkspace
+          agent={agent}
+          state={state}
+          livePending={livePending}
+          onChatMessage={onChatMessage}
+          actionsBySession={actionsBySession}
+          stepsByRun={stepsByRun}
+        />
+      </Suspense>
+    </section>
+  );
+}
+
+function ChatWorkspace({
+  agent,
+  state,
+  livePending,
+  onChatMessage,
+  actionsBySession,
+  stepsByRun,
+}: {
+  agent: Agent;
+  state: RuntimeState | null;
+  livePending: boolean;
   onChatMessage: { current: (event: ChatMessageEvent) => void };
   actionsBySession: LiveActions;
   stepsByRun: Record<string, RunStep[]>;
@@ -38,15 +99,17 @@ export function ChatCard({
   const confirm = useConfirm();
   const selected = params.get("chat");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [autonomous, setAutonomous] = useState(agent.autonomous);
   const [awaiting, setAwaiting] = useState(false);
   const [deciding, setDeciding] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
   const chats = state?.chats ?? [];
   const activeId = selected && selected !== "new" && chats.some((c) => c.id === selected) ? selected : null;
   const active = chats.find((c) => c.id === activeId) ?? null;
+  const messagesLoading = Boolean(activeId) && loadedFor !== activeId;
+  const selecting = selected !== "new" && chats.length > 0 && !activeId;
 
   function select(id: string) {
     const next = new URLSearchParams(params.toString());
@@ -64,19 +127,19 @@ export function ChatCard({
   }, [chats, selected]);
 
   useEffect(() => {
-    setAutonomous(agent.autonomous);
-  }, [agent.autonomous]);
-
-  useEffect(() => {
     if (!activeId) {
       setMessages([]);
       return;
     }
     let cancel = false;
-    void fetch(`/api/agents/${agent.id}/chats/${activeId}`, { cache: "no-store" }).then(async (res) => {
-      if (!res.ok || cancel) return;
-      setMessages((await res.json()) as ChatMessage[]);
-    });
+    void fetch(`/api/agents/${agent.id}/chats/${activeId}`, { cache: "no-store" })
+      .then(async (res) => {
+        if (cancel || !res.ok) return;
+        setMessages((await res.json()) as ChatMessage[]);
+      })
+      .finally(() => {
+        if (!cancel) setLoadedFor(activeId);
+      });
     return () => {
       cancel = true;
     };
@@ -116,15 +179,6 @@ export function ChatCard({
     }
     const data = (await res.json()) as { chatId: string };
     if (data.chatId && data.chatId !== activeId) select(data.chatId);
-  }
-
-  async function toggle(v: boolean) {
-    setAutonomous(v);
-    await fetch(`/api/agents/${agent.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ autonomous: v }),
-    });
   }
 
   async function decide(id: string, approved: boolean) {
@@ -190,66 +244,55 @@ export function ChatCard({
   );
   const looseApprovals = approvals.filter((p) => !inlineApprovalIds.has(p.id));
 
+  if (livePending) return <ChatWorkspaceSkeleton />;
+
   return (
-    <section className="card">
-      <div className="card-head">
-        <div>
-          <h2>Чаты</h2>
-          <span className="muted small">У каждого чата своя история и свой контекст</span>
-        </div>
-        <label className="switch" title="Агент не будет спрашивать одобрение перед изменениями">
-          <input type="checkbox" checked={autonomous} onChange={(e) => toggle(e.target.checked)} />
-          <span className="switch-track" />
-          <span className="small">Разрешать все действия без человека</span>
-        </label>
-      </div>
+    <div className="chat-layout">
+      <ChatList chats={chats} activeId={activeId} approvals={pending} onSelect={select} />
 
-      <div className="chat-layout">
-        <ChatList chats={chats} activeId={activeId} approvals={pending} onSelect={select} />
+      <div>
+        <ChatTitle chat={active} onRename={rename} onRemove={() => void removeChat()} />
 
-        <div>
-          <ChatTitle chat={active} onRename={rename} onRemove={() => void removeChat()} />
+        {looseApprovals.length > 0 && (
+          <div className="list" style={{ marginBottom: 12 }}>
+            {looseApprovals.map((p) => (
+              <ApprovalRow key={p.id} approval={p} onDecide={(approved) => void decide(p.id, approved)} />
+            ))}
+          </div>
+        )}
 
-          {looseApprovals.length > 0 && (
-            <div className="list" style={{ marginBottom: 12 }}>
-              {looseApprovals.map((p) => (
-                <ApprovalRow key={p.id} approval={p} onDecide={(approved) => void decide(p.id, approved)} />
-              ))}
-            </div>
-          )}
+        <ChatMessages
+          agent={agent}
+          state={state}
+          messages={messages}
+          approvals={approvals}
+          actionsBySession={actionsBySession}
+          deciding={deciding}
+          onDecide={(id, approved) => void decide(id, approved)}
+          working={working}
+          activity={activity}
+          retryEnabled={running && !working}
+          onRetry={(runId) => void retry(runId)}
+          loading={messagesLoading || selecting}
+        />
+        {retryError && <p className="small" style={{ margin: "8px 0 0", color: "var(--danger)" }}>{retryError}</p>}
 
-          <ChatMessages
-            agent={agent}
-            state={state}
-            messages={messages}
-            approvals={approvals}
-            actionsBySession={actionsBySession}
-            deciding={deciding}
-            onDecide={(id, approved) => void decide(id, approved)}
-            working={working}
-            activity={activity}
-            retryEnabled={running && !working}
-            onRetry={(runId) => void retry(runId)}
+        <form onSubmit={(e) => void send(e)} className="row" style={{ marginTop: 12, alignItems: "flex-end" }}>
+          <textarea
+            className="textarea"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={running ? "Ссылка-приглашение, API-ключ или задача" : "Агент ещё поднимается…"}
+            disabled={!running}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send(e);
+            }}
           />
-          {retryError && <p className="small" style={{ margin: "8px 0 0", color: "var(--danger)" }}>{retryError}</p>}
-
-          <form onSubmit={(e) => void send(e)} className="row" style={{ marginTop: 12, alignItems: "flex-end" }}>
-            <textarea
-              className="textarea"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={running ? "Ссылка-приглашение, API-ключ или задача" : "Агент ещё поднимается…"}
-              disabled={!running}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send(e);
-              }}
-            />
-            <button className="btn btn-primary" type="submit" disabled={!running || busy || !text.trim()}>
-              Отправить
-            </button>
-          </form>
-        </div>
+          <button className="btn btn-primary" type="submit" disabled={!running || busy || !text.trim()}>
+            Отправить
+          </button>
+        </form>
       </div>
-    </section>
+    </div>
   );
 }

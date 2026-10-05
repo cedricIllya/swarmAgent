@@ -20,22 +20,27 @@ export type LiveActions = Record<string, Array<Record<string, unknown>>>;
  */
 export function useAgentLive(initialAgent: Agent) {
   const [detail, setDetail] = useState<Detail>({ agent: initialAgent, state: null, runtimeError: null });
+  const [settled, setSettled] = useState(false);
   const [stepsByRun, setStepsByRun] = useState<Record<string, RunStep[]>>({});
   const [actionsBySession, setActionsBySession] = useState<LiveActions>({});
   const sseAlive = useRef(false);
   const onChatMessage = useRef<(event: ChatMessageEvent) => void>(() => {});
 
   const refresh = useCallback(async (wake = false) => {
-    const res = await fetch(`/api/agents/${initialAgent.id}${wake ? "?wake=1" : ""}`, { cache: "no-store" });
-    if (!res.ok) return;
-    const next = (await res.json()) as Detail;
-    setDetail((prev) => {
-      const keepState = sseAlive.current || (next.asleep && !next.state);
-      return {
-        ...next,
-        state: keepState ? (prev.state ?? next.state) : next.state,
-      };
-    });
+    try {
+      const res = await fetch(`/api/agents/${initialAgent.id}${wake ? "?wake=1" : ""}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const next = (await res.json()) as Detail;
+      setDetail((prev) => {
+        const keepState = sseAlive.current || (next.asleep && !next.state);
+        return {
+          ...next,
+          state: keepState ? (prev.state ?? next.state) : next.state,
+        };
+      });
+    } finally {
+      setSettled(true);
+    }
   }, [initialAgent.id]);
 
   useEffect(() => {
@@ -61,6 +66,7 @@ export function useAgentLive(initialAgent: Agent) {
     on("snapshot", (event) => {
       if (event.type !== "snapshot") return;
       sseAlive.current = true;
+      setSettled(true);
       setDetail((prev) => ({ ...prev, state: event.state, asleep: false, waking: false, runtimeError: null }));
     });
     on("run", (event) => {
@@ -116,6 +122,7 @@ export function useAgentLive(initialAgent: Agent) {
     });
     on("asleep", () => {
       sseAlive.current = false;
+      setSettled(true);
       setDetail((prev) => ({ ...prev, asleep: true, waking: false }));
     });
     on("waking", () => {
@@ -127,5 +134,6 @@ export function useAgentLive(initialAgent: Agent) {
     return () => source.close();
   }, [initialAgent.id]);
 
-  return { detail, stepsByRun, actionsBySession, onChatMessage };
+  const livePending = detail.state === null && !settled;
+  return { detail, stepsByRun, actionsBySession, onChatMessage, livePending };
 }

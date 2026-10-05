@@ -1,9 +1,10 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import type { Agent, BrowserSession, Run, RunStep, RuntimeState } from "@swarm/contracts";
 import { fmtTime } from "./format";
+import { ListSkeleton, Skeleton } from "../skeleton";
 
 const STATUS_LABEL: Record<Run["status"], { text: string; cls: string }> = {
   queued: { text: "в очереди", cls: "" },
@@ -37,10 +38,12 @@ export function LogsCard({
   agent,
   state,
   stepsByRun,
+  pending,
 }: {
   agent: Agent;
   state: RuntimeState | null;
   stepsByRun: Record<string, RunStep[]>;
+  pending: boolean;
 }) {
   const runs = state?.runs ?? [];
   const sessionsByRun = new Map<string, BrowserSession[]>();
@@ -50,26 +53,38 @@ export function LogsCard({
     sessionsByRun.set(s.runId, arr);
   }
   return (
-    <section className="card">
+    <section className="card" aria-busy={pending}>
       <div className="card-head">
         <h2>Логи работы</h2>
-        <span className="muted small">{runs.length} задач</span>
+        {pending ? <Skeleton width={64} height={14} /> : <span className="muted small">{runs.length} задач</span>}
       </div>
-      {runs.length === 0 ? (
+      <div className="stable-slot">
+      {pending ? (
+        <ListSkeleton />
+      ) : runs.length === 0 ? (
         <p className="faint small" style={{ margin: 0 }}>Задач ещё не было.</p>
       ) : (
         <div className="list">
           {runs.map((r) => (
-            <RunItem
+            <Suspense
               key={r.id}
-              agent={agent}
-              run={r}
-              sessions={sessionsByRun.get(r.id) ?? []}
-              liveSteps={stepsByRun[r.id] ?? []}
-            />
+              fallback={
+                <div className="list-item">
+                  <Skeleton width="52%" height={16} />
+                </div>
+              }
+            >
+              <RunItem
+                agent={agent}
+                run={r}
+                sessions={sessionsByRun.get(r.id) ?? []}
+                liveSteps={stepsByRun[r.id] ?? []}
+              />
+            </Suspense>
           ))}
         </div>
       )}
+      </div>
     </section>
   );
 }
@@ -146,7 +161,12 @@ function RunItem({
       </summary>
       {run.summary && <p className="small" style={{ margin: "10px 0 0", whiteSpace: "pre-wrap" }}>{run.summary}</p>}
       <div className="steps">
-        {loaded === null && liveSteps.length === 0 && <span className="step">загрузка…</span>}
+        {loaded === null && liveSteps.length === 0 && (
+          <>
+            <Skeleton width="78%" height={14} />
+            <Skeleton width="56%" height={14} />
+          </>
+        )}
         {steps.map((s, i) => (
           <div key={`${s.at}-${i}`} className="step">
             <b>{s.kind}</b> · {s.text}

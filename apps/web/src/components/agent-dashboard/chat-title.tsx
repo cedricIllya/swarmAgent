@@ -23,7 +23,7 @@ export function ChatTitle({
   }
 
   return (
-    <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
+    <div className="chat-toolbar">
       {renaming ? (
         <input
           className="input"

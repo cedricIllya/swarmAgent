@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { Agent, RuntimeState } from "@swarm/contracts";
+import { ListSkeleton } from "../skeleton";
 
 interface SavedLogin {
   slug: string;
@@ -16,17 +17,22 @@ interface SavedLogin {
 const KIND_LABEL = { mcp: "MCP", api: "API", browser: "браузер" } as const;
 
 /** Сервисы, куда агент вошёл: живой список из runtime плюс сохранённые аккаунты и пароли. */
-export function ServicesCard({ agent, state }: { agent: Agent; state: RuntimeState | null }) {
+export function ServicesCard({ agent, state, pending }: { agent: Agent; state: RuntimeState | null; pending: boolean }) {
   const [logins, setLogins] = useState<SavedLogin[]>([]);
+  const [loginsReady, setLoginsReady] = useState(false);
   const [shown, setShown] = useState<Record<string, boolean>>({});
   const live = state?.connectedServices ?? [];
 
   useEffect(() => {
     let cancel = false;
-    void fetch(`/api/agents/${agent.id}/credentials`, { cache: "no-store" }).then(async (res) => {
-      if (!res.ok || cancel) return;
-      setLogins((await res.json()) as SavedLogin[]);
-    });
+    void fetch(`/api/agents/${agent.id}/credentials`, { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok || cancel) return;
+        setLogins((await res.json()) as SavedLogin[]);
+      })
+      .finally(() => {
+        if (!cancel) setLoginsReady(true);
+      });
     return () => {
       cancel = true;
     };
@@ -48,7 +54,7 @@ export function ServicesCard({ agent, state }: { agent: Agent; state: RuntimeSta
   const list = [...rows.values()];
 
   return (
-    <section className="card">
+    <section className="card" aria-busy={pending || !loginsReady}>
       <div className="card-head">
         <div>
           <h2>Подключённые сервисы</h2>
@@ -58,7 +64,10 @@ export function ServicesCard({ agent, state }: { agent: Agent; state: RuntimeSta
           Все сервисы →
         </Link>
       </div>
-      {list.length === 0 ? (
+      <div className="stable-slot">
+      {pending || !loginsReady ? (
+        <ListSkeleton />
+      ) : list.length === 0 ? (
         <p className="faint small" style={{ margin: 0 }}>
           Пока ничего. Пришлите приглашение на <code>{agent.email}</code> или вставьте ссылку и ключ в чат.
         </p>
@@ -90,6 +99,7 @@ export function ServicesCard({ agent, state }: { agent: Agent; state: RuntimeSta
           ))}
         </div>
       )}
+      </div>
     </section>
   );
 }

@@ -1,4 +1,5 @@
 import type { RuntimeState, UsageByTask } from "@swarm/contracts";
+import { UsageBodySkeleton } from "../skeleton";
 import { usd } from "./format";
 
 const ACTION_LABEL: Record<string, string> = {
@@ -15,48 +16,56 @@ function actionLabel(action: string): string {
   return ACTION_LABEL[action] ?? action.replace(/[._]/g, " ");
 }
 
-export function UsageCard({ state }: { state: RuntimeState | null }) {
+export function UsageCard({ state, pending }: { state: RuntimeState | null; pending: boolean }) {
   const u = state?.usage;
   return (
-    <section className="card">
+    <section className="card" aria-busy={pending}>
       <div className="card-head">
         <h2>Токены и деньги</h2>
         <span className="muted small">По задачам и действиям, как вернул OpenRouter</span>
       </div>
-      <div className="row" style={{ gap: 32, marginBottom: 16 }}>
-        <div className="stat">
-          <span className="stat-value">{usd(u?.totalCostUsd ?? 0)}</span>
-          <span className="stat-label">всего</span>
-        </div>
-        <div className="stat">
-          <span className="stat-value">{(u?.totalPromptTokens ?? 0).toLocaleString("ru-RU")}</span>
-          <span className="stat-label">токенов на вход</span>
-        </div>
-        <div className="stat">
-          <span className="stat-value">{(u?.totalCompletionTokens ?? 0).toLocaleString("ru-RU")}</span>
-          <span className="stat-label">токенов на выход</span>
-        </div>
-      </div>
-      {!u?.tasks.length ? (
-        <p className="faint small" style={{ margin: 0 }}>Расходов ещё нет.</p>
+      <div className="stable-slot stable-slot-usage">
+      {pending ? (
+        <UsageBodySkeleton />
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Задача / действие</th>
-              <th className="num">Вызовов</th>
-              <th className="num">Вход</th>
-              <th className="num">Выход</th>
-              <th className="num">Стоимость</th>
-            </tr>
-          </thead>
-          <tbody>
-            {u.tasks.map((t: UsageByTask) => (
-              <TaskRows key={t.taskId} task={t} />
-            ))}
-          </tbody>
-        </table>
+        <>
+          <div className="row" style={{ gap: 32, marginBottom: 16 }}>
+            <div className="stat">
+              <span className="stat-value">{usd(u?.totalCostUsd ?? 0)}</span>
+              <span className="stat-label">всего</span>
+            </div>
+            <div className="stat">
+              <span className="stat-value">{(u?.totalPromptTokens ?? 0).toLocaleString("ru-RU")}</span>
+              <span className="stat-label">токенов на вход</span>
+            </div>
+            <div className="stat">
+              <span className="stat-value">{(u?.totalCompletionTokens ?? 0).toLocaleString("ru-RU")}</span>
+              <span className="stat-label">токенов на выход</span>
+            </div>
+          </div>
+          {!u?.tasks.length ? (
+            <p className="faint small" style={{ margin: 0 }}>Расходов ещё нет.</p>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Задача / действие</th>
+                  <th className="num">Вызовов</th>
+                  <th className="num">Вход</th>
+                  <th className="num">Выход</th>
+                  <th className="num">Стоимость</th>
+                </tr>
+              </thead>
+              <tbody>
+                {u.tasks.map((t: UsageByTask) => (
+                  <TaskRows key={t.taskId} task={t} />
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
       )}
+      </div>
     </section>
   );
 }

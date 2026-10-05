@@ -14,7 +14,7 @@ import { UsageCard } from "./usage-card";
 import { useAgentLive } from "./use-agent-live";
 
 export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
-  const { detail, stepsByRun, actionsBySession, onChatMessage } = useAgentLive(initialAgent);
+  const { detail, stepsByRun, actionsBySession, onChatMessage, livePending } = useAgentLive(initialAgent);
   const router = useRouter();
   const confirm = useConfirm();
   const [removing, setRemoving] = useState(false);
@@ -87,13 +87,14 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
       <ChatCard
         agent={agent}
         state={state}
+        livePending={livePending}
         onChatMessage={onChatMessage}
         actionsBySession={actionsBySession}
         stepsByRun={stepsByRun}
       />
-      <ServicesCard agent={agent} state={state} />
-      <LogsCard agent={agent} state={state} stepsByRun={stepsByRun} />
-      <UsageCard state={state} />
+      <ServicesCard agent={agent} state={state} pending={livePending} />
+      <LogsCard agent={agent} state={state} stepsByRun={stepsByRun} pending={livePending} />
+      <UsageCard state={state} pending={livePending} />
     </>
   );
 }

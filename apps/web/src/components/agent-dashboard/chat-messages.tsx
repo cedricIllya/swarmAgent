@@ -8,6 +8,7 @@ import { fmtTime } from "./format";
 import { Linkified } from "./linkified";
 import { retryBubbleIndexes } from "./retry-anchor";
 import type { LiveActions } from "./use-agent-live";
+import { ChatPaneSkeleton } from "../skeleton";
 
 /** Лента одного чата: обычные пузыри, карточки браузера и одобрений, индикатор работы. */
 export function ChatMessages({
@@ -22,6 +23,7 @@ export function ChatMessages({
   activity,
   retryEnabled,
   onRetry,
+  loading,
 }: {
   agent: Agent;
   state: RuntimeState | null;
@@ -35,6 +37,7 @@ export function ChatMessages({
   /** Агент на связи и в этом чате сейчас ничего не выполняется. */
   retryEnabled: boolean;
   onRetry: (runId: string) => void;
+  loading?: boolean;
 }) {
   const bottom = useRef<HTMLDivElement>(null);
 
@@ -48,6 +51,8 @@ export function ChatMessages({
       .map((r) => r.id),
   );
   const retryAt = retryBubbleIndexes(messages, failedRunIds);
+
+  if (loading) return <ChatPaneSkeleton />;
 
   return (
     <div className="chat">
