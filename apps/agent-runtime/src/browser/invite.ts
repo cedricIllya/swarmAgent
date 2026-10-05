@@ -93,6 +93,8 @@ export interface AcceptInviteResult {
   notes: string;
   /** Кто принимал приглашение: Skyvern или свой Chromium. */
   provider?: "skyvern" | "local";
+  /** Cookies лежат в browser-profiles/<slug> (свой браузер или перенос из Skyvern). */
+  cookiesInProfile?: boolean;
   /** Закрытая причина барьера, если она из списка. Свободный текст остаётся в notes. */
   barrierKind?: string | null;
   liveUrl?: string | null;

@@ -55,15 +55,21 @@ export function chromeAvailable(): boolean {
   return chromeCandidates().some((p) => existsSync(p));
 }
 
-function chromeExecutable(): string {
+export function chromeExecutable(): string {
   const found = chromeCandidates().find((p) => existsSync(p));
   if (!found) throw new Error("Chromium не найден: задайте CHROME_PATH");
   return found;
 }
 
-function profileDir(store: Store, slug: string | null, sessionId: string): string {
-  const name = (slug ?? `_tmp-${sessionId}`).replace(/[^a-zA-Z0-9._-]/g, "-");
+/** Профиль Chromium сервиса: cookies живут между сессиями. */
+export function serviceProfileDir(store: Store, slug: string): string {
+  const name = slug.replace(/[^a-zA-Z0-9._-]/g, "-");
   return path.join(store.dir("browser-profiles"), name);
+}
+
+function profileDir(store: Store, slug: string | null, sessionId: string): string {
+  if (slug) return serviceProfileDir(store, slug);
+  return path.join(store.dir("browser-profiles"), `_tmp-${sessionId}`.replace(/[^a-zA-Z0-9._-]/g, "-"));
 }
 
 /**

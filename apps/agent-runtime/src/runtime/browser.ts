@@ -1,6 +1,7 @@
 import type { Run, ServiceCredential } from "@swarm/contracts";
-import { chromeAvailable, ManagedBrowserSession, type BrowserDeps } from "../browser/stagehand";
+import { chromeAvailable, chromeExecutable, ManagedBrowserSession, serviceProfileDir, type BrowserDeps } from "../browser/stagehand";
 import { acceptInvite, type AcceptInviteResult } from "../browser/invite";
+import { applyStorageToProfile } from "../browser/session-transfer";
 import { OWNER_OUTAGE } from "../connect";
 import { hostOf, rootDomain } from "../domains";
 import { warn } from "../log";
@@ -103,8 +104,12 @@ export class BrowserControl {
 
     let result: AcceptInviteResult | null = null;
     if (rt.skyvern && !opts?.skipSkyvern) {
+      const skyvern = rt.skyvern;
+      let sessionId: string | null = null;
       try {
-        const r = await rt.skyvern.acceptInvite({
+        const opened = await skyvern.openBrowserSession();
+        sessionId = opened.browserSessionId;
+        const r = await skyvern.acceptInvite({
           runId: run.id,
           url: args.url,
           service: args.service,
@@ -112,12 +117,33 @@ export class BrowserControl {
           email: rt.cfg.email,
           password: existing?.password ?? null,
           existing: accountKnown,
+          browserSessionId: opened.browserSessionId,
           onSession: (s) => rt.announceBrowser(run, s),
           onStep: (text, data) => rt.step(run.id, "browser", text, data),
         });
         const { session: _session, ...rest } = r;
         result = rest;
+        if (result.status === "accepted" && chromeAvailable()) {
+          try {
+            const state = await skyvern.exportStorageState(opened.browserSessionId);
+            await applyStorageToProfile({
+              profileDir: serviceProfileDir(rt.store, args.slug),
+              state,
+              executablePath: chromeExecutable(),
+            });
+            result.cookiesInProfile = true;
+            await rt.step(run.id, "note", `cookies Skyvern перенесены в профиль ${args.slug}`);
+          } catch (e) {
+            warn("browser", "перенос cookies Skyvern не удался", { error: String(e) });
+            await rt.step(run.id, "note", `cookies Skyvern не перенесены: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+        if (result.status !== "needs_human" && sessionId) {
+          await skyvern.closeBrowserSession(sessionId);
+          sessionId = null;
+        }
       } catch (e) {
+        if (sessionId) await skyvern.closeBrowserSession(sessionId).catch(() => undefined);
         warn("browser", "Skyvern не принял приглашение", { error: String(e) });
         result = {
           status: "failed",
@@ -169,7 +195,9 @@ export class BrowserControl {
     }
 
     const storageState =
-      result.provider === "local" ? { provider: "local" as const, profile: args.slug } : existing?.storageState;
+      result.provider === "local" || result.cookiesInProfile
+        ? { provider: "local" as const, profile: args.slug }
+        : existing?.storageState;
     const credential: ServiceCredential = {
       ...(existing ?? {}),
       slug: args.slug,

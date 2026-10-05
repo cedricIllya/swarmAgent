@@ -1,6 +1,8 @@
 import type { Run, ServiceCredential, ServiceRecipe } from "@swarm/contracts";
 import type { AcceptInviteResult } from "./browser/invite";
-import { isOwnBrowser } from "./browser/stagehand";
+import { generatePassword } from "./browser/invite";
+import { applyStorageToProfile, type BrowserStorageState } from "./browser/session-transfer";
+import { chromeAvailable, chromeExecutable, isOwnBrowser, serviceProfileDir } from "./browser/stagehand";
 import {
   API_KEY_SCHEMA,
   apiKeyPrompt,
@@ -17,7 +19,6 @@ import {
   type ConnectDecision,
   type Proof,
 } from "./connect";
-import { generatePassword } from "./browser/invite";
 import { mcpToolNames, type DiscoveryResult } from "./discovery";
 import { hostOf, isNoiseDomain, matchRecipe, pickServiceDomain, rootDomain, slugFor } from "./domains";
 import { isInviteUrl, pickInviteLink } from "./invite-signal";
@@ -367,6 +368,9 @@ async function connectInvite(
           proof: sought.proof,
           mcpReady,
         });
+        let cookiesInProfile = false;
+        cookiesInProfile = await transferSkyvernCookies(rt, run, skyvern, session.browserSessionId, args.slug);
+        invite.cookiesInProfile = cookiesInProfile;
         if (decision.status === "ready") {
           await persistConnection(rt, run, {
             slug: args.slug,
@@ -380,6 +384,7 @@ async function connectInvite(
             docsUrl: sought.docsUrl,
             loginUrl: args.url,
             appUrl: originOf(landed) ?? originOf(args.url) ?? args.url,
+            cookiesInProfile,
           });
         }
         if (decision.closeBrowser) await close();
@@ -446,7 +451,9 @@ async function connectInvite(
         docsUrl: null,
         loginUrl: args.url,
         appUrl: originOf(invite.finalUrl) ?? originOf(args.url) ?? args.url,
+        cookiesInProfile: true,
       });
+      invite.cookiesInProfile = true;
     }
     if (decision.closeBrowser && invite.browserSessionId) await rt.browser.close(invite.browserSessionId);
     await rt.step(run.id, "note", decision.reason);
@@ -555,6 +562,7 @@ async function persistConnection(
     docsUrl: string | null;
     loginUrl: string;
     appUrl: string;
+    cookiesInProfile?: boolean;
   },
 ): Promise<void> {
   const domains = args.domain ? [args.domain] : [];
@@ -592,6 +600,7 @@ async function persistConnection(
       await rt.services.applyReport({ type: "recipe", recipe, runId: run.id });
     }
   }
+  const storageState = args.cookiesInProfile ? { provider: "local" as const, profile: args.slug } : undefined;
   const credential: ServiceCredential = {
     slug: args.slug,
     kind: args.mode,
@@ -599,8 +608,40 @@ async function persistConnection(
     accountName: rt.cfg.agentName,
     ...(args.password ? { password: args.password } : {}),
     ...(args.token && args.mode !== "browser" ? { token: args.token } : {}),
+    ...(storageState ? { storageState } : {}),
   };
   await rt.services.applyReport({ type: "credential", credential, runId: run.id });
+}
+
+/**
+ * Cookies из живой сессии Skyvern → browser-profiles/<slug>.
+ * Ошибка не валит онбординг: остаётся вход по паролю.
+ */
+async function transferSkyvernCookies(
+  rt: AgentRuntime,
+  run: Run,
+  skyvern: { exportStorageState: (id: string) => Promise<BrowserStorageState> },
+  browserSessionId: string,
+  slug: string,
+): Promise<boolean> {
+  if (!chromeAvailable()) {
+    await rt.step(run.id, "note", "cookies Skyvern не перенесены: Chromium на машине нет");
+    return false;
+  }
+  try {
+    const state = await skyvern.exportStorageState(browserSessionId);
+    await applyStorageToProfile({
+      profileDir: serviceProfileDir(rt.store, slug),
+      state,
+      executablePath: chromeExecutable(),
+    });
+    await rt.step(run.id, "note", `cookies Skyvern перенесены в профиль ${slug}`);
+    return true;
+  } catch (e) {
+    warn("onboarding", "перенос cookies Skyvern не удался", { error: String(e) });
+    await rt.step(run.id, "note", `cookies Skyvern не перенесены: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
 }
 
 /**

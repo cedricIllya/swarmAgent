@@ -101,7 +101,13 @@ describe("SkyvernClient", () => {
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const u = String(url);
       calls.push({ url: u, body: init?.body ? JSON.parse(String(init.body)) : null });
-      if (u.endsWith("/v1/browser_sessions")) return json({ browser_session_id: "pbs_1", app_url: "https://app.skyvern.com/sessions/pbs_1" });
+      if (u.endsWith("/v1/browser_sessions")) {
+        return json({
+          browser_session_id: "pbs_1",
+          app_url: "https://app.skyvern.com/sessions/pbs_1",
+          browser_address: "wss://sessions.skyvern.com/pbs_1",
+        });
+      }
       if (u.endsWith("/close")) return json({ ok: true });
       if (u.endsWith("/v1/run/tasks")) return json({ run_id: "tsk_1", app_url: "https://app.skyvern.com/runs/tsk_1" });
       if (u.endsWith("/v1/credentials/totp")) return json({ totp_code_id: "tc_1", code: "482913" });
@@ -127,6 +133,7 @@ describe("SkyvernClient", () => {
     });
     await vi.advanceTimersByTimeAsync(10);
     expect(client.busy).toBe(true);
+    expect(await client.browserAddress("pbs_1")).toBe("wss://sessions.skyvern.com/pbs_1");
 
     const start = calls.find((c) => c.url.endsWith("/v1/run/tasks"))!.body as Record<string, unknown>;
     expect(start.totp_identifier).toBe("bot@agents.test");
@@ -151,6 +158,38 @@ describe("SkyvernClient", () => {
     vi.useRealTimers();
   });
 
+  it("fetches browser_address when create response omits it", async () => {
+    const { store } = fakeStore();
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith("/v1/browser_sessions")) return json({ browser_session_id: "pbs_3", app_url: null });
+      if (u.endsWith("/v1/browser_sessions/pbs_3")) {
+        return json({ browser_session_id: "pbs_3", browser_address: "wss://sessions.skyvern.com/pbs_3" });
+      }
+      if (u.endsWith("/close")) return json({ ok: true });
+      throw new Error(`unexpected ${u}`);
+    });
+    const client = new SkyvernClient("key", store, "bot@agents.test", "https://api.skyvern.test", fetchImpl as typeof fetch);
+    const opened = await client.openBrowserSession();
+    expect(opened.browserAddress).toBe("wss://sessions.skyvern.com/pbs_3");
+    expect(await client.browserAddress("pbs_3")).toBe("wss://sessions.skyvern.com/pbs_3");
+    await client.closeBrowserSession("pbs_3");
+  });
+
+  it("exportStorageState requires a CDP address", async () => {
+    const { store } = fakeStore();
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith("/v1/browser_sessions")) return json({ browser_session_id: "pbs_4", app_url: null });
+      if (u.endsWith("/v1/browser_sessions/pbs_4")) return json({ browser_session_id: "pbs_4", browser_address: null });
+      if (u.endsWith("/close")) return json({ ok: true });
+      throw new Error(`unexpected ${u}`);
+    });
+    const client = new SkyvernClient("key", store, "bot@agents.test", "https://api.skyvern.test", fetchImpl as typeof fetch);
+    await client.openBrowserSession();
+    await expect(client.exportStorageState("pbs_4")).rejects.toThrow(/browser_address/);
+    await client.closeBrowserSession("pbs_4");
+  });
   it("keeps the agent's existing password when re-entering a known account", async () => {
     vi.useFakeTimers();
     const { store } = fakeStore();

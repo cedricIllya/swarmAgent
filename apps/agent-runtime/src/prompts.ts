@@ -24,7 +24,7 @@ function invitePrompt(ctx: OnboardingContext, slug: string | null): string {
   const inv = ctx.invite;
   if (inv?.status === "accepted") {
     const cookies =
-      inv.provider === "local" && slug
+      (inv.provider === "local" || inv.cookiesInProfile) && slug
         ? `Cookies сохранены: /browser/open с serviceSlug "${slug}" продолжит уже вошедшим.`
         : `Cookies не сохранялись: для входа в браузере используй пароль из credentials${slug ? ` (slug "${slug}")` : ""} — /skyvern/login или /browser/open и форма входа.`;
     return [
@@ -102,7 +102,7 @@ export function escalationNote(reason: string, liveUrl: string | null): string {
 
 export function onboardingPrompt(ctx: OnboardingContext = EMPTY_ONBOARDING): string {
   const d = ctx.discovery;
-  const slug = ctx.recipe?.slug ?? d?.slug ?? null;
+  const slug = ctx.recipe?.slug ?? d?.slug ?? ctx.slug;
   const head = invitePrompt(ctx, slug);
   if (ctx.recipe) {
     return [
@@ -178,7 +178,7 @@ export function systemPrompt(ctx: PromptContext): string {
     "Если сервис не пускает, пока его администратор не включит аккаунт, runtime сам оставляет карточку в чате. Не вызывай /approval и не обещай ждать. Карточки нет — вход уже есть: выпускай секрет или смотри задачи, повторно не регистрируйся.",
     "Подключение к сервису после регистрации — всегда лестница: 1) MCP, 2) API, 3) браузер. Браузер — только если первых двух нет.",
     "Задачу выполняй в самом сервисе тем же способом. Письмо-уведомление только сообщает о ней: ответ на такое письмо работой не считается.",
-    "Работа внутри сервиса без MCP и API — свой браузер через runtime (/browser/open с serviceSlug). Cookies этого сервиса сохраняются. Если сессия не вошла — войди по паролю из credentials через /browser/act; коды из писем runtime передаст сам. Skyvern — только регистрация и вход, капчи он обходит сам.",
+    "Работа внутри сервиса без MCP и API — свой браузер через runtime (/browser/open с serviceSlug). Cookies этого сервиса сохраняются (после своего браузера или переноса из Skyvern). Если сессия не вошла — войди по паролю из credentials через /browser/act; коды из писем runtime передаст сам. Skyvern — только регистрация и вход, капчи он обходит сам.",
     "Всегда следуй скиллу swarm-worker. Он описывает локальные эндпоинты runtime:",
     `http://127.0.0.1:${ctx.runtimePort} с заголовком Authorization: Bearer $SWARM_RUNTIME_TOKEN.`,
     "",

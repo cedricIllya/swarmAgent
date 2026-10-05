@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { escalationNote, humanPage, serviceWorkPrompt } from "./prompts";
+import { escalationNote, humanPage, onboardingPrompt, serviceWorkPrompt } from "./prompts";
 import { isMachineSender } from "./inbox";
 
 describe("escalationNote", () => {
@@ -9,6 +9,32 @@ describe("escalationNote", () => {
     expect(escalationNote("капча", "https://gensite.ru/login")).toMatch(/gensite\.ru\/login/);
     expect(escalationNote("капча", "https://app.skyvern.com/sessions/1")).toMatch(/взять управление/);
     expect(escalationNote("капча", null)).toMatch(/взять управление некуда/);
+  });
+});
+
+describe("onboardingPrompt cookies", () => {
+  it("treats Skyvern cookies transferred into the local profile as saved", () => {
+    const text = onboardingPrompt({
+      recipe: null,
+      discovery: null,
+      inviteUrl: "https://app.acme.io/invite/1",
+      invite: {
+        status: "accepted",
+        accountEmail: "bot@agents.test",
+        password: "pw",
+        steps: 3,
+        finalUrl: "https://app.acme.io/",
+        notes: "",
+        provider: "skyvern",
+        cookiesInProfile: true,
+      },
+      inviteSkipped: null,
+      browserAvailable: true,
+      slug: "acme",
+      engine: { status: "ready", mode: "browser", reason: "ok", liveUrl: null, handoffId: null },
+    });
+    expect(text).toMatch(/Cookies сохранены/);
+    expect(text).toMatch(/serviceSlug "acme"/);
   });
 });
 

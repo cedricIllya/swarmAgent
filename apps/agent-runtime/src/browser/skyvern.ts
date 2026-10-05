@@ -3,6 +3,7 @@ import type { Store } from "../store";
 import { downloadUrlTo } from "./recordings";
 import { blockerKind, looksLikeServiceApprovalWait } from "../connect";
 import { generatePassword, type AcceptInviteResult } from "./invite";
+import { exportStorageFromCdp, type BrowserStorageState } from "./session-transfer";
 import { log, warn } from "../log";
 
 /**
@@ -182,6 +183,8 @@ export class SkyvernClient {
   /** Сессия жива до close или до таймаута: почта в это время удерживается. */
   private readonly held = new Map<string, number>();
   private readonly sessionLive = new Map<string, string | null>();
+  /** CDP-адрес сессии для экспорта cookies в свой Chromium. */
+  private readonly sessionCdp = new Map<string, string | null>();
   private readonly metas = new Map<string, BrowserSession>();
   /** Код пришёл между задачами одной сессии — отдадим в следующую. */
   private readonly pendingTotp: string[] = [];
@@ -203,21 +206,70 @@ export class SkyvernClient {
   }
 
   /** Одна сессия на весь онбординг: captcha-solver и общие cookies. */
-  async openBrowserSession(): Promise<{ browserSessionId: string; liveUrl: string | null }> {
+  async openBrowserSession(): Promise<{ browserSessionId: string; liveUrl: string | null; browserAddress: string | null }> {
     const res = await this.fetchImpl(`${this.base}/v1/browser_sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": this.apiKey },
       body: JSON.stringify({ timeout: 45, extensions: ["captcha-solver"] }),
     });
     if (!res.ok) throw new Error(`Skyvern session ${res.status}: ${await res.text()}`);
-    const json = (await res.json()) as { browser_session_id?: string; app_url?: string | null };
+    const json = (await res.json()) as {
+      browser_session_id?: string;
+      app_url?: string | null;
+      browser_address?: string | null;
+    };
     if (!json.browser_session_id) throw new Error("Skyvern не вернул browser_session_id");
     // Страница сессии в Skyvern: живой экран и кнопка Take Control.
     const liveUrl = json.app_url ?? `https://app.skyvern.com/browser-session/${json.browser_session_id}`;
     this.held.set(json.browser_session_id, Date.now() + 45 * 60 * 1000);
     this.sessionLive.set(json.browser_session_id, liveUrl);
-    log("skyvern", "сессия открыта", { browserSessionId: json.browser_session_id, extensions: ["captcha-solver"] });
-    return { browserSessionId: json.browser_session_id, liveUrl };
+    let browserAddress = json.browser_address?.trim() || null;
+    if (!browserAddress) browserAddress = await this.fetchBrowserAddress(json.browser_session_id);
+    this.sessionCdp.set(json.browser_session_id, browserAddress);
+    log("skyvern", "сессия открыта", {
+      browserSessionId: json.browser_session_id,
+      extensions: ["captcha-solver"],
+      hasCdp: Boolean(browserAddress),
+    });
+    return { browserSessionId: json.browser_session_id, liveUrl, browserAddress };
+  }
+
+  /** CDP URL живой сессии (кэш или GET). */
+  async browserAddress(browserSessionId: string): Promise<string | null> {
+    if (this.sessionCdp.has(browserSessionId)) {
+      const cached = this.sessionCdp.get(browserSessionId) ?? null;
+      if (cached) return cached;
+    }
+    const addr = await this.fetchBrowserAddress(browserSessionId);
+    this.sessionCdp.set(browserSessionId, addr);
+    return addr;
+  }
+
+  /**
+   * Cookies/localStorage живой сессии для засева в свой Chromium.
+   * Сессию не закрывает — вызывающий закрывает после переноса.
+   */
+  async exportStorageState(browserSessionId: string): Promise<BrowserStorageState> {
+    const cdpUrl = await this.browserAddress(browserSessionId);
+    if (!cdpUrl) throw new Error("у сессии Skyvern нет browser_address");
+    return exportStorageFromCdp({ cdpUrl, apiKey: this.apiKey });
+  }
+
+  private async fetchBrowserAddress(browserSessionId: string): Promise<string | null> {
+    try {
+      const res = await this.fetchImpl(`${this.base}/v1/browser_sessions/${browserSessionId}`, {
+        headers: { "x-api-key": this.apiKey },
+      });
+      if (!res.ok) {
+        warn("skyvern", "не удалось получить browser_address", { status: res.status });
+        return null;
+      }
+      const json = (await res.json()) as { browser_address?: string | null };
+      return json.browser_address?.trim() || null;
+    } catch (e) {
+      warn("skyvern", "не удалось получить browser_address", { error: String(e) });
+      return null;
+    }
   }
 
   /** Сессия ещё жива у нас (не закрыта и не вышла по таймауту). */
@@ -229,6 +281,7 @@ export class SkyvernClient {
   async closeBrowserSession(browserSessionId: string): Promise<void> {
     this.held.delete(browserSessionId);
     this.sessionLive.delete(browserSessionId);
+    this.sessionCdp.delete(browserSessionId);
     this.pendingTotp.length = 0;
     const meta = this.metas.get(`skyvern-${browserSessionId}`);
     this.metas.delete(`skyvern-${browserSessionId}`);
