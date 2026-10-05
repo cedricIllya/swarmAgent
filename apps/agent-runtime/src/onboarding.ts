@@ -83,12 +83,10 @@ export async function prepareOnboarding(rt: AgentRuntime, run: Run, input: Onboa
   const domain = discovery?.domain ?? pickServiceDomain(input.domain, input.links) ?? known?.domains[0] ?? null;
   const slug = recipe?.slug ?? discovery?.slug ?? slugFor(domain, input.service);
   const service = recipe?.name ?? discovery?.service ?? input.service ?? slug;
-  const recipeKind: "mcp" | "api" | null =
-    recipe?.kind === "mcp" || discovery?.mcp?.verified
-      ? "mcp"
-      : recipe?.kind === "api" || discovery?.api?.baseUrl
-        ? "api"
-        : null;
+  // MCP только по OAuth своего клиента не имеет — ступенью не считается.
+  const mcpUsable =
+    (known?.kind === "mcp" && known.mcp?.auth !== "oauth") || (discovery?.mcp?.verified === true && discovery.mcp.auth !== "oauth");
+  const recipeKind: "mcp" | "api" | null = mcpUsable ? "mcp" : recipe?.kind === "api" || discovery?.api?.baseUrl ? "api" : null;
   const inviteUrl = pickInviteLink(input.links, domain);
 
   let invite: AcceptInviteResult | null = null;
@@ -227,8 +225,11 @@ async function recipeKindOf(rt: AgentRuntime, args: ConnectArgs): Promise<"mcp" 
   if (args.recipeKind) return args.recipeKind;
   const snap = await rt.store.readServices();
   const known = snap ? matchRecipe(snap.recipes, [hostOf(args.url), rootDomain(hostOf(args.url)), args.slug]) : null;
-  if (known?.kind === "mcp" || known?.kind === "api") return known.kind;
-  if (args.discovery?.mcp?.verified) return "mcp";
+  // MCP только по OAuth своего клиента не имеет: токен в кабинете не выпускается,
+  // требовать его бессмысленно. Такой рецепт ступенью не считается.
+  if (known?.kind === "mcp") return known.mcp?.auth === "oauth" ? null : "mcp";
+  if (known?.kind === "api") return "api";
+  if (args.discovery?.mcp?.verified) return args.discovery.mcp.auth === "oauth" ? null : "mcp";
   if (args.discovery?.api?.baseUrl) return "api";
   return null;
 }

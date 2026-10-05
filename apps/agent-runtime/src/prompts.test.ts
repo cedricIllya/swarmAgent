@@ -82,4 +82,32 @@ describe("systemPrompt recipe details", () => {
     expect(text).toContain("Ключ: Integrations");
     expect(text).toMatch(/kind mcp\|api\|browser/);
   });
+
+  it("OAuth-MCP без токена: способ — как у доступа, инструментов не обещает", () => {
+    const text = systemPrompt({
+      agentName: "Бот",
+      email: "bot@example.com",
+      ownerEmail: null,
+      autonomous: false,
+      runtimePort: 8787,
+      services: {
+        generatedAt: "t",
+        recipes: [
+          {
+            slug: "trello",
+            name: "Trello",
+            kind: "mcp",
+            domains: ["trello.com"],
+            mcp: { url: "https://mcp.trello.com/v1", transport: "streamable_http", auth: "oauth", includeTools: [] },
+            notes: "",
+            discoveredBy: null,
+          },
+        ],
+        credentials: [{ slug: "trello", kind: "browser", password: "pw", accountEmail: "bot@example.com" }],
+      },
+    });
+    expect(text).toContain("Trello (trello): способ browser");
+    expect(text).toMatch(/только OAuth/);
+    expect(text).not.toMatch(/Инструменты: mcp_trello_\*/);
+  });
 });

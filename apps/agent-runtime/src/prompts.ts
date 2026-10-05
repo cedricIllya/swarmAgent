@@ -156,11 +156,24 @@ export interface PromptContext {
   services: ServicesSnapshot | null;
 }
 
-function recipeLines(r: NonNullable<PromptContext["services"]>["recipes"][number], credAccount: string): string[] {
-  const head = `- ${r.name} (${r.slug}): способ ${r.kind}${credAccount ? `, аккаунт ${credAccount}` : ""}`;
+type PromptRecipe = NonNullable<PromptContext["services"]>["recipes"][number];
+type PromptCredential = NonNullable<PromptContext["services"]>["credentials"][number];
+
+/** Строки каталога: способ — тот, которым агент реально ходит, а не тот, что у рецепта в идеале. */
+function recipeLines(r: PromptRecipe, cred: PromptCredential | undefined): string[] {
+  const credAccount = [cred?.accountName, cred?.accountEmail].filter(Boolean).join(", ");
+  const way = cred?.kind ?? r.kind;
+  const head = `- ${r.name} (${r.slug}): способ ${way}${credAccount ? `, аккаунт ${credAccount}` : ""}`;
   const detail: string[] = [head];
   if (r.mcp) {
-    detail.push(`  MCP: ${r.mcp.url} (${r.mcp.transport}, auth ${r.mcp.auth}). Инструменты: mcp_${r.slug}_*`);
+    const token = cred?.token ?? cred?.oauth?.accessToken;
+    if (r.mcp.auth === "oauth" && !token) {
+      detail.push(`  MCP: ${r.mcp.url} — только OAuth, своего клиента для него нет: инструментов mcp_${r.slug}_* не будет, токен в кабинете не выпускается. Иди через API или браузер.`);
+    } else if (r.mcp.auth !== "none" && !token) {
+      detail.push(`  MCP: ${r.mcp.url} (${r.mcp.transport}, auth ${r.mcp.auth}) — токена ещё нет, инструментов mcp_${r.slug}_* не будет, пока не запишешь его через /report.`);
+    } else {
+      detail.push(`  MCP: ${r.mcp.url} (${r.mcp.transport}, auth ${r.mcp.auth}). Инструменты: mcp_${r.slug}_*`);
+    }
   }
   if (r.api) {
     const header =
@@ -176,11 +189,11 @@ function recipeLines(r: NonNullable<PromptContext["services"]>["recipes"][number
 
 export function systemPrompt(ctx: PromptContext): string {
   const recipes = ctx.services?.recipes ?? [];
-  const line = (r: (typeof recipes)[number]) => {
-    const cred = ctx.services?.credentials.find((c) => c.slug === r.slug);
-    const who = [cred?.accountName, cred?.accountEmail].filter(Boolean).join(", ");
-    return recipeLines(r, who).join("\n");
-  };
+  const line = (r: (typeof recipes)[number]) =>
+    recipeLines(
+      r,
+      ctx.services?.credentials.find((c) => c.slug === r.slug),
+    ).join("\n");
   const own = recipes.filter((r) => ctx.services?.credentials.some((c) => c.slug === r.slug)).map(line);
   const catalog = recipes.filter((r) => !ctx.services?.credentials.some((c) => c.slug === r.slug)).map(line);
 

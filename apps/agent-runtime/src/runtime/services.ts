@@ -21,7 +21,8 @@ export class ServiceCatalog {
         return {
           slug: r.slug,
           name: r.name,
-          kind: r.kind,
+          // Способ — тот, которым этот агент реально ходит: рецепт может быть MCP, а доступ — только браузер.
+          kind: cred?.kind ?? r.kind,
           hasCredential: true,
           accountEmail: cred?.accountEmail ?? null,
           accountName: cred?.accountName ?? null,
