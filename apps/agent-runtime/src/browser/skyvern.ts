@@ -543,17 +543,22 @@ export class SkyvernClient {
     schema: unknown;
     browserSessionId: string;
     maxSteps?: number;
+    /** Сервис может заново спросить код из письма (step-up перед настройками): держать ящик. */
+    expectTotp?: boolean;
+    service?: string;
     onStep?: (text: string, data?: Record<string, unknown>) => Promise<void> | void;
   }): Promise<{ status: string; output: unknown; failureReason: string | null }> {
     const r = await this.runTask({
       runId: args.runId,
       url: args.url,
-      prompt: args.prompt,
+      prompt: args.expectTotp ? `${args.prompt}\n${TOTP_WAIT}` : args.prompt,
       purpose: args.purpose,
       schema: args.schema,
       maxSteps: args.maxSteps ?? 20,
       browserSessionId: args.browserSessionId,
       leaveOpen: true,
+      expectTotp: args.expectTotp,
+      service: args.service,
       onStep: args.onStep,
     });
     return { status: r.status, output: r.output, failureReason: r.failureReason };

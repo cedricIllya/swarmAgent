@@ -1,9 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Run } from "@swarm/contracts";
 import { looksLikeServiceApprovalWait } from "./connect";
-import { loginAfterApproval, pickInviteLink, resumeTarget, runConnectFollowup } from "./onboarding";
+import { keySearchStart, loginAfterApproval, pickInviteLink, resumeTarget, runConnectFollowup } from "./onboarding";
 import { secretFollowupPrompt, systemPrompt } from "./prompts";
 import type { AgentRuntime } from "./runtime";
+
+describe("keySearchStart", () => {
+  const invite = "https://trello.com/invite/b/6abfb6bcf0af46690e460ee0/ATTI76f1f8a4c0958c0d3f01bae93356106f96EA3371/%D1%82%D0%B5%D1%81%D1%82";
+
+  it("starts from the service root when final_url is really the invite link in disguise", () => {
+    expect(keySearchStart("https://trello.com/b/ATTI76f1f8a4c0958c0d3f01bae93356106f96EA3371/%D1%82%D0%B5%D1%81%D1%82", invite)).toBe("https://trello.com/");
+    expect(keySearchStart(invite, invite)).toBe("https://trello.com/");
+    expect(keySearchStart("https://app.acme.io/invite/xyz", "https://app.acme.io/invite/xyz")).toBe("https://app.acme.io/");
+  });
+
+  it("keeps a real landing page", () => {
+    expect(keySearchStart("https://trello.com/b/AbCdEfGh/%D1%82%D0%B5%D1%81%D1%82", invite)).toBe("https://trello.com/b/AbCdEfGh/%D1%82%D0%B5%D1%81%D1%82");
+    expect(keySearchStart("https://my.pneumatic.app/workflows", null)).toBe("https://my.pneumatic.app/workflows");
+  });
+});
 
 describe("pickInviteLink", () => {
   it("prefers an invite-looking link on the service domain", () => {

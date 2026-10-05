@@ -156,6 +156,27 @@ export function resumeTarget(
   return loginAfterApproval(ctx.url, null);
 }
 
+/**
+ * Откуда искать ключ. Skyvern нередко называет final_url ссылкой приглашения или её
+ * вариантом: такой адрес после входа уже не открывается. Тогда начинаем с корня сервиса.
+ */
+export function keySearchStart(landedUrl: string, inviteUrl: string | null): string {
+  if (!inviteUrl) return landedUrl;
+  let landed: URL;
+  let invite: URL;
+  try {
+    landed = new URL(landedUrl);
+    invite = new URL(inviteUrl);
+  } catch {
+    return landedUrl;
+  }
+  // Токены приглашения — длинные идентификаторы; человекочитаемое имя доски (с %-кодами) не в счёт.
+  const tokens = invite.pathname.split("/").filter((seg) => /^[A-Za-z0-9_-]{16,}$/.test(seg));
+  const sameShape = landed.pathname === invite.pathname || tokens.some((t) => landed.pathname.includes(t));
+  if (!sameShape && !isInviteUrl(landedUrl)) return landedUrl;
+  return originOf(landedUrl) ?? landedUrl;
+}
+
 function appOrigin(raw: string | null | undefined, inviteUrl: string): string | null {
   if (!raw || !/^https?:\/\//i.test(raw) || isInviteUrl(raw) || isNoiseDomain(hostOf(raw))) return null;
   if (!credentialHostAllowed(raw, [inviteUrl])) return null;
@@ -482,7 +503,7 @@ async function seekApiKey(
   rt: AgentRuntime,
   run: Run,
   browserSessionId: string,
-  args: { service: string; discovery: DiscoveryResult | null },
+  args: { service: string; discovery: DiscoveryResult | null; url?: string },
   landedUrl: string,
 ): Promise<{ token: string | null; proof: Proof; baseUrl: string | null; authHeader: string | null; docsUrl: string | null; notes: string }> {
   const skyvern = rt.skyvern;
@@ -492,7 +513,7 @@ async function seekApiKey(
   const authHeader = args.discovery?.api?.authHeader || null;
   const docsUrl = args.discovery?.api?.docsUrl ?? null;
   const anchors = [landedUrl, hinted, baseUrl, docsUrl].filter((u): u is string => Boolean(u));
-  const start = hinted && credentialHostAllowed(hinted, anchors) ? hinted : landedUrl;
+  const start = hinted && credentialHostAllowed(hinted, anchors) ? hinted : keySearchStart(landedUrl, args.url ?? null);
 
   let feedback: string | null = null;
   let forceRead = false;
@@ -510,6 +531,8 @@ async function seekApiKey(
       schema: API_KEY_SCHEMA,
       browserSessionId,
       maxSteps: i === 0 ? 20 : 8,
+      expectTotp: true,
+      service: args.service,
       onStep: (text, data) => rt.step(run.id, "browser", text, data),
     });
     if (extracted.status !== "completed") {
