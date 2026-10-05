@@ -8,6 +8,7 @@ import type { OpenRouterClient, ChatMessageIn } from "../openrouter";
 import type { Store } from "../store";
 import { recordUsage, type TaskRef } from "../usage";
 import { log, warn } from "../log";
+import { toExtractSchema } from "./schema";
 
 type LLMContentBlock = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
@@ -200,8 +201,9 @@ export class ManagedBrowserSession {
   }
 
   async extract(instruction: string, schema?: unknown): Promise<unknown> {
-    const r = (await (schema
-      ? this.sh().extract(instruction, schema as never)
+    const zod = toExtractSchema(schema);
+    const r = (await (zod
+      ? this.sh().extract(instruction, zod as never)
       : this.sh().extract(instruction))) as { data?: unknown };
     await this.action({ type: "extract", instruction, result: r.data });
     return r.data;
