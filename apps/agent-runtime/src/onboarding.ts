@@ -17,8 +17,8 @@ import {
 } from "./connect";
 import { generatePassword } from "./browser/invite";
 import { mcpToolNames, type DiscoveryResult } from "./discovery";
-import { hostOf, matchRecipe, pickServiceDomain, rootDomain, slugFor } from "./domains";
-import { pickInviteLink } from "./invite-signal";
+import { hostOf, isNoiseDomain, matchRecipe, pickServiceDomain, rootDomain, slugFor } from "./domains";
+import { isInviteUrl, pickInviteLink } from "./invite-signal";
 import { connectedFollowupPrompt, humanPage, secretFollowupPrompt, type KnownRecipeRef } from "./prompts";
 import type { AgentRuntime } from "./runtime";
 import type { HandoffContext, ResumeConnect } from "./runtime/handoffs";
@@ -108,14 +108,55 @@ export async function prepareOnboarding(rt: AgentRuntime, run: Run, input: Onboa
 
 /** Человек нажал «я доделал»: тот же конвейер, та же сессия, тот же пароль. */
 export const resumeConnect: ResumeConnect = async (rt, run, ctx) => {
+  const snap = ctx.serviceWait ? await rt.store.readServices() : null;
+  const recipe = snap?.recipes.find((r) => r.slug === ctx.slug) ?? null;
+  const url = resumeTarget(ctx, recipe);
+  if (ctx.serviceWait && url !== ctx.url) {
+    await rt.step(run.id, "note", "заявка одобрена, вхожу на страницу сервиса сохранённым паролем");
+  }
   const { engine } = await connectInvite(
     rt,
     run,
-    { url: ctx.url, slug: ctx.slug, service: ctx.service, discovery: ctx.discovery, recipeKind: null },
+    { url, slug: ctx.slug, service: ctx.service, discovery: ctx.discovery, recipeKind: null },
     { provider: ctx.provider, browserSessionId: ctx.browserSessionId, password: ctx.password, serviceWait: ctx.serviceWait },
   );
   return engine;
 };
+
+/**
+ * После одобрения заявки ссылка приглашения уже потрачена.
+ * Открываем корень страницы, на которой заявка была отправлена, того же сервиса.
+ */
+export function loginAfterApproval(inviteUrl: string, finalUrl: string | null | undefined): string {
+  const originOnService = (raw: string | null | undefined): string | null => {
+    if (!raw || !/^https?:\/\//i.test(raw)) return null;
+    if (isNoiseDomain(hostOf(raw))) return null;
+    if (!credentialHostAllowed(raw, [inviteUrl])) return null;
+    return originOf(raw);
+  };
+  return originOnService(finalUrl) ?? originOnService(inviteUrl) ?? inviteUrl;
+}
+
+/** Куда открывать браузер: обычный повтор идёт по ссылке приглашения, ожидание заявки — на страницу сервиса. */
+export function resumeTarget(
+  ctx: { serviceWait?: boolean | undefined; url: string; loginUrl?: string | null | undefined },
+  recipe: { browser?: { loginUrl: string; appUrl: string } | undefined } | null,
+): string {
+  if (!ctx.serviceWait) return ctx.url;
+  const stored = appOrigin(ctx.loginUrl, ctx.url);
+  if (stored) return stored;
+  const app = appOrigin(recipe?.browser?.appUrl, ctx.url);
+  if (app) return app;
+  const login = recipe?.browser?.loginUrl;
+  if (login && /^https?:\/\//i.test(login) && !isInviteUrl(login) && credentialHostAllowed(login, [ctx.url])) return login;
+  return loginAfterApproval(ctx.url, null);
+}
+
+function appOrigin(raw: string | null | undefined, inviteUrl: string): string | null {
+  if (!raw || !/^https?:\/\//i.test(raw) || isInviteUrl(raw) || isNoiseDomain(hostOf(raw))) return null;
+  if (!credentialHostAllowed(raw, [inviteUrl])) return null;
+  return originOf(raw);
+}
 
 async function storedPassword(rt: AgentRuntime, slug: string, inviteUrl: string): Promise<string | null> {
   const snap = await rt.store.readServices();
@@ -205,6 +246,7 @@ async function connectInvite(
           ...ctx,
           password: serviceWait ? (invite?.password ?? null) : ctx.password,
           liveUrl: serviceWait ? null : ctx.liveUrl,
+          loginUrl: serviceWait ? loginAfterApproval(args.url, invite?.finalUrl) : null,
           serviceWait,
           url: args.url,
           slug: args.slug,
@@ -559,36 +601,10 @@ async function persistConnection(
   await rt.services.applyReport({ type: "credential", credential, runId: run.id });
 }
 
-/** Откуда продолжить вход, если модель после «готово» увидела заявку на одобрение. */
-export function parkSource(
-  rt: AgentRuntime,
-  ctx: OnboardingContext,
-  service: string,
-): {
-  url: string;
-  slug: string;
-  service: string;
-  discovery: DiscoveryResult | null;
-  password: string | null;
-  provider: "skyvern" | "local";
-  browserSessionId: string | null;
-} | null {
-  if (!ctx.inviteUrl || !ctx.slug) return null;
-  return {
-    url: ctx.inviteUrl,
-    slug: ctx.slug,
-    service: ctx.recipe?.name ?? ctx.discovery?.service ?? service,
-    discovery: ctx.discovery,
-    password: ctx.invite?.password ?? null,
-    provider: rt.skyvern ? "skyvern" : "local",
-    browserSessionId: ctx.invite?.browserSessionId ?? null,
-  };
-}
-
 /**
  * Ход модели после входа. Если рецепту нужен токен — просим его достать.
- * Если модель сообщает, что заявка ждёт одобрения сервиса, ход не заканчивается
- * фразой «подожду»: в чате остаётся карточка, письмо сервиса продолжает вход.
+ * Заявку на одобрение здесь не ловим: её уже решает движок до этого хода.
+ * Текст модели не открывает карточку «Одобрил, продолжай».
  */
 export async function runConnectFollowup(
   rt: AgentRuntime,
@@ -596,7 +612,6 @@ export async function runConnectFollowup(
   chatId: string,
   service: string,
   engine: { status: "ready" | "needs_secret"; mode: EngineResult["mode"] },
-  park: ReturnType<typeof parkSource>,
 ): Promise<void> {
   const prompt =
     engine.status === "needs_secret"
@@ -605,16 +620,6 @@ export async function runConnectFollowup(
   const text = await rt.think(run, prompt);
   const current = await rt.store.getRun(run.id);
   if (current?.status === "waiting_approval") return;
-  if (park && looksLikeServiceApprovalWait(text)) {
-    const password = park.password ?? (await storedPassword(rt, park.slug, park.url));
-    await rt.handoffs.open(
-      run,
-      `Заявка на регистрацию в ${park.service} отправлена с ${rt.cfg.email}. Одобрите её в сервисе. Когда одобрите — нажмите «Одобрил, продолжай»: я войду и подключусь. Письмо сервиса на эту почту продолжит вход само.`,
-      { ...park, password, liveUrl: null, serviceWait: true },
-    );
-    await rt.finishRun(run, "escalated", "Заявка ждёт одобрения в сервисе");
-    return;
-  }
   await rt.finishRun(run, "done", text);
   await rt.addChat({ role: "agent", text, runId: run.id, chatId });
 }

@@ -22,6 +22,8 @@ export interface HandoffContext {
   liveUrl: string | null;
   /** Заявка ждёт администратора сервиса, а не человека в браузере. */
   serviceWait?: boolean;
+  /** Куда входить после одобрения заявки. Ссылка приглашения к этому моменту уже потрачена. */
+  loginUrl?: string | null;
 }
 
 export type ResumeConnect = (
@@ -169,24 +171,7 @@ export class Handoffs {
       }
       if (result.status === "ready" || result.status === "needs_secret") {
         const mode = result.mode === "api" || result.mode === "mcp" || result.mode === "browser" ? result.mode : null;
-        await runConnectFollowup(
-          rt,
-          run,
-          chatId,
-          service,
-          { status: result.status, mode },
-          ctx
-            ? {
-                url: ctx.url,
-                slug: ctx.slug,
-                service: ctx.service,
-                discovery: ctx.discovery,
-                password: ctx.password,
-                provider: ctx.provider,
-                browserSessionId: ctx.browserSessionId,
-              }
-            : null,
-        );
+        await runConnectFollowup(rt, run, chatId, service, { status: result.status, mode });
         return run;
       }
       const text = result.status === "escalated" ? escalationNote(result.reason, result.liveUrl) : result.reason;

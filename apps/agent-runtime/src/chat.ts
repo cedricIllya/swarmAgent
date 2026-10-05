@@ -13,7 +13,7 @@ import {
 import type { AgentRuntime } from "./runtime";
 import { hostOf } from "./domains";
 import { coerceChatClassification } from "./invite-signal";
-import { parkSource, prepareOnboarding, runConnectFollowup } from "./onboarding";
+import { prepareOnboarding, runConnectFollowup } from "./onboarding";
 import { log, warn } from "./log";
 import { redactInternal } from "./redact";
 import { recordUsage } from "./usage";
@@ -186,7 +186,7 @@ function startChatTask(
         if (engine.status === "ready" || engine.status === "needs_secret") {
           const service = classification.service || onboarding.discovery?.service || "сервис";
           try {
-            await runConnectFollowup(rt, run, chatId, service, { status: engine.status, mode: engine.mode }, parkSource(rt, onboarding, service));
+            await runConnectFollowup(rt, run, chatId, service, { status: engine.status, mode: engine.mode });
           } catch (e) {
             const note = `Подключение готово (${engine.mode ?? "browser"}). Задачи не проверены: ${String(e)}`;
             await rt.finishRun(run, "done", note);

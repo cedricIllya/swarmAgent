@@ -2,7 +2,7 @@ import type { InboundEmail } from "@swarm/contracts";
 import { classifyReply, findDigitCode, matchesThread } from "./approval";
 import { emailInviteFallback } from "./invite-signal";
 import { isTransientModelError } from "./openrouter";
-import { parkSource, prepareOnboarding, runConnectFollowup } from "./onboarding";
+import { prepareOnboarding, runConnectFollowup } from "./onboarding";
 import { looksLikeServiceApprovalWait, serviceApprovalGranted } from "./connect";
 import {
   EMAIL_CLASSIFY_SCHEMA,
@@ -219,7 +219,7 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
         const service = c.service || onboarding.discovery?.service || "сервис";
         const chatId = await rt.chatIdForRun(run);
         try {
-          await runConnectFollowup(rt, run, chatId, service, { status: engine.status, mode: engine.mode }, parkSource(rt, onboarding, service));
+          await runConnectFollowup(rt, run, chatId, service, { status: engine.status, mode: engine.mode });
         } catch (e) {
           await rt.finishRun(run, "done", `Подключение готово (${engine.mode ?? "browser"}). Задачи не проверены: ${String(e)}`);
         }
