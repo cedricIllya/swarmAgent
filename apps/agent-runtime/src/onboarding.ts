@@ -662,7 +662,11 @@ async function persistConnection(
   },
 ): Promise<void> {
   const domains = args.domain ? [args.domain] : [];
-  const browser = /^https?:\/\//i.test(args.loginUrl) && /^https?:\/\//i.test(args.appUrl) ? { loginUrl: args.loginUrl, appUrl: args.appUrl } : undefined;
+  // В общий каталог не кладём ссылку приглашения: в ней бывает одноразовый токен. Вход — с корня сервиса.
+  const browser =
+    /^https?:\/\//i.test(args.loginUrl) && /^https?:\/\//i.test(args.appUrl)
+      ? { loginUrl: isInviteUrl(args.loginUrl) ? loginAfterApproval(args.loginUrl, args.appUrl) : args.loginUrl, appUrl: args.appUrl }
+      : undefined;
   if (args.mode === "api" && args.baseUrl) {
     const auth = recipeAuth(args.authHeader);
     const recipe: ServiceRecipe = {
@@ -682,7 +686,11 @@ async function persistConnection(
     };
     await rt.services.applyReport({ type: "recipe", recipe, runId: run.id });
   } else if (args.mode === "browser") {
-    const known = (await rt.store.readServices())?.recipes.some((r) => r.slug === args.slug) ?? false;
+    const known = (await rt.store.readServices())?.recipes.find((r) => r.slug === args.slug) ?? null;
+    if (known && !known.browser && browser) {
+      // Рецепт MCP или API без адреса приложения: модель не знает, где этот сервис живёт в браузере.
+      await rt.services.applyReport({ type: "recipe", recipe: { ...known, browser }, runId: run.id }, { quiet: true });
+    }
     if (!known && browser) {
       const recipe: ServiceRecipe = {
         slug: args.slug,
