@@ -1,7 +1,7 @@
 import type { PendingApproval, Run } from "@swarm/contracts";
 import type { DiscoveryResult } from "../discovery";
 import { mailTouchesHost } from "../connect";
-import { runConnectFollowup } from "../onboarding";
+import { runConnectFollowup, type SecretNeed } from "../onboarding";
 import { escalationNote } from "../prompts";
 import { redactInternal } from "../redact";
 import { warn } from "../log";
@@ -30,7 +30,14 @@ export type ResumeConnect = (
   rt: AgentRuntime,
   run: Run,
   ctx: HandoffContext,
-) => Promise<{ status: "ready" | "needs_secret" | "escalated" | "failed" | "ignored"; mode: string | null; reason: string; liveUrl: string | null; handoffId?: string | null }>;
+) => Promise<{
+  status: "ready" | "needs_secret" | "escalated" | "failed" | "ignored";
+  mode: string | null;
+  reason: string;
+  liveUrl: string | null;
+  handoffId?: string | null;
+  secret?: SecretNeed;
+}>;
 
 /**
  * Human in the loop для браузера: карточка с кнопками «Я доделал» и «Отменить» и ссылкой
@@ -177,7 +184,7 @@ export class Handoffs {
       }
       if (result.status === "ready" || result.status === "needs_secret") {
         const mode = result.mode === "api" || result.mode === "mcp" || result.mode === "browser" ? result.mode : null;
-        await runConnectFollowup(rt, run, chatId, service, { status: result.status, mode });
+        await runConnectFollowup(rt, run, chatId, service, { status: result.status, mode, ...(result.secret ? { secret: result.secret } : {}) });
         return run;
       }
       const text = result.status === "escalated" ? escalationNote(result.reason, result.liveUrl) : result.reason;

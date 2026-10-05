@@ -1,6 +1,6 @@
 import type { InboundEmail, ServicesSnapshot } from "@swarm/contracts";
 import type { DiscoveryResult } from "./discovery";
-import type { OnboardingContext } from "./onboarding";
+import type { OnboardingContext, SecretNeed } from "./onboarding";
 
 export interface KnownRecipeRef {
   slug: string;
@@ -74,15 +74,48 @@ export function connectedFollowupPrompt(service: string, mode: string): string {
 }
 
 /** Вход есть, но рецепт MCP или API ещё без секрета. Не говорить, что подключение готово. */
-export function secretFollowupPrompt(service: string, kind: "mcp" | "api"): string {
-  return [
-    `Вход в «${service}» есть, пароль сохранён. Подключение ещё не готово: нужен ${kind === "mcp" ? "токен MCP" : "ключ API"}.`,
-    kind === "mcp"
-      ? "Выпусти токен в кабинете сервиса, как сказано в его скилле, и запиши через /report (type=credential). Инструменты появятся сами."
-      : "Возьми ключ API, запиши через /report (type=credential) и проверь вызовом.",
+export function secretFollowupPrompt(
+  service: string,
+  kind: "mcp" | "api",
+  need: SecretNeed | null = null,
+  agentEmail: string | null = null,
+): string {
+  const what = kind === "mcp" ? "токен MCP" : "ключ API";
+  const lines = [`Вход в «${service}» есть, пароль сохранён. Подключение ещё не готово: нужен ${what}.`];
+  if (need) {
+    const host = hostOfUrl(need.appUrl);
+    lines.push(
+      `Сервис — ${host ?? service}, кабинет: ${need.appUrl}. Другие сайты и домены к нему не относятся: не ищи его в интернете и не ходи на похожие названия.`,
+    );
+    if (need.hint) lines.push(`Где лежит ${what}: ${need.hint.slice(0, 300)}`);
+    if (need.docsUrl) lines.push(`Документация: ${need.docsUrl} (читать через POST /docs/fetch).`);
+    lines.push(
+      need.cookiesInProfile
+        ? `Открой свой браузер: POST /browser/open с runId, purpose, serviceSlug "${need.slug}" и url "${need.appUrl}" — cookies сохранены, ты уже внутри.`
+        : `Открой свой браузер: POST /browser/open с runId, purpose, serviceSlug "${need.slug}" и url "${need.appUrl}". Если сервис просит войти — почта ${agentEmail ?? "агента"} и пароль из credentials (slug "${need.slug}") через /browser/act.`,
+      `Дальше /browser/observe и /browser/act (поле instruction): настройки аккаунта → раздел API или MCP → выпустить ${what}; значение забери через /browser/extract. Сессию закрой через /browser/close.`,
+      `Запиши секрет: POST /report {"type":"credential","credential":{"slug":"${need.slug}","kind":"${kind}","token":"<значение>","accountEmail":"${agentEmail ?? ""}"}}.${kind === "mcp" ? ` Инструменты mcp_${need.slug}_* появятся сами.` : " Затем проверь ключ вызовом API."}`,
+    );
+  } else {
+    lines.push(
+      kind === "mcp"
+        ? "Выпусти токен в кабинете сервиса, как сказано в его скилле, и запиши через /report (type=credential). Инструменты появятся сами."
+        : "Возьми ключ API, запиши через /report (type=credential) и проверь вызовом.",
+    );
+  }
+  lines.push(
     "Если секрет выпустить не удалось — коротко напиши, что помешало, и остановись. Повторно не регистрируйся.",
     "Когда секрет записан — посмотри задачи и выполни их в самом сервисе, не ответом на письмо. В тексте для человека — только его сервис, без устройства Swarm и без секретов.",
-  ].join("\n");
+  );
+  return lines.join("\n");
+}
+
+function hostOfUrl(url: string): string | null {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
 }
 
 /** Страница сервиса, которую человек может открыть у себя. Живой экран Skyvern сюда не входит. */

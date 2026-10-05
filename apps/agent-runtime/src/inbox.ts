@@ -293,7 +293,7 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
         const service = c.service || onboarding.discovery?.service || "сервис";
         const chatId = await rt.chatIdForRun(run);
         try {
-          await runConnectFollowup(rt, run, chatId, service, { status: engine.status, mode: engine.mode });
+          await runConnectFollowup(rt, run, chatId, service, { status: engine.status, mode: engine.mode, ...(engine.secret ? { secret: engine.secret } : {}) });
         } catch (e) {
           await rt.finishRun(run, "done", `Подключение готово (${engine.mode ?? "browser"}). Задачи не проверены: ${String(e)}`);
         }

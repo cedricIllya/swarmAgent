@@ -188,7 +188,7 @@ function startChatTask(
         if (engine.status === "ready" || engine.status === "needs_secret") {
           const service = classification.service || onboarding.discovery?.service || "сервис";
           try {
-            await runConnectFollowup(rt, run, chatId, service, { status: engine.status, mode: engine.mode });
+            await runConnectFollowup(rt, run, chatId, service, { status: engine.status, mode: engine.mode, ...(engine.secret ? { secret: engine.secret } : {}) });
           } catch (e) {
             if (await rt.isCanceled(run.id)) return;
             const note = `Подключение готово (${engine.mode ?? "browser"}). Задачи не проверены: ${String(e)}`;

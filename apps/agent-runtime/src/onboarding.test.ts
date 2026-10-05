@@ -85,6 +85,30 @@ describe("runConnectFollowup", () => {
     expect(addChat).toHaveBeenCalledWith(expect.objectContaining({ role: "agent", text: phrase, chatId: "chat-1" }));
   });
 
+  it("называет кабинет, slug и путь к токену, чтобы модель не искала сервис наугад", () => {
+    const prompt = secretFollowupPrompt(
+      "Gensite",
+      "mcp",
+      {
+        slug: "gensite",
+        kind: "mcp",
+        appUrl: "https://gensite.ru/dashboard",
+        hint: "Токен gs1 из кабинета: Настройки → MCP.",
+        docsUrl: "https://gensite.ru/docs/mcp",
+        cookiesInProfile: true,
+      },
+      "bot@example.com",
+    );
+    expect(prompt).toContain("gensite.ru");
+    expect(prompt).toContain("https://gensite.ru/dashboard");
+    expect(prompt).toContain('serviceSlug "gensite"');
+    expect(prompt).toContain("Настройки → MCP");
+    expect(prompt).toContain("https://gensite.ru/docs/mcp");
+    expect(prompt).toContain("не ищи его в интернете");
+    expect(prompt).toContain('"slug":"gensite","kind":"mcp"');
+    expect(looksLikeServiceApprovalWait(prompt)).toBe(false);
+  });
+
   it("does not teach the model the phrase that used to open the card", () => {
     const prompt = secretFollowupPrompt("Pneumatic", "api");
     expect(looksLikeServiceApprovalWait(prompt)).toBe(false);

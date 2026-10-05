@@ -54,6 +54,20 @@ export interface EngineResult {
   liveUrl: string | null;
   /** Карточка «нужен человек» уже в чате: вызывающему не надо писать второе сообщение. */
   handoffId: string | null;
+  /** Вход есть, секрета нет: что именно и где доставать, чтобы Hermes не искал кабинет наугад. */
+  secret?: SecretNeed;
+}
+
+export interface SecretNeed {
+  slug: string;
+  kind: "mcp" | "api";
+  /** Страница, на которой вход закончился, — отсюда искать кабинет. */
+  appUrl: string;
+  /** Заметки рецепта или находки поиска: где в кабинете лежит токен. */
+  hint: string | null;
+  docsUrl: string | null;
+  /** Cookies уже в профиле своего браузера: /browser/open продолжит вошедшим. */
+  cookiesInProfile: boolean;
 }
 
 export interface OnboardingInput {
@@ -271,6 +285,7 @@ async function connectInvite(
     decision: ConnectDecision,
     invite: AcceptInviteResult | null,
     ctx: Omit<HandoffContext, "url" | "slug" | "service" | "discovery">,
+    seen: { landedUrl?: string | null; hint?: string | null; docsUrl?: string | null } = {},
   ): Promise<{ invite: AcceptInviteResult | null; engine: EngineResult }> => {
     const handoff = decision.status === "escalated" && (decision.park || (!decision.closeBrowser && ctx.browserSessionId));
     if (handoff) {
@@ -300,8 +315,17 @@ async function connectInvite(
     }
     const engine = toEngine(decision, decision.closeBrowser ? null : ctx.liveUrl);
     if (decision.status === "ready" && (await needsSecret(rt, args, decision.mode))) {
+      const kind = (await recipeKindOf(rt, args)) === "api" ? "api" : "mcp";
       engine.status = "needs_secret";
-      engine.mode = (await recipeKindOf(rt, args)) === "api" ? "api" : "mcp";
+      engine.mode = kind;
+      engine.secret = {
+        slug: args.slug,
+        kind,
+        appUrl: seen.landedUrl || invite?.finalUrl || args.url,
+        hint: seen.hint ?? args.discovery?.api?.howToGetKey ?? null,
+        docsUrl: seen.docsUrl ?? args.discovery?.api?.docsUrl ?? null,
+        cookiesInProfile: invite?.cookiesInProfile ?? false,
+      };
     }
     return { invite, engine };
   };
@@ -438,7 +462,7 @@ async function connectInvite(
         }
         if (decision.closeBrowser) await close();
         await rt.step(run.id, "note", decision.reason);
-        return escalate(decision, invite, handoffCtx);
+        return escalate(decision, invite, handoffCtx, { landedUrl: landed, hint: known?.notes ?? null, docsUrl: sought.docsUrl });
       }
     } catch (e) {
       warn("onboarding", "Skyvern не довёл подключение", { error: String(e) });
@@ -506,12 +530,18 @@ async function connectInvite(
     }
     if (decision.closeBrowser && invite.browserSessionId) await rt.browser.close(invite.browserSessionId);
     await rt.step(run.id, "note", decision.reason);
-    return escalate(decision, invite, {
-      provider: "local",
-      browserSessionId: invite.browserSessionId ?? null,
-      password: invite.password ?? stored ?? null,
-      liveUrl: invite.liveUrl ?? null,
-    });
+    const known = await knownRecipeFor(rt, args).catch(() => null);
+    return escalate(
+      decision,
+      invite,
+      {
+        provider: "local",
+        browserSessionId: invite.browserSessionId ?? null,
+        password: invite.password ?? stored ?? null,
+        liveUrl: invite.liveUrl ?? null,
+      },
+      { landedUrl: invite.finalUrl, hint: known?.notes ?? null },
+    );
   } catch (e) {
     warn("onboarding", "принять приглашение не удалось", { error: String(e) });
     await rt.step(run.id, "error", OWNER_OUTAGE);
@@ -720,11 +750,11 @@ export async function runConnectFollowup(
   run: Run,
   chatId: string,
   service: string,
-  engine: { status: "ready" | "needs_secret"; mode: EngineResult["mode"] },
+  engine: { status: "ready" | "needs_secret"; mode: EngineResult["mode"]; secret?: SecretNeed },
 ): Promise<void> {
   const prompt =
     engine.status === "needs_secret"
-      ? secretFollowupPrompt(service, engine.mode === "api" ? "api" : "mcp")
+      ? secretFollowupPrompt(service, engine.mode === "api" ? "api" : "mcp", engine.secret ?? null, rt.cfg?.email ?? null)
       : connectedFollowupPrompt(service, engine.mode ?? "browser");
   const turn = await rt.think(run, prompt);
   const { text, status } = await finishServiceThink(rt, run, turn);

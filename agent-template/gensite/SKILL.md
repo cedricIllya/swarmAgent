@@ -30,13 +30,14 @@ curl -s -X POST http://127.0.0.1:8787/report -H "Authorization: Bearer $SWARM_RU
   -H "Content-Type: application/json" -d '{"type":"recipe","recipe":{
     "slug":"gensite","name":"Gensite","kind":"mcp","domains":["gensite.ru"],
     "mcp":{"url":"https://gensite.ru/api/mcp","transport":"streamable_http","auth":"bearer","includeTools":[]},
-    "notes":"Токен gs1 из кабинета: Настройки → MCP. Отдельного login в MCP нет.","discoveredBy":null}}'
+    "notes":"Токен gs1 выпускается на https://gensite.ru/dashboard/settings: Кабинет → Настройки → MCP для AI → Выпустить токен. Отдельного login в MCP нет.","discoveredBy":null}}'
 ```
 
 ## Токен
 
 Без токена сервер отвечает 401 «Нужен токен аккаунта». Это не поломка регистрации.
-Токен выпускается в кабинете Gensite: Настройки → MCP. Отдельного `login` в MCP нет.
+Токен выпускается в кабинете Gensite на `https://gensite.ru/dashboard/settings`: Кабинет → Настройки →
+MCP для AI → «Выпустить токен». Действует 30 дней. Отдельного `login` в MCP нет.
 Если карточка «Одобрил, продолжай» уже в чате — токен ещё не выпускай: после неё вход продолжится сам. Карточки нет — ты уже внутри, выпускай токен.
 URL не заменяй на localhost: `command` и `npx` не нужны, это удалённый HTTP MCP.
 
