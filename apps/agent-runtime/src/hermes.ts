@@ -23,6 +23,16 @@ export function hermesSessionCostUsd(session: {
   return positive(session.estimated_cost_usd);
 }
 
+/**
+ * Модель иногда пишет вызов инструмента текстом (`<function_calls>…`, `<tool_call>…`), когда
+ * такого инструмента нет. В чат человеку эта разметка попадать не должна: вызовом она не стала.
+ */
+export function stripToolMarkup(text: string): string {
+  const closed = /<(function_calls|tool_call|invoke)\b[^>]*>[\s\S]*?<\/\1>/g;
+  const open = /<(function_calls|tool_call|invoke)\b[^>]*>[\s\S]*$/;
+  return text.replace(closed, "").replace(open, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function positive(v: unknown): number {
   const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
   return Number.isFinite(n) && n > 0 ? n : 0;
@@ -77,7 +87,7 @@ export class HermesClient {
         usage.costUsd = await this.turnCostUsd(hermesSession);
       }
       return {
-        text: json.choices?.[0]?.message?.content ?? "",
+        text: stripToolMarkup(json.choices?.[0]?.message?.content ?? ""),
         model: json.model ?? args.model,
         citations: [],
         usedFallback: false,

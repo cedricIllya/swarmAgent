@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { HermesClient, hermesSessionCostUsd } from "./hermes";
+import { HermesClient, hermesSessionCostUsd, stripToolMarkup } from "./hermes";
 import type { OpenRouterClient } from "./openrouter";
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -24,6 +24,20 @@ describe("hermesSessionCostUsd", () => {
     expect(hermesSessionCostUsd({ actual_cost_usd: 1.5, estimated_cost_usd: 1.2 })).toBe(1.5);
     expect(hermesSessionCostUsd({ actual_cost_usd: 0, estimated_cost_usd: 0.42 })).toBe(0.42);
     expect(hermesSessionCostUsd({})).toBe(0);
+  });
+});
+
+describe("stripToolMarkup", () => {
+  it("вырезает текстовые «вызовы инструментов», обычный текст оставляет", () => {
+    const text = [
+      "Получено уведомление. Перехожу к подтверждению.",
+      '<function_calls> <invoke name="mcp_x_step"> <parameter name="runId">r1</parameter> </invoke> </function_calls>',
+      "Готово.",
+      "<tool_call>{\"name\":\"x\"}</tool_call>",
+    ].join("\n");
+    expect(stripToolMarkup(text)).toBe("Получено уведомление. Перехожу к подтверждению.\n\nГотово.");
+    expect(stripToolMarkup("Начинаю. <function_calls><invoke name=\"a\">")).toBe("Начинаю.");
+    expect(stripToolMarkup("пусто")).toBe("пусто");
   });
 });
 
