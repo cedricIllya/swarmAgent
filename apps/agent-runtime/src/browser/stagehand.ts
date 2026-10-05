@@ -32,6 +32,7 @@ type LocalBrowserHandle = Awaited<ReturnType<typeof localBrowser.launch>>;
 const PENDING_CODE_TTL_MS = 10 * 60 * 1000;
 /** Один шаг Stagehand: модель плюс действие на странице. Зависший шаг не держит задачу вечно. */
 const STEP_TIMEOUT_MS = 2 * 60 * 1000;
+const CLOSE_TIMEOUT_MS = 10 * 1000;
 
 async function withTimeout<T>(what: string, ms: number, p: Promise<T>): Promise<T> {
   let timer: NodeJS.Timeout | null = null;
@@ -353,13 +354,14 @@ export class ManagedBrowserSession {
     if (this.waiter) {
       this.waiter.resolve({ kind: "code", value: "" });
     }
+    // Зависший шаг не должен держать и закрытие: иначе остановка задачи никогда не завершится.
     try {
-      await this.stagehand?.close();
+      if (this.stagehand) await withTimeout("stagehand.close", CLOSE_TIMEOUT_MS, this.stagehand.close());
     } catch (e) {
       warn("browser", "stagehand.close", { error: String(e) });
     }
     try {
-      await this.browser?.close();
+      if (this.browser) await withTimeout("browser.close", CLOSE_TIMEOUT_MS, this.browser.close());
     } catch {
       // процесс Chrome уже мог завершиться
     }

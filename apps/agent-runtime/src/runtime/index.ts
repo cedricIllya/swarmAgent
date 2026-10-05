@@ -11,7 +11,7 @@ import { redactInternal } from "../redact";
 import { ensureRunId } from "../service-work";
 import { recordUsage, turnDetails, type TaskRef } from "../usage";
 import type { RuntimeConfig } from "../config";
-import { log } from "../log";
+import { log, warn } from "../log";
 import { Approvals } from "./approvals";
 import { BrowserControl } from "./browser";
 import { Handoffs } from "./handoffs";
@@ -141,7 +141,11 @@ export class AgentRuntime {
 
     this.aborts.get(runId)?.abort();
     this.skyvern?.cancelForRun(runId);
-    await this.browser.closeForRun(runId);
+    try {
+      await this.browser.closeForRun(runId);
+    } catch (e) {
+      warn("run", "браузер задачи не закрылся при остановке", { id: runId, error: String(e) });
+    }
 
     const approvals = await this.store.listApprovals();
     const keep = approvals.filter((p) => p.runId !== runId);
