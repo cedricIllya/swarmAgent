@@ -12,12 +12,11 @@ import {
 } from "./prompts";
 import type { AgentRuntime } from "./runtime";
 import { hostOf } from "./domains";
+import { coerceChatClassification } from "./invite-signal";
 import { parkSource, prepareOnboarding, runConnectFollowup } from "./onboarding";
-import { warn } from "./log";
+import { log, warn } from "./log";
 import { redactInternal } from "./redact";
 import { recordUsage } from "./usage";
-
-const TASK: ChatClassification = { kind: "task", service: null, serviceDomain: null };
 
 /**
  * Текст, с которого задача началась. Повтор не пишет второе сообщение человека,
@@ -38,7 +37,20 @@ export function chatRetrySource(messages: ChatMessage[], runId: string): string 
   return null;
 }
 
+function parseChatClassification(text: string): ChatClassification {
+  const raw = JSON.parse(text) as Partial<ChatClassification>;
+  if (raw.kind !== "invite" && raw.kind !== "credential" && raw.kind !== "task") {
+    throw new SyntaxError("классификация без kind");
+  }
+  return {
+    kind: raw.kind,
+    service: typeof raw.service === "string" && raw.service ? raw.service : null,
+    serviceDomain: typeof raw.serviceDomain === "string" && raw.serviceDomain ? raw.serviceDomain : null,
+  };
+}
+
 async function classifyChat(rt: AgentRuntime, message: string, links: string[]): Promise<ChatClassification> {
+  let parsed: ChatClassification | null = null;
   try {
     const r = await rt.openRouter.chat(
       [{ role: "user", content: classifyChatPrompt(message, links) }],
@@ -46,11 +58,15 @@ async function classifyChat(rt: AgentRuntime, message: string, links: string[]):
       rt.model,
     );
     await recordUsage(rt.store, { taskId: "chat", taskTitle: "Разбор чата" }, "classify.chat", "runtime", r);
-    return JSON.parse(r.text) as ChatClassification;
+    parsed = parseChatClassification(r.text);
   } catch (e) {
-    warn("chat", "классификация не удалась, считаем задачей", { error: String(e) });
-    return TASK;
+    warn("chat", "классификация не удалась", { error: String(e) });
   }
+  const result = coerceChatClassification(parsed, message, links);
+  if (result.kind === "invite" && parsed?.kind !== "invite") {
+    log("chat", "сообщение похоже на приглашение, запускаю онбординг", { service: result.service });
+  }
+  return result;
 }
 
 /** Чат на карточке: отдельная история и сессия Hermes на каждый чат. */

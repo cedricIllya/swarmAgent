@@ -17,7 +17,8 @@ import {
 } from "./connect";
 import { generatePassword } from "./browser/invite";
 import { mcpToolNames, type DiscoveryResult } from "./discovery";
-import { hostOf, isNoiseDomain, matchRecipe, pickServiceDomain, rootDomain, sameBrand, slugFor } from "./domains";
+import { hostOf, matchRecipe, pickServiceDomain, rootDomain, slugFor } from "./domains";
+import { pickInviteLink } from "./invite-signal";
 import { connectedFollowupPrompt, humanPage, secretFollowupPrompt, type KnownRecipeRef } from "./prompts";
 import type { AgentRuntime } from "./runtime";
 import type { HandoffContext, ResumeConnect } from "./runtime/handoffs";
@@ -59,19 +60,7 @@ export interface OnboardingInput {
   extraHosts?: string[];
 }
 
-/** Ссылка, по которой принимают приглашение: с домена сервиса, лучше с invite/join в пути. */
-export function pickInviteLink(links: string[], domain: string | null): string | null {
-  const clean = links.filter((l) => /^https?:\/\//i.test(l) && !isNoiseDomain(hostOf(l)));
-  const own = domain ? clean.filter((l) => sameBrand(hostOf(l), domain)) : clean;
-  const pool = own.length ? own : clean;
-  const score = (l: string) => {
-    const path = l.toLowerCase();
-    if (/invit|join|accept|welcome|signup|sign-up|register|onboard/.test(path)) return 2;
-    if (/unsubscribe|privacy|terms|help|support|blog|pricing/.test(path)) return -1;
-    return 0;
-  };
-  return [...pool].sort((a, b) => score(b) - score(a))[0] ?? null;
-}
+export { pickInviteLink } from "./invite-signal";
 
 export async function prepareOnboarding(rt: AgentRuntime, run: Run, input: OnboardingInput): Promise<OnboardingContext> {
   const hosts = [...input.links.map(hostOf), ...(input.extraHosts ?? []), input.domain ?? ""].filter(Boolean);

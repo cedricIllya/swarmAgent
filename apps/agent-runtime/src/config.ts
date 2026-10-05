@@ -12,6 +12,8 @@ export interface RuntimeConfig {
   email: string;
   ownerEmail: string | null;
   model: string;
+  /** Запасная модель для коротких решений, когда основная перегружена или молчит. */
+  fallbackModel: string;
   autonomous: boolean;
   runtimeToken: string;
   controlPlaneUrl: string;
@@ -31,6 +33,7 @@ export function loadConfig(): RuntimeConfig {
     email: need("AGENT_EMAIL"),
     ownerEmail: process.env.OWNER_EMAIL ?? null,
     model: process.env.AGENT_MODEL ?? "openai/gpt-4.1-mini",
+    fallbackModel: process.env.AGENT_FALLBACK_MODEL ?? "openai/gpt-4.1-mini",
     autonomous: process.env.AGENT_AUTONOMOUS === "true",
     runtimeToken: need("RUNTIME_TOKEN"),
     controlPlaneUrl: process.env.CONTROL_PLANE_URL ?? "",

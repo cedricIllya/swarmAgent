@@ -44,6 +44,7 @@ openssl rand -base64 32
 | --- | --- |
 | `AGENT_ID`, `AGENT_EMAIL`, `RUNTIME_TOKEN` | Обязательны. |
 | `AGENT_NAME`, `AGENT_MODEL`, `AGENT_AUTONOMOUS` | Имя, модель, `true`/`false`. |
+| `AGENT_FALLBACK_MODEL` | Запасная модель для разбора писем и чата, когда основная перегружена (429) или отвечает пусто. По умолчанию `openai/gpt-4.1-mini`. |
 | `OWNER_EMAIL` | Куда слать вопрос одобрения. |
 | `OPENROUTER_API_KEY` | Обязателен. |
 | `CONTROL_PLANE_URL` | Куда runtime сдаёт письма и рецепты. |

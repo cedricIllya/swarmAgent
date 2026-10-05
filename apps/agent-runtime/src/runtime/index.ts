@@ -39,7 +39,7 @@ export class AgentRuntime {
     this.store = new Store(cfg.dataDir);
     this.model = cfg.model;
     this.autonomous = cfg.autonomous;
-    this.openRouter = new OpenRouterClient(cfg.openRouterApiKey, cfg.model);
+    this.openRouter = new OpenRouterClient(cfg.openRouterApiKey, cfg.model, fetch, { fallbackModels: [cfg.fallbackModel] });
     this.hermes = new HermesClient({ apiUrl: cfg.hermesApiUrl, apiKey: cfg.hermesApiKey, fallback: this.openRouter });
     this.controlPlane = new ControlPlaneClient(cfg.controlPlaneUrl, cfg.agentId, cfg.runtimeToken);
     this.skyvern = cfg.skyvernApiKey ? new SkyvernClient(cfg.skyvernApiKey, this.store, cfg.email) : null;

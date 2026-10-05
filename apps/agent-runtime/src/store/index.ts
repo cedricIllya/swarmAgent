@@ -149,7 +149,7 @@ export class Store {
 
   // Deferred emails: пришли, пока агент был в браузере
 
-  async deferEmail(email: InboundEmail): Promise<void> {
+  async deferEmail(email: InboundEmail & { classifyAttempts?: number }): Promise<void> {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await writeJson(this.dir("deferred-emails", `${id}.json`), email);
   }

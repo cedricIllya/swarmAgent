@@ -1,5 +1,7 @@
 import type { InboundEmail } from "@swarm/contracts";
 import { classifyReply, findDigitCode, matchesThread } from "./approval";
+import { emailInviteFallback } from "./invite-signal";
+import { isTransientModelError } from "./openrouter";
 import { parkSource, prepareOnboarding, runConnectFollowup } from "./onboarding";
 import { looksLikeServiceApprovalWait, serviceApprovalGranted } from "./connect";
 import {
@@ -151,16 +153,36 @@ async function handleWhileInBrowser(rt: AgentRuntime, email: InboundEmail): Prom
   log("inbox", "письмо отложено до конца работы в браузере", { subject: email.subject });
 }
 
+const CLASSIFY_ATTEMPTS = 3;
+
+function classifyAttempts(email: InboundEmail): number {
+  const n = (email as { classifyAttempts?: unknown }).classifyAttempts;
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: EmailClassification | null = null): Promise<void> {
   let c: EmailClassification;
   try {
     c = known ?? (await classifyEmail(rt, email, "classify.email"));
   } catch (e) {
-    warn("inbox", "классификация не удалась", { error: String(e) });
-    const run = await rt.createRun("email", email.subject || "Письмо", email.messageId);
-    await rt.step(run.id, "error", "модель не разобрала письмо");
-    await rt.finishRun(run, "escalated", "письмо не разобрано: модель не вернула ответ");
-    return;
+    const fallback = emailInviteFallback(email.subject, email.replyText || email.text, email.links);
+    if (fallback) {
+      log("inbox", "модель не разобрала письмо, ссылка похожа на приглашение", {
+        service: fallback.service,
+        domain: fallback.serviceDomain,
+      });
+      c = fallback;
+    } else if (isTransientModelError(e) && classifyAttempts(email) + 1 < CLASSIFY_ATTEMPTS) {
+      await rt.store.deferEmail({ ...email, classifyAttempts: classifyAttempts(email) + 1 });
+      log("inbox", "разбор письма отложен", { subject: email.subject, error: String(e) });
+      return;
+    } else {
+      warn("inbox", "классификация не удалась", { error: String(e) });
+      const run = await rt.createRun("email", email.subject || "Письмо", email.messageId);
+      await rt.step(run.id, "error", "модель не разобрала письмо");
+      await rt.finishRun(run, "escalated", "письмо не разобрано: модель не вернула ответ");
+      return;
+    }
   }
   log("inbox", "письмо классифицировано", { kind: c.kind, service: c.service });
 
@@ -221,6 +243,20 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
   }
 }
 
+function parseEmailClassification(text: string): EmailClassification {
+  const raw = JSON.parse(text) as Partial<EmailClassification>;
+  if (raw.kind !== "invite" && raw.kind !== "task" && raw.kind !== "verification" && raw.kind !== "notification" && raw.kind !== "other") {
+    throw new SyntaxError("классификация без kind");
+  }
+  return {
+    kind: raw.kind,
+    service: typeof raw.service === "string" && raw.service ? raw.service : null,
+    serviceDomain: typeof raw.serviceDomain === "string" && raw.serviceDomain ? raw.serviceDomain : null,
+    summary: typeof raw.summary === "string" ? raw.summary : "",
+    hasLoginLink: raw.hasLoginLink === true,
+  };
+}
+
 async function classifyEmail(rt: AgentRuntime, email: InboundEmail, action: string): Promise<EmailClassification> {
   try {
     const r = await rt.openRouter.chat(
@@ -229,7 +265,7 @@ async function classifyEmail(rt: AgentRuntime, email: InboundEmail, action: stri
       rt.model,
     );
     await recordUsage(rt.store, { taskId: "inbox", taskTitle: "Разбор почты" }, action, "runtime", r);
-    return JSON.parse(r.text) as EmailClassification;
+    return parseEmailClassification(r.text);
   } catch (e) {
     warn("inbox", "классификация не удалась", { error: String(e) });
     throw e;
