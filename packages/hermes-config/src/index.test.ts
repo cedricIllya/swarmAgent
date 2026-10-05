@@ -83,6 +83,10 @@ describe("renderConfigYaml", () => {
     expect(doc.mcp_servers["trello"]).toBeUndefined();
     expect(doc.mcp_servers["open"]).toEqual({ url: "https://open.test/mcp" });
     expect(doc.approvals).toEqual({ mode: "off", unattended_mode: "approve", cron_mode: "approve" });
+    // Для YAML 1.1 (PyYAML в Hermes) голое off — булево. Кавычки должны пережить и перезапись mcp_servers.
+    expect(yaml).toContain('mode: "off"');
+    const rewritten = replaceMcpServers(yaml, { generatedAt: "t2", recipes: [], credentials: [] }, false);
+    expect(rewritten).toContain('mode: "off"');
   });
 
   it("replaces only mcp_servers and keeps the rest of config.yaml", () => {

@@ -1,5 +1,5 @@
 import type { ServicesSnapshot } from "@swarm/contracts";
-import { parse, stringify } from "yaml";
+import { Document, parse, Scalar } from "yaml";
 
 /** Где на машине агента живёт всё его состояние. */
 export const HERMES_HOME = "/opt/data";
@@ -55,7 +55,23 @@ export function replaceMcpServers(configYaml: string, services: ServicesSnapshot
   if (!doc || typeof doc !== "object" || Array.isArray(doc)) return configYaml;
   const next = doc as Record<string, unknown>;
   next["mcp_servers"] = renderMcpServers(services, skyvernEnabled);
-  return `# Сгенерировано Swarm Agent. Правки руками перепишутся при смене модели.\n${stringify(next)}`;
+  return configYamlText(next);
+}
+
+/**
+ * Hermes читает YAML как 1.1: голое `off` для него — булево false, и режим одобрений
+ * слетает в значение по умолчанию. Строковые режимы пишем в кавычках.
+ */
+function configYamlText(doc: Record<string, unknown>): string {
+  const y = new Document(doc);
+  const approvals = doc["approvals"];
+  if (approvals && typeof approvals === "object") {
+    for (const key of Object.keys(approvals)) {
+      const node = y.getIn(["approvals", key], true);
+      if (node instanceof Scalar && typeof node.value === "string") node.type = Scalar.QUOTE_DOUBLE;
+    }
+  }
+  return `# Сгенерировано Swarm Agent. Правки руками перепишутся при смене модели.\n${y.toString()}`;
 }
 
 /**
@@ -91,7 +107,7 @@ export function renderConfigYaml(input: HermesConfigInput): string {
     },
   };
 
-  return `# Сгенерировано Swarm Agent. Правки руками перепишутся при смене модели.\n${stringify(doc)}`;
+  return configYamlText(doc);
 }
 
 export interface HermesEnvInput {
