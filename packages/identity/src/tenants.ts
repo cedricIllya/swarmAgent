@@ -1,4 +1,4 @@
-import { and, eq, schema, type Db } from "@swarm/db";
+import { and, eq, inArray, schema, sql, type Db } from "@swarm/db";
 
 export interface TenantView {
   id: string;
@@ -75,4 +75,33 @@ export async function assertMembership(db: Db, userId: string, tenantId: string)
   const hit = rows[0];
   if (!hit) throw new Error("Нет доступа к тенанту");
   return hit;
+}
+
+/**
+ * Тенанты, где пользователь — единственный участник. Уходит он — пространство
+ * некому оставить, его сносим целиком. Общие тенанты не трогаем: оттуда человек просто выходит.
+ */
+export async function listSoleMemberTenants(db: Db, userId: string): Promise<string[]> {
+  const mine = await db
+    .select({ tenantId: schema.memberships.tenantId })
+    .from(schema.memberships)
+    .where(eq(schema.memberships.userId, userId));
+  if (mine.length === 0) return [];
+
+  const counts = await db
+    .select({ tenantId: schema.memberships.tenantId, members: sql<number>`count(*)::int` })
+    .from(schema.memberships)
+    .where(
+      inArray(
+        schema.memberships.tenantId,
+        mine.map((m) => m.tenantId),
+      ),
+    )
+    .groupBy(schema.memberships.tenantId);
+  return counts.filter((c) => c.members === 1).map((c) => c.tenantId);
+}
+
+/** Каскадом уходят memberships, agents и service_credentials. */
+export async function deleteTenant(db: Db, tenantId: string): Promise<void> {
+  await db.delete(schema.tenants).where(eq(schema.tenants.id, tenantId));
 }

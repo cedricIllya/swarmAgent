@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError } from "better-auth/api";
 import { getDb, newId, schema } from "@swarm/db";
 import { ensurePersonalTenant } from "./tenants";
 
@@ -9,12 +10,19 @@ export interface AuthOptions {
   databaseUrl?: string | undefined;
   /** Доставить ссылку сброса пароля. `url` ведёт на /api/auth и редиректит на страницу нового пароля. */
   sendResetPassword?: (data: { email: string; name: string; url: string }) => Promise<void>;
+  /**
+   * Снести всё, что принадлежит пользователю, до удаления его записи: тенанты, агентов, машины.
+   * Если бросит исключение — пользователь остаётся, а текст ошибки уходит клиенту.
+   */
+  beforeDeleteUser?: (user: { id: string; email: string; name: string }) => Promise<void>;
 }
 
 /**
  * better-auth с email/паролем поверх таблиц из @swarm/db.
  * При регистрации пользователю сразу заводится личный тенант,
  * чтобы главная открывалась без лишних шагов.
+ * Удаление аккаунта — через /delete-user без повторного пароля:
+ * freshAge 0, хватает текущей сессии.
  */
 export function createAuth(opts: AuthOptions) {
   const db = getDb(opts.databaseUrl);
@@ -47,8 +55,25 @@ export function createAuth(opts: AuthOptions) {
         : {}),
     },
     session: {
+      // Иначе /delete-user просит пароль, когда сессии больше суток.
+      freshAge: 0,
       additionalFields: {
         activeTenantId: { type: "string", required: false, input: false },
+      },
+    },
+    user: {
+      deleteUser: {
+        enabled: true,
+        beforeDelete: async (user) => {
+          if (!opts.beforeDeleteUser) return;
+          try {
+            await opts.beforeDeleteUser({ id: user.id, email: user.email, name: user.name });
+          } catch (e) {
+            throw new APIError("INTERNAL_SERVER_ERROR", {
+              message: e instanceof Error ? e.message : String(e),
+            });
+          }
+        },
       },
     },
     databaseHooks: {

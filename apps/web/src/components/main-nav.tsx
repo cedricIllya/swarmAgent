@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const ITEMS = [
   { href: "/", label: "Агенты", match: (p: string) => p === "/" || p.startsWith("/agents") },
   { href: "/services", label: "Сервисы", match: (p: string) => p.startsWith("/services") },
+  { href: "/settings", label: "Настройки", match: (p: string) => p.startsWith("/settings") },
 ] as const;
 
 export function MainNav() {

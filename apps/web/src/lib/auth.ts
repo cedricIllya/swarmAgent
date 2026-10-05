@@ -1,6 +1,7 @@
 import { createAuth, type Auth } from "@swarm/identity";
 import { sendViaMailgun } from "@swarm/mail";
 import { env } from "@/env";
+import { purgeUserSpaces } from "./delete-account";
 
 let cached: Auth | null = null;
 
@@ -32,6 +33,7 @@ export function auth(): Auth {
       baseURL: env.appUrl,
       databaseUrl: env.databaseUrl,
       sendResetPassword,
+      beforeDeleteUser: (user) => purgeUserSpaces(user.id),
     });
   }
   return cached;
