@@ -8,12 +8,12 @@ primary_region = "ams"
 [env]
   PORT = "3000"
   NODE_ENV = "production"
-  APP_URL = "https://swarm-control-plane.fly.dev"
+  APP_URL = "https://swarm.cedricillya.online"
   # Receiving-домен Mailgun. MX, SPF и DKIM стоят у регистратора (reg.ru).
   AGENTS_DOMAIN = "cedricillya.online"
   # Аккаунт Mailgun живёт в US: с дефолтным eu API отвечает пустотой.
   MAILGUN_REGION = "us"
-  FLY_ORG = "anton-seidler"
+  FLY_ORG = "copyboy"
   FLY_REGION = "ams"
 
 [http_service]

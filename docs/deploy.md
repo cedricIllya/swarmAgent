@@ -24,7 +24,7 @@ fly tokens create deploy -a swarm-agent-runtime -n "github-actions swarm-agent-r
   | gh secret set FLY_RUNTIME_API_TOKEN --repo cedricIllya/swarmAgent
 ```
 
-`FLY_API_TOKEN` в GitHub — deploy-токен `swarm-control-plane`. Секрет с тем же именем на машине Fly — токен организации `anton-seidler`: им control plane создаёт приложения агентов. Список и отзыв токенов: `fly tokens list`, `fly tokens revoke <id>`.
+`FLY_API_TOKEN` в GitHub — deploy-токен `swarm-control-plane`. Секрет с тем же именем на машине Fly — токен организации `copyboy`: им control plane создаёт приложения агентов. Список и отзыв токенов: `fly tokens list`, `fly tokens revoke <id>`.
 
 Ручная выкладка с своей машины:
 
@@ -46,13 +46,13 @@ fly machine update <id> --schedule hourly -a swarm-control-plane -y
 
 ## Что уже поднято
 
-Организация Fly `personal` не создавала ресурсы без карты, поэтому приложение и база живут в организации **anton-seidler**.
+Приложение, образ runtime и Managed Postgres живут в организации **copyboy**. Агенты создаются туда же: `FLY_ORG` в `fly.toml`.
 
 | | |
 | --- | --- |
 | Сайт | https://swarm-control-plane.fly.dev |
 | Приложение | `swarm-control-plane` |
-| База | Managed Postgres `swarm-db`, кластер `z23750vm5p4096d1`, план Basic, регион `ams` |
+| База | Managed Postgres `swarm-db`, кластер `kyzl60xz8gyrpj9g`, план Basic, регион `ams` |
 | Домен агентов | `cedricillya.online`, DNS у reg.ru (`ns1.reg.ru`, `ns2.reg.ru`) |
 | Секреты приложения | `DATABASE_URL`, `AUTH_SECRET`, `SECRETS_KEY`, `OPENROUTER_API_KEY`, `FLY_API_TOKEN`; отложены (`--stage`) `MAILGUN_API_KEY`, `MAILGUN_SIGNING_KEY` |
 
@@ -133,13 +133,13 @@ fly secrets set -a swarm-control-plane AUTH_SECRET="$(openssl rand -base64 32)"
 Для него отдельный файл `fly.runtime.toml`: в нём нет HTTP-сервиса и нет release command. Сборка идёт удалённо, машина не запускается.
 
 ```bash
-fly apps create swarm-agent-runtime --org anton-seidler
+fly apps create swarm-agent-runtime --org copyboy
 fly deploy --build-only --push --image-label latest -c fly.runtime.toml
 ```
 
 Не подставляйте сюда `fly.toml` control plane. Без `--build-only` эта команда выложила бы сайт заново, а не только образ агента. Метка `latest` совпадает с `AGENT_RUNTIME_IMAGE` по умолчанию.
 
-Дальше control plane сможет создавать машины агентов, когда в секретах появится `FLY_API_TOKEN` организации `anton-seidler` (`fly tokens create org`). Deploy-токена одного приложения недостаточно: код создаёт новое приложение на каждого агента.
+Дальше control plane сможет создавать машины агентов, когда в секретах появится `FLY_API_TOKEN` организации `copyboy` (`fly tokens create org -o copyboy`). Deploy-токена одного приложения недостаточно: код создаёт новое приложение на каждого агента.
 
 Hermes берётся готовым образом `nousresearch/hermes-agent:latest`. Его отдельно собирать не нужно.
 

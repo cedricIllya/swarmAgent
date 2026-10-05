@@ -21,7 +21,7 @@ openssl rand -base64 32
 | `AGENTS_DOMAIN` | да, при создании агента | Receiving-домен. У тенанта может быть свой, колонка `agents_domain`. |
 | `OPENROUTER_API_KEY` | да, при создании агента | Принимается и имя `OPEN_ROUTER_API_KEY`. |
 | `FLY_API_TOKEN` | да, чтобы поднять машину | Токен организации: создание приложений, не deploy-токен одного приложения. |
-| `FLY_ORG` | нет | По умолчанию `personal`. На текущем деплое — `anton-seidler`. |
+| `FLY_ORG` | нет | По умолчанию `personal`. На текущем деплое — `copyboy`. |
 | `FLY_REGION` | нет | По умолчанию `ams`. |
 | `AGENT_RUNTIME_IMAGE` | нет | По умолчанию `registry.fly.io/swarm-agent-runtime:latest`. |
 | `HERMES_IMAGE` | нет | По умолчанию `nousresearch/hermes-agent:latest`. |
