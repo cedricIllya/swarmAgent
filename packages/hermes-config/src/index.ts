@@ -19,18 +19,11 @@ export interface HermesConfigInput {
 /**
  * Блок `mcp_servers` для Hermes. Ключи — по его спецификации:
  * `tools.include`, `transport: sse` только для SSE, без `description`.
- * Skyvern — единственный MCP «из коробки».
+ * Skyvern в MCP не попадает: в контейнере Hermes нет его CLI, а вход и регистрацию
+ * runtime делает сам через `/invite/accept` и `/skyvern/login`.
  */
-export function renderMcpServers(services: ServicesSnapshot, skyvernEnabled: boolean): Record<string, unknown> {
+export function renderMcpServers(services: ServicesSnapshot, _skyvernEnabled: boolean): Record<string, unknown> {
   const mcpServers: Record<string, unknown> = {};
-
-  if (skyvernEnabled) {
-    mcpServers["skyvern"] = {
-      command: "skyvern",
-      args: ["run", "mcp"],
-      env: { SKYVERN_API_KEY: "${SKYVERN_API_KEY}" },
-    };
-  }
 
   for (const recipe of services.recipes) {
     if (recipe.kind !== "mcp" || !recipe.mcp) continue;

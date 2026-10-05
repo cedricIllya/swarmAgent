@@ -5,8 +5,13 @@ import { useEffect, useMemo, useState } from "react";
 export interface ModelOption {
   id: string;
   name: string;
-  promptPerM: number;
-  completionPerM: number;
+  promptPerM: number | null;
+  completionPerM: number | null;
+}
+
+function priceLabel(m: ModelOption): string {
+  if (m.promptPerM === null || m.completionPerM === null) return "цена зависит от маршрута";
+  return `$${m.promptPerM.toFixed(2)} / $${m.completionPerM.toFixed(2)} за 1M`;
 }
 
 /** Селект моделей OpenRouter с поиском. Список грузится с `/api/models`. */
@@ -57,7 +62,7 @@ export function ModelSelect({
         {!shown.some((m) => m.id === value) && <option value={value}>{value}</option>}
         {shown.map((m) => (
           <option key={m.id} value={m.id}>
-            {m.name} — ${m.promptPerM.toFixed(2)} / ${m.completionPerM.toFixed(2)} за 1M
+            {m.name} — {priceLabel(m)}
           </option>
         ))}
       </select>

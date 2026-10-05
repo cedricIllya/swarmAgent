@@ -45,7 +45,7 @@ export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string;
           className="input mono"
           value={localPart}
           onChange={(e) => setLocalPart(e.target.value)}
-          pattern="[A-Za-z0-9._-]+"
+          pattern="[A-Za-z0-9._\-]+"
           placeholder="только буквы, цифры, точки, дефисы, подчёркивания"
         />
       </div>

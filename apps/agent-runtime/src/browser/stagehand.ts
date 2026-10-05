@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { Stagehand, localBrowser } from "@browserbasehq/stagehand";
 import type { BrowserSession } from "@swarm/contracts";
@@ -29,6 +30,44 @@ export interface BrowserDeps {
 type LocalBrowserHandle = Awaited<ReturnType<typeof localBrowser.launch>>;
 
 const PENDING_CODE_TTL_MS = 10 * 60 * 1000;
+/** Один шаг Stagehand: модель плюс действие на странице. Зависший шаг не держит задачу вечно. */
+const STEP_TIMEOUT_MS = 2 * 60 * 1000;
+
+async function withTimeout<T>(what: string, ms: number, p: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  const bomb = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what}: шаг браузера не завершился за ${Math.round(ms / 1000)} с`)), ms);
+  });
+  try {
+    return await Promise.race([p, bomb]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+let cachedUserAgent: string | null | undefined;
+
+/**
+ * Headless Chromium представляется как HeadlessChrome, и часть сервисов отдаёт ему пустую
+ * страницу. Подставляем обычный UA той же мажорной версии.
+ */
+export function desktopUserAgent(versionLine: string): string | null {
+  const m = /(\d+)\.\d+\.\d+\.\d+/.exec(versionLine);
+  if (!m) return null;
+  return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${m[1]}.0.0.0 Safari/537.36`;
+}
+
+function userAgentArg(executablePath: string): string[] {
+  if (cachedUserAgent === undefined) {
+    try {
+      cachedUserAgent = desktopUserAgent(execFileSync(executablePath, ["--version"], { encoding: "utf8", timeout: 10_000 }));
+    } catch (e) {
+      warn("browser", "версия Chromium не прочиталась", { error: String(e) });
+      cachedUserAgent = null;
+    }
+  }
+  return cachedUserAgent ? [`--user-agent=${cachedUserAgent}`] : [];
+}
 
 /** Ожидание кода из письма: одна сессия — один ожидающий. */
 interface CodeWaiter {
@@ -128,13 +167,15 @@ export class ManagedBrowserSession {
     for (const name of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
       await rm(path.join(this.profile, name), { force: true }).catch(() => undefined);
     }
+    const executablePath = chromeExecutable();
     this.browser = await localBrowser.launch({
       headless: true,
-      executablePath: chromeExecutable(),
+      executablePath,
       userDataDir: this.profile,
       preserveUserDataDir: true,
       chromiumSandbox: process.getuid?.() !== 0,
-      args: ["--disable-dev-shm-usage", "--disable-gpu", "--no-first-run", "--no-default-browser-check"],
+      viewport: { width: 1280, height: 800 },
+      args: ["--disable-dev-shm-usage", "--disable-gpu", "--no-first-run", "--no-default-browser-check", ...userAgentArg(executablePath)],
     });
     this.stagehand = await Stagehand.create({
       browser: this.browser,
@@ -204,7 +245,7 @@ export class ManagedBrowserSession {
 
   async act(instruction: string): Promise<{ success: boolean; message: string }> {
     try {
-      const r = (await this.sh().act(instruction)) as { success?: boolean; message?: string };
+      const r = (await withTimeout("act", STEP_TIMEOUT_MS, this.sh().act(instruction))) as { success?: boolean; message?: string };
       const out = { success: r.success ?? true, message: r.message ?? "" };
       await this.action({ type: "act", instruction, ...out });
       return out;
@@ -233,15 +274,17 @@ export class ManagedBrowserSession {
 
   async extract(instruction: string, schema?: unknown): Promise<unknown> {
     const zod = toExtractSchema(schema);
-    const r = (await (zod
-      ? this.sh().extract(instruction, zod as never)
-      : this.sh().extract(instruction))) as { data?: unknown };
+    const r = (await withTimeout(
+      "extract",
+      STEP_TIMEOUT_MS,
+      zod ? this.sh().extract(instruction, zod as never) : this.sh().extract(instruction),
+    )) as { data?: unknown };
     await this.action({ type: "extract", instruction, result: r.data });
     return r.data;
   }
 
   async observe(instruction: string): Promise<unknown> {
-    const r = (await this.sh().observe(instruction)) as { data?: unknown };
+    const r = (await withTimeout("observe", STEP_TIMEOUT_MS, this.sh().observe(instruction))) as { data?: unknown };
     await this.action({ type: "observe", instruction, result: r.data });
     return r.data;
   }

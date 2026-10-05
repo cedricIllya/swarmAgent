@@ -1,6 +1,46 @@
 import { describe, expect, it, vi } from "vitest";
-import { SkyvernClient, interpretInviteOutput, inviteTaskPrompt, skyvernInboxContent } from "./browser/skyvern";
+import { SkyvernClient, countCaptchaFailures, interpretInviteOutput, inviteTaskPrompt, skyvernInboxContent } from "./browser/skyvern";
 import type { Store } from "./store";
+
+function captchaStep(status: string, success: boolean | null) {
+  return {
+    status,
+    output: {
+      actions_and_results: success === null ? [] : [[{ action_type: "solve_captcha" }, [{ success }]]],
+    },
+  };
+}
+
+describe("countCaptchaFailures", () => {
+  it("counts trailing failed solve_captcha steps and ignores the running retry", () => {
+    const steps = [
+      { status: "completed", output: { actions_and_results: [[{ action_type: "click" }, [{ success: true }]]] } },
+      captchaStep("failed", false),
+      captchaStep("failed", false),
+      captchaStep("running", null),
+    ];
+    expect(countCaptchaFailures(steps as never)).toBe(2);
+  });
+
+  it("is zero when the captcha was solved or there was none", () => {
+    expect(countCaptchaFailures([captchaStep("failed", false), captchaStep("completed", true)] as never)).toBe(0);
+    expect(countCaptchaFailures([{ status: "completed", output: { actions_and_results: [[{ action_type: "click" }, [{ success: true }]]] } }] as never)).toBe(0);
+    expect(countCaptchaFailures([])).toBe(0);
+  });
+});
+
+describe("interpretInviteOutput with a captcha stall", () => {
+  it("hands the same session to a human instead of failing", () => {
+    const r = interpretInviteOutput("terminated", null, { email: "a@b.c", password: "p", captchaStall: true });
+    expect(r.status).toBe("needs_human");
+    expect(r.barrierKind).toBe("captcha");
+  });
+
+  it("does not override a completed task", () => {
+    const r = interpretInviteOutput("completed", { outcome: "landed", final_url: "https://x" }, { email: "a@b.c", password: "p", captchaStall: true });
+    expect(r.status).toBe("accepted");
+  });
+});
 
 describe("skyvernInboxContent", () => {
   it("puts the subject on the first line and keeps the plain text, including a link", () => {

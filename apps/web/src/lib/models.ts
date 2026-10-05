@@ -1,10 +1,16 @@
 export interface ModelOption {
   id: string;
   name: string;
-  /** $ за миллион токенов. */
-  promptPerM: number;
-  completionPerM: number;
+  /** $ за миллион токенов. null — цена зависит от маршрута (OpenRouter отдаёт -1 для роутеров). */
+  promptPerM: number | null;
+  completionPerM: number | null;
   context: number;
+}
+
+function perMillion(raw: string | undefined): number | null {
+  const n = Number(raw ?? 0);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n * 1_000_000;
 }
 
 let cache: { at: number; list: ModelOption[] } | null = null;
@@ -30,8 +36,8 @@ export async function listModels(): Promise<ModelOption[]> {
     .map((m) => ({
       id: m.id,
       name: m.name,
-      promptPerM: Number(m.pricing?.prompt ?? 0) * 1_000_000,
-      completionPerM: Number(m.pricing?.completion ?? 0) * 1_000_000,
+      promptPerM: perMillion(m.pricing?.prompt),
+      completionPerM: perMillion(m.pricing?.completion),
       context: m.context_length ?? 0,
     }))
     .sort((a, b) => a.name.localeCompare(b.name));

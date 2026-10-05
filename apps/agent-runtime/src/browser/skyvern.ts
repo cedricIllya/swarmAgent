@@ -19,6 +19,37 @@ import { log, warn } from "../log";
 const TERMINAL = new Set(["completed", "failed", "terminated", "canceled", "timed_out"]);
 const TOTP_CONTENT_MAX = 6000;
 const TOTP_BUFFER_TTL_MS = 15 * 60 * 1000;
+/** Столько провалов solve_captcha подряд (по ~5 минут каждый) — капчу отдаём человеку. */
+const CAPTCHA_STALL_ATTEMPTS = 2;
+const CAPTCHA_CHECK_INTERVAL_MS = 60 * 1000;
+
+interface SkyvernStep {
+  status?: string;
+  output?: { actions_and_results?: Array<[{ action_type?: string }, Array<{ success?: boolean }>?]> } | null;
+}
+
+/**
+ * Сколько последних шагов задачи подряд упали на solve_captcha. Идущий шаг не считаем:
+ * он может быть очередной попыткой, которая ещё не провалилась.
+ */
+export function countCaptchaFailures(steps: SkyvernStep[]): number {
+  let n = 0;
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const step = steps[i];
+    if (!step) break;
+    const actions = step.output?.actions_and_results ?? [];
+    const captcha = actions.some(([action]) => action?.action_type === "solve_captcha");
+    if (!captcha) {
+      if (step.status === "running" && n === 0 && actions.length === 0) continue;
+      break;
+    }
+    if (step.status === "running") continue;
+    const solved = actions.some(([action, results]) => action?.action_type === "solve_captcha" && (results ?? []).some((r) => r.success));
+    if (solved) break;
+    n++;
+  }
+  return n;
+}
 
 /** Страница ждёт письмо: не выдумывать код, не брать его со страницы, не пропускать шаг. */
 const TOTP_WAIT =
@@ -137,6 +168,15 @@ export interface SkyvernLoginArgs {
   onSession?: (session: BrowserSession) => Promise<void>;
 }
 
+interface SkyvernTaskResult {
+  session: BrowserSession;
+  status: string;
+  output: unknown;
+  failureReason: string | null;
+  /** Задача остановлена из-за капчи, которую решатель не прошёл. */
+  captchaStall: boolean;
+}
+
 interface ActiveRun {
   skyvernRunId: string;
   sessionId: string;
@@ -203,7 +243,7 @@ export function inviteTaskPrompt(args: {
 export function interpretInviteOutput(
   status: string,
   output: unknown,
-  ctx: { email: string; password: string; failureReason?: string | null },
+  ctx: { email: string; password: string; failureReason?: string | null; captchaStall?: boolean },
 ): AcceptInviteResult {
   const o = (output && typeof output === "object" ? output : {}) as {
     outcome?: string;
@@ -238,6 +278,10 @@ export function interpretInviteOutput(
   }
   if (status === "completed" && (outcome === "accepted" || outcome === "landed" || outcome === "")) {
     return { ...base, status: "accepted", notes: notes || (outcome ? `вход выполнен, аккаунт ${ctx.email}` : "пустой outcome, считаем что вошли") };
+  }
+  // Решатель капчи не справился: свой браузер её тем более не пройдёт, нужен человек в этой же сессии.
+  if (ctx.captchaStall && status !== "completed") {
+    return { ...base, status: "needs_human", barrierKind: "captcha", notes: notes || "Skyvern не прошёл капчу за отведённое время" };
   }
   if (outcome === "captcha" || outcome === "blocked" || outcome === "needs_human" || status === "terminated") {
     const barrier = kind ?? (outcome === "captcha" ? "captcha" : "other");
@@ -451,7 +495,12 @@ export class SkyvernClient {
         onSession: args.onSession,
         onStep: args.onStep,
       });
-      const result = interpretInviteOutput(r.status, r.output, { email: args.email, password, failureReason: r.failureReason });
+      const result = interpretInviteOutput(r.status, r.output, {
+        email: args.email,
+        password,
+        failureReason: r.failureReason,
+        captchaStall: r.captchaStall,
+      });
       // Пароль существующего аккаунта остаётся его паролем, что бы Skyvern ни решил.
       if (existing && args.password && result.status === "accepted") result.password = args.password;
       result.liveUrl = opened.liveUrl;
@@ -657,7 +706,7 @@ export class SkyvernClient {
     service?: string | undefined;
     onSession?: ((session: BrowserSession) => Promise<void>) | undefined;
     onStep?: ((text: string, data?: Record<string, unknown>) => Promise<void> | void) | undefined;
-  }): Promise<{ session: BrowserSession; status: string; output: unknown; failureReason: string | null }> {
+  }): Promise<SkyvernTaskResult> {
     if (args.expectTotp) this.captureMailbox();
     try {
       if (args.expectTotp && !args.browserSessionId) throw new Error("задаче входа нужен browser_session_id");
@@ -681,7 +730,7 @@ export class SkyvernClient {
     service?: string | undefined;
     onSession?: ((session: BrowserSession) => Promise<void>) | undefined;
     onStep?: ((text: string, data?: Record<string, unknown>) => Promise<void> | void) | undefined;
-  }): Promise<{ session: BrowserSession; status: string; output: unknown; failureReason: string | null }> {
+  }): Promise<SkyvernTaskResult> {
     const res = await this.fetchImpl(`${this.base}/v1/run/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": this.apiKey },
@@ -739,6 +788,8 @@ export class SkyvernClient {
     let output: unknown = null;
     let failureReason: string | null = null;
     let recordingUrl: string | null = null;
+    let captchaStall = false;
+    let nextCaptchaCheck = Date.now() + CAPTCHA_CHECK_INTERVAL_MS;
     try {
       while (Date.now() < deadline) {
         if (this.canceledRuns.has(args.runId)) {
@@ -749,6 +800,18 @@ export class SkyvernClient {
           break;
         }
         await new Promise((r) => setTimeout(r, 5000));
+        if (Date.now() >= nextCaptchaCheck) {
+          nextCaptchaCheck = Date.now() + CAPTCHA_CHECK_INTERVAL_MS;
+          if (await this.captchaStalled(skyvernRunId)) {
+            captchaStall = true;
+            status = "terminated";
+            failureReason = "Skyvern не прошёл капчу";
+            await this.cancel(skyvernRunId);
+            await args.onStep?.("Skyvern не прошёл капчу: нужен человек в этой же сессии");
+            await this.store.appendBrowserAction(meta.id, { type: "skyvern.finish", status, failureReason });
+            break;
+          }
+        }
         const r = await this.fetchImpl(`${this.base}/v1/runs/${skyvernRunId}`, { headers: { "x-api-key": this.apiKey } });
         if (!r.ok) continue;
         const json = (await r.json()) as {
@@ -772,6 +835,7 @@ export class SkyvernClient {
       if (!TERMINAL.has(status)) {
         status = "timed_out";
         failureReason = "runtime не дождался завершения задачи Skyvern";
+        captchaStall = await this.captchaStalled(skyvernRunId, 1);
         await this.cancel(skyvernRunId);
         await this.store.appendBrowserAction(meta.id, { type: "skyvern.finish", status, failureReason });
       }
@@ -792,8 +856,33 @@ export class SkyvernClient {
       this.metas.delete(meta.id);
     }
     await this.store.saveBrowserSession(meta);
-    log("skyvern", "задача завершена", { skyvernRunId, status, hasVideo: meta.hasVideo });
-    return { session: meta, status, output, failureReason };
+    log("skyvern", "задача завершена", { skyvernRunId, status, hasVideo: meta.hasVideo, captchaStall });
+    return { session: meta, status, output, failureReason, captchaStall };
+  }
+
+  /**
+   * Застрял ли Skyvern на капче: последние шаги текущего блока — провалы solve_captcha.
+   * Таймлайн задачи 2.0 → task_id идущего блока → его шаги. Любая ошибка опроса — «нет».
+   */
+  private async captchaStalled(skyvernRunId: string, attempts = CAPTCHA_STALL_ATTEMPTS): Promise<boolean> {
+    try {
+      const tl = await this.fetchImpl(`${this.base}/v1/runs/${skyvernRunId}/timeline`, { headers: { "x-api-key": this.apiKey } });
+      if (!tl.ok) return false;
+      const timeline = (await tl.json()) as Array<{ type?: string; block?: { task_id?: string | null; status?: string } | null }>;
+      const current = timeline.find((t) => t.type === "block" && t.block?.task_id) ?? null;
+      const taskId = current?.block?.task_id;
+      if (!taskId) return false;
+      const st = await this.fetchImpl(`${this.base}/api/v1/tasks/${taskId}/steps`, { headers: { "x-api-key": this.apiKey } });
+      if (!st.ok) return false;
+      const steps = (await st.json()) as SkyvernStep[];
+      if (!Array.isArray(steps)) return false;
+      const failures = countCaptchaFailures(steps);
+      if (failures > 0) log("skyvern", "капча не решается", { skyvernRunId, taskId, failures });
+      return failures >= attempts;
+    } catch (e) {
+      warn("skyvern", "не удалось проверить капчу", { error: String(e) });
+      return false;
+    }
   }
 
   private async cancel(skyvernRunId: string): Promise<void> {

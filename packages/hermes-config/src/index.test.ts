@@ -38,7 +38,7 @@ describe("renderConfigYaml", () => {
     };
     expect(doc.model.provider).toBe("openrouter");
     expect(doc.model.default).toBe("anthropic/claude-sonnet-4");
-    expect(doc.mcp_servers["skyvern"]).toBeDefined();
+    expect(doc.mcp_servers["skyvern"]).toBeUndefined();
     expect(doc.mcp_servers["linear"]?.url).toBe("https://mcp.linear.app/mcp");
     expect(doc.mcp_servers["linear"]?.headers?.["Authorization"]).toBe("Bearer lin_xxx");
     expect(doc.mcp_servers["linear"]).not.toHaveProperty("transport");
