@@ -1,6 +1,28 @@
 import { describe, expect, it, vi } from "vitest";
-import { SkyvernClient, countCaptchaFailures, interpretInviteOutput, inviteTaskPrompt, skyvernInboxContent } from "./browser/skyvern";
+import {
+  SkyvernClient,
+  countCaptchaFailures,
+  interpretInviteOutput,
+  inviteTaskPrompt,
+  skyvernInboxContent,
+  totpTarget,
+  workflowRunIdFrom,
+} from "./browser/skyvern";
 import type { Store } from "./store";
+
+describe("totpTarget", () => {
+  it("addresses a 2.0 task by workflow_run_id because Skyvern rejects tsk_v2_ as task_id", () => {
+    expect(totpTarget({ skyvernRunId: "tsk_v2_1", workflowRunId: "wr_1" })).toEqual({ workflow_run_id: "wr_1" });
+    expect(totpTarget({ skyvernRunId: "tsk_v2_1", workflowRunId: null })).toEqual({});
+    expect(totpTarget({ skyvernRunId: "tsk_1", workflowRunId: null })).toEqual({ task_id: "tsk_1" });
+  });
+
+  it("reads wr_ from the app url", () => {
+    expect(workflowRunIdFrom("https://app.skyvern.com/runs/wr_582212643708188894")).toBe("wr_582212643708188894");
+    expect(workflowRunIdFrom("https://app.skyvern.com/runs/tsk_1")).toBeNull();
+    expect(workflowRunIdFrom(null)).toBeNull();
+  });
+});
 
 function captchaStep(status: string, success: boolean | null) {
   return {

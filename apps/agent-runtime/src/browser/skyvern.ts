@@ -21,6 +21,8 @@ const TOTP_CONTENT_MAX = 6000;
 const TOTP_BUFFER_TTL_MS = 15 * 60 * 1000;
 /** Столько провалов solve_captcha подряд (по ~5 минут каждый) — капчу отдаём человеку. */
 const CAPTCHA_STALL_ATTEMPTS = 2;
+/** Сколько раз одно письмо пробуем отдать в TOTP, прежде чем оставить его в покое. */
+const TOTP_POST_ATTEMPTS = 3;
 const CAPTCHA_CHECK_INTERVAL_MS = 60 * 1000;
 
 interface SkyvernStep {
@@ -179,11 +181,24 @@ interface SkyvernTaskResult {
 
 interface ActiveRun {
   skyvernRunId: string;
+  /** Для задач 2.0 Skyvern принимает в TOTP только workflow_run_id, а не tsk_v2_. */
+  workflowRunId: string | null;
   sessionId: string;
   runId: string;
   startedAt: number;
   service: string;
   expectTotp: boolean;
+}
+
+/** Адрес задачи для `POST /v1/credentials/totp`: wr_ у задач 2.0, tsk_ у остальных. */
+export function totpTarget(run: Pick<ActiveRun, "skyvernRunId" | "workflowRunId">): Record<string, string> {
+  if (run.skyvernRunId.startsWith("tsk_v2_")) return run.workflowRunId ? { workflow_run_id: run.workflowRunId } : {};
+  return { task_id: run.skyvernRunId };
+}
+
+/** `wr_…` из app_url ответа Skyvern: отдельного поля в ответе на создание задачи нет. */
+export function workflowRunIdFrom(appUrl: string | null | undefined): string | null {
+  return appUrl?.match(/\b(wr_[A-Za-z0-9]+)\b/)?.[1] ?? null;
 }
 
 interface TotpOffer {
@@ -192,6 +207,10 @@ interface TotpOffer {
   posted: boolean;
   /** Код, который вернул Skyvern. Пусто — не ошибка: в письме может быть ссылка. */
   code: string | null;
+  /** Такое же письмо уже ушло в задачу. */
+  duplicate?: boolean;
+  /** Задачи ещё нет: письмо ждёт её старта в буфере. */
+  deferred?: boolean;
 }
 
 /** Текст задачи Skyvern: принять приглашение. Существующий аккаунт — только вход, без нового пароля. */
@@ -305,7 +324,7 @@ export class SkyvernClient {
   /** Захват ящика на время задачи входа. Счётчик: внешний вызов и runTask. */
   private mailboxHolds = 0;
   /** Письма до totp_identifier. Живут около 15 минут и уходят в задачу на старте. */
-  private readonly totpBuffer: Array<{ at: number; content: string }> = [];
+  private readonly totpBuffer: Array<{ at: number; content: string; attempts: number }> = [];
   /** Уже отданные письма, чтобы повтор после отпускания ящика не слать второй раз. */
   private readonly forwarded = new Map<string, number>();
   private onMailboxRelease: (() => void) | null = null;
@@ -589,17 +608,17 @@ export class SkyvernClient {
     this.pruneTotp();
     const tasks = this.totpTasks();
     if (tasks.length > 0) {
-      if (this.forwarded.has(body)) return { taken: true, posted: false, code: null };
+      if (this.forwarded.has(body)) return { taken: true, posted: false, code: null, duplicate: true };
       const target = [...tasks].sort((a, b) => b.startedAt - a.startedAt)[0] ?? null;
       const posted = await this.postTotp(target, body);
       if (posted.ok) this.forwarded.set(body, Date.now());
-      else this.rememberTotp(body);
+      else this.rememberTotp(body, 1);
       return { taken: true, posted: posted.ok, code: posted.code };
     }
     if (!this.forwarded.has(body)) this.rememberTotp(body);
     if (this.mailboxCaptured) {
       log("skyvern", "письмо придержано до старта задачи входа", { totpIdentifier: this.totpIdentifier });
-      return { taken: true, posted: false, code: null };
+      return { taken: true, posted: false, code: null, deferred: true };
     }
     return { taken: false, posted: false, code: null };
   }
@@ -624,20 +643,26 @@ export class SkyvernClient {
     for (const [key, at] of this.forwarded) if (at < cutoff) this.forwarded.delete(key);
   }
 
-  private rememberTotp(content: string): void {
+  private rememberTotp(content: string, attempts = 0): void {
     this.pruneTotp();
-    if (this.totpBuffer.some((item) => item.content === content)) return;
+    const known = this.totpBuffer.find((item) => item.content === content);
+    if (known) {
+      known.attempts = Math.max(known.attempts, attempts);
+      return;
+    }
     if (this.totpBuffer.length >= 30) this.totpBuffer.shift();
-    this.totpBuffer.push({ at: Date.now(), content });
+    this.totpBuffer.push({ at: Date.now(), content, attempts });
   }
 
+  /** Буфер → в задачу. Неудачный POST возвращается в буфер и повторяется из опроса задачи, но не бесконечно. */
   private async flushBuffer(task: ActiveRun): Promise<void> {
     this.pruneTotp();
     const pending = this.totpBuffer.splice(0);
     for (const item of pending) {
+      if (item.attempts >= TOTP_POST_ATTEMPTS) continue;
       const posted = await this.postTotp(task, item.content);
       if (posted.ok) this.forwarded.set(item.content, Date.now());
-      else this.rememberTotp(item.content);
+      else this.rememberTotp(item.content, item.attempts + 1);
     }
   }
 
@@ -650,8 +675,8 @@ export class SkyvernClient {
       totp_identifier: this.totpIdentifier,
       content,
       source: totpSource(target?.service ?? "mail"),
+      ...(target && this.totpTasks().length === 1 ? totpTarget(target) : {}),
     };
-    if (target && this.totpTasks().length === 1) payload.task_id = target.skyvernRunId;
     try {
       const res = await this.fetchImpl(`${this.base}/v1/credentials/totp`, {
         method: "POST",
@@ -764,6 +789,7 @@ export class SkyvernClient {
     if (!meta.liveUrl) meta.liveUrl = created.app_url ?? null;
     const run: ActiveRun = {
       skyvernRunId,
+      workflowRunId: workflowRunIdFrom(created.app_url),
       sessionId: meta.id,
       runId: args.runId,
       startedAt: Date.now(),
@@ -800,6 +826,7 @@ export class SkyvernClient {
           break;
         }
         await new Promise((r) => setTimeout(r, 5000));
+        if (run.expectTotp && this.totpBuffer.length > 0) await this.flushBuffer(run);
         if (Date.now() >= nextCaptchaCheck) {
           nextCaptchaCheck = Date.now() + CAPTCHA_CHECK_INTERVAL_MS;
           if (await this.captchaStalled(skyvernRunId)) {

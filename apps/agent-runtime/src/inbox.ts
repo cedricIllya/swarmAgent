@@ -95,7 +95,11 @@ async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> 
           ? offer.code
             ? `письмо передано в задачу входа, из него извлечён код ${offer.code}`
             : "письмо передано в задачу входа"
-          : "письмо придержано до старта задачи входа";
+          : offer.duplicate
+            ? "письмо уже передано в задачу входа, повтор пропущен"
+            : offer.deferred
+              ? "письмо придержано до старта задачи входа"
+              : "письмо не удалось передать в задачу входа, повторю";
         await rt.step(runId, "email", text).catch((e) => warn("inbox", "не записал передачу письма", { error: String(e) }));
       }
       log("inbox", "письмо ушло в задачу входа, обычный разбор после неё", { subject: email.subject, code: offer.code });
