@@ -1,5 +1,6 @@
-import type { WebCitation } from "../openrouter";
+import { canonicalAuthHeader, isConcreteReadUrl } from "../connect";
 import { warn } from "../log";
+import type { WebCitation } from "../openrouter";
 import { httpsUrl } from "./http";
 import type { FetchedPage } from "./pages";
 import type { DiscoveryDeps, McpTransport } from "./types";
@@ -9,19 +10,19 @@ import type { DiscoveryDeps, McpTransport } from "./types";
 const FINDINGS_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["mcpUrl", "mcpTransport", "apiBaseUrl", "apiDocsUrl", "authHeader", "howToGetKey", "loginUrl", "appUrl", "notes"],
+  required: ["mcpUrl", "mcpTransport", "apiBaseUrl", "apiDocsUrl", "authHeader", "howToGetKey", "keyPageUrl", "readEndpoints", "loginUrl", "appUrl", "notes"],
   properties: {
     mcpUrl: { type: ["string", "null"], description: "Полный URL официального удалённого MCP-сервера сервиса, если он есть" },
     mcpTransport: { type: ["string", "null"], description: "streamable_http или sse, если известно" },
     apiBaseUrl: { type: ["string", "null"], description: "Базовый URL публичного REST/GraphQL API" },
     apiDocsUrl: { type: ["string", "null"], description: "Страница документации API" },
-    authHeader: { type: ["string", "null"], description: "Имя HTTP-заголовка для ключа, обычно Authorization" },
+    authHeader: { type: ["string", "null"], description: "Только имя заголовка: Authorization или X-Api-Key. Без схемы, двоеточия и примера ключа" },
     howToGetKey: { type: ["string", "null"], description: "Где в интерфейсе сервиса взять API-ключ или токен" },
     keyPageUrl: { type: ["string", "null"], description: "Точный URL страницы, где залогиненный пользователь создаёт API-ключ. Только если он есть в источниках" },
     readEndpoints: {
       type: "array",
       items: { type: "string" },
-      description: "До трёх GET без параметров пути: текущий пользователь, аккаунт, список. Только URL из источников",
+      description: "До трёх полных GET URL с путём и без параметров пути. Корень хоста не подходит. Только URL из источников",
     },
     loginUrl: { type: ["string", "null"] },
     appUrl: { type: ["string", "null"] },
@@ -67,14 +68,14 @@ function parseFindings(text: string): ModelFindings {
       mcpTransport: /sse/.test(transportRaw) ? "sse" : /http/.test(transportRaw) ? "streamable_http" : null,
       apiBaseUrl: str(raw.apiBaseUrl),
       apiDocsUrl: str(raw.apiDocsUrl),
-      authHeader: str(raw.authHeader),
+      authHeader: canonicalAuthHeader(str(raw.authHeader)),
       howToGetKey: str(raw.howToGetKey),
       loginUrl: str(raw.loginUrl),
       appUrl: str(raw.appUrl),
       notes: str(raw.notes) ?? "",
       keyPageUrl: str(raw.keyPageUrl),
       readEndpoints: Array.isArray(raw.readEndpoints)
-        ? raw.readEndpoints.filter((v): v is string => typeof v === "string" && /^https?:\/\//i.test(v)).slice(0, 3)
+        ? raw.readEndpoints.filter((v): v is string => typeof v === "string" && isConcreteReadUrl(v)).slice(0, 3)
         : [],
     };
   } catch {
@@ -99,10 +100,10 @@ export function mergeFindings(prior: ModelFindings, next: ModelFindings): ModelF
   };
 }
 
-/** Поиска хватает, если он назвал базу API, страницу документации из цитат и где взять ключ. */
+/** Поиска хватает, если есть база API, документация из цитат, способ взять ключ и хотя бы один GET с путём. */
 export function searchCovers(findings: ModelFindings, citations: WebCitation[]): boolean {
   const docs = httpsUrl(findings.apiDocsUrl);
-  if (!httpsUrl(findings.apiBaseUrl) || !docs || !findings.howToGetKey) return false;
+  if (!httpsUrl(findings.apiBaseUrl) || !docs || !findings.howToGetKey || !findings.readEndpoints.some(isConcreteReadUrl)) return false;
   let docsHost = "";
   try {
     docsHost = new URL(docs).host;
@@ -126,7 +127,7 @@ export function searchPrompt(service: string, domain: string | null): string {
     `Нужно подключиться к сервису «${service}»${domain ? ` (${domain})` : ""} программно.`,
     "По результатам поиска найди в официальной документации:",
     "1) есть ли у сервиса официальный удалённый MCP-сервер (URL вида https://mcp.<домен>/mcp или из раздела интеграций);",
-    "2) публичный REST или GraphQL API: базовый URL, страница документации, заголовок авторизации (если не уверен — null, не угадывай Authorization), точный URL страницы создания ключа, два-три GET без параметров;",
+    "2) публичный REST или GraphQL API: базовый URL, страница документации, только имя заголовка авторизации (Authorization или X-Api-Key, без Bearer и примера ключа; если не уверен — null), точный URL страницы создания ключа, два-три GET с путём и без параметров (корень хоста не указывай);",
     "3) адрес входа в веб-приложение.",
     "Указывай только URL, которые встречаются в результатах. Не выдумывай адреса. Верни JSON.",
   ].join("\n");
@@ -139,7 +140,8 @@ export function extractPrompt(service: string, domain: string | null, prior: Mod
   return [
     `Сервис «${service}»${domain ? ` (${domain})` : ""}. Ниже страницы его документации.`,
     "Извлеки точные данные для подключения: URL удалённого MCP-сервера и его транспорт, базовый URL API,",
-    "страницу документации API, заголовок авторизации, как получить ключ, адрес входа. Чего нет на страницах — null.",
+    "страницу документации API, только имя заголовка авторизации (без схемы и примера ключа), как получить ключ,",
+    "два-три GET с путём для проверки ключа, адрес входа. Чего нет на страницах — null. Корень хоста в readEndpoints не клади.",
     "Предыдущие находки из поиска (можно уточнить или опровергнуть):",
     JSON.stringify(prior),
     "",
@@ -160,7 +162,7 @@ export async function askModel(
       {
         jsonSchema: { name: "service_findings", schema: FINDINGS_SCHEMA },
         temperature: 0,
-        maxTokens: 700,
+        maxTokens: 1000,
         ...(webSearch ? { webSearch } : {}),
       },
       deps.model,

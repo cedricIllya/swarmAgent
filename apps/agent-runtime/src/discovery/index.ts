@@ -1,3 +1,4 @@
+import { isConcreteReadUrl } from "../connect";
 import { hostOf, isNoiseDomain, pickServiceDomain, slugFor } from "../domains";
 import { httpsUrl } from "./http";
 import { probeMcp, verifyCandidates, wellKnownMcpUrls } from "./mcp-probe";
@@ -124,7 +125,7 @@ export async function discoverService(input: DiscoveryInput, deps: DiscoveryDeps
           authHeader: findings.authHeader || "Authorization",
           howToGetKey: findings.howToGetKey ?? "",
           keyPageUrl: httpsUrl(findings.keyPageUrl),
-          readEndpoints: (findings.readEndpoints ?? []).map((u) => httpsUrl(u)).filter((u): u is string => Boolean(u)),
+          readEndpoints: (findings.readEndpoints ?? []).map((u) => httpsUrl(u)).filter((u): u is string => u !== null && isConcreteReadUrl(u)),
         }
       : null;
 

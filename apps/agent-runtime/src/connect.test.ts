@@ -6,7 +6,10 @@ import {
   looksLikeApiKey,
   looksLikeServiceApprovalWait,
   mailTouchesHost,
+  parseAuthScheme,
+  proofUrls,
   proveApiKey,
+  recipeAuth,
   serviceApprovalGranted,
   type ConnectFacts,
 } from "./connect";
@@ -49,30 +52,51 @@ describe("looksLikeApiKey", () => {
   });
 });
 
+describe("parseAuthScheme", () => {
+  it("keeps the header name and drops the example token from the docs", () => {
+    expect(parseAuthScheme("Authorization")).toEqual({ headerName: "Authorization", scheme: "Bearer" });
+    expect(parseAuthScheme("Authorization: Bearer api_key")).toEqual({ headerName: "Authorization", scheme: "Bearer" });
+    expect(parseAuthScheme("X-Api-Key: sk_live_example")).toEqual({ headerName: "X-Api-Key", scheme: null });
+    expect(parseAuthScheme("не заголовок")).toBeNull();
+    expect(recipeAuth("Authorization: Bearer api_key")).toEqual({ auth: "bearer", authHeader: "Authorization" });
+    expect(recipeAuth("X-Api-Key")).toEqual({ auth: "header", authHeader: "X-Api-Key" });
+  });
+});
+
+describe("proofUrls", () => {
+  it("uses a documented GET and skips the host root", () => {
+    expect(proofUrls(["https://api.acme.io/v1/me"], "https://api.acme.io/")).toEqual(["https://api.acme.io/v1/me"]);
+    expect(proofUrls([], "https://api.acme.io/")).toEqual([]);
+    expect(proofUrls(["https://api.acme.io/users/{id}"], "https://api.acme.io/v1")).toEqual(["https://api.acme.io/v1"]);
+  });
+});
+
 describe("proveApiKey", () => {
-  it("is green only when the same path fails without the key", async () => {
-    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      const status = init?.headers ? 200 : 401;
-      return new Response("ok", { status });
-    }) as unknown as typeof fetch;
+  it("is green when the request with the key returns 2xx", async () => {
+    const fetchImpl = vi.fn(async () => new Response("ok", { status: 200 })) as unknown as typeof fetch;
     const r = await proveApiKey({
       urls: ["https://api.acme.io/v1/me"],
-      headerName: "Authorization",
+      headerName: "Authorization: Bearer api_key",
       token: "secret-token-value",
       fetchImpl,
     });
     expect(r.verdict).toBe("green");
+    expect(r.detail).toMatch(/ответил 200 с ключом/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const init = (fetchImpl as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[1] as RequestInit;
+    expect(init.headers).toEqual({ Authorization: "Bearer secret-token-value" });
   });
 
-  it("does not treat a public 200 as proof", async () => {
+  it("does not send a request when the header cannot be parsed", async () => {
     const fetchImpl = vi.fn(async () => new Response("ok", { status: 200 })) as unknown as typeof fetch;
     const r = await proveApiKey({
       urls: ["https://api.acme.io/v1/me"],
-      headerName: "Authorization",
+      headerName: "не заголовок",
       token: "secret-token-value",
       fetchImpl,
     });
-    expect(r.verdict).toBe("inconclusive");
+    expect(r.verdict).toBe("not_tried");
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("a 401 with the key is a refusal, a 503 is not", async () => {

@@ -24,6 +24,12 @@ function bareAddress(raw: string): string {
   return (m?.[1] ?? raw).trim().toLowerCase();
 }
 
+/** Ящик сервиса, которому отвечать некуда: уведомление, не человек. */
+export function isMachineSender(from: string): boolean {
+  const local = (bareAddress(from).split("@")[0] ?? "").replace(/[._-]/g, "");
+  return /noreply|donotreply|notification|mailerdaemon|notify/.test(local);
+}
+
 /**
  * Три двери в порядке:
  * 1. Ответ в ветке на письмо агента — слова «да/нет» или новая задача. Без браузера и онбординга.
@@ -197,7 +203,7 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
     return;
   }
 
-  if (c.kind === "notification" || c.kind === "other" || c.kind === "verification") {
+  if (c.kind === "other" || c.kind === "verification") {
     const run = await rt.createRun("email", email.subject || "Письмо", email.messageId);
     await rt.step(run.id, "email", `${c.kind}: ${c.summary}`);
     await rt.finishRun(run, "done", `Без действий: ${c.summary}`);
@@ -235,7 +241,11 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
     const current = await rt.store.getRun(run.id);
     if (current?.status === "waiting_approval") return;
     await rt.finishRun(run, "done", text);
-    if (c.kind === "task") await replyInThread(rt, email, run.id, text);
+    if (c.kind === "task" && !isMachineSender(email.from)) {
+      await replyInThread(rt, email, run.id, text);
+    } else {
+      await rt.addChat({ role: "agent", text, runId: run.id });
+    }
   } catch (e) {
     warn("inbox", "задача упала", { error: String(e) });
     await rt.step(run.id, "error", String(e));

@@ -248,8 +248,10 @@ describe("discoverService", () => {
         mcpTransport: null,
         apiBaseUrl: "https://api.acme.io/v1",
         apiDocsUrl: "https://docs.acme.io/api",
-        authHeader: "Authorization",
+        authHeader: "Authorization: Bearer api_key",
         howToGetKey: "Settings → API",
+        keyPageUrl: "https://acme.io/settings/api",
+        readEndpoints: ["https://api.acme.io/v1/me", "https://api.acme.io/"],
         loginUrl: "https://acme.io/login",
         appUrl: "https://acme.io",
         notes: "REST",
@@ -268,7 +270,13 @@ describe("discoverService", () => {
     );
 
     expect(usage).toEqual(["discover.search"]);
-    expect(result.api).toMatchObject({ baseUrl: "https://api.acme.io/v1", docsUrl: "https://docs.acme.io/api", howToGetKey: "Settings → API" });
+    expect(result.api).toMatchObject({
+      baseUrl: "https://api.acme.io/v1",
+      docsUrl: "https://docs.acme.io/api",
+      howToGetKey: "Settings → API",
+      authHeader: "Authorization",
+      readEndpoints: ["https://api.acme.io/v1/me"],
+    });
     expect(result.draftRecipe).toMatchObject({ kind: "api" });
     expect(fetchImpl.mock.calls.map((call) => String(call[0])).some((url) => url.includes("llms.txt") || url.includes("docs.acme.io"))).toBe(false);
   });
@@ -382,10 +390,12 @@ describe("doc link ranking", () => {
       appUrl: null,
       notes: "",
       keyPageUrl: null,
-      readEndpoints: [],
+      readEndpoints: ["https://api.acme.io/v1/me"],
     };
     expect(searchCovers(findings, [{ url: "https://docs.acme.io/api", title: "API", content: "" }])).toBe(true);
     expect(searchCovers(findings, [{ url: "https://example.com/unrelated", title: "", content: "" }])).toBe(false);
     expect(searchCovers({ ...findings, howToGetKey: null }, [{ url: "https://docs.acme.io/api", title: "API", content: "" }])).toBe(false);
+    expect(searchCovers({ ...findings, readEndpoints: [] }, [{ url: "https://docs.acme.io/api", title: "API", content: "" }])).toBe(false);
+    expect(searchCovers({ ...findings, readEndpoints: ["https://api.acme.io/"] }, [{ url: "https://docs.acme.io/api", title: "API", content: "" }])).toBe(false);
   });
 });

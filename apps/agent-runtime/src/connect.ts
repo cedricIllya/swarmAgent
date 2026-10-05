@@ -123,15 +123,92 @@ export interface ProofResult {
   detail: string;
 }
 
-function authHeader(name: string, token: string): Record<string, string> {
-  if (/^authorization$/i.test(name)) {
-    return { Authorization: /^(bearer|basic)\s/i.test(token) ? token : `Bearer ${token}` };
-  }
-  return { [name]: token };
+export interface ParsedAuth {
+  headerName: string;
+  /** Схема для `Authorization`. `null` — в заголовок кладётся сам ключ. */
+  scheme: "Bearer" | "Basic" | "Token" | null;
+}
+
+function canonicalScheme(raw: string): "Bearer" | "Basic" | "Token" {
+  if (/^basic$/i.test(raw)) return "Basic";
+  if (/^token$/i.test(raw)) return "Token";
+  return "Bearer";
 }
 
 /**
- * Ключ доказан, только если запрос с ним успешен, а тот же путь без него — нет.
+ * Документация часто пишет пример целиком: `Authorization: Bearer api_key`.
+ * В запрос уходит только имя заголовка и схема, пример ключа отбрасывается.
+ */
+export function parseAuthScheme(raw: string): ParsedAuth | null {
+  const text = raw.trim().replace(/^["'`]+|["'`]+$/g, "");
+  if (!text) return null;
+  const colon = text.match(/^([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.*)$/);
+  if (colon) return authFromParts(colon[1]!, colon[2] ?? "");
+  const spaced = text.match(/^(authorization)\s+(bearer|basic|token)\b/i);
+  if (spaced) return { headerName: "Authorization", scheme: canonicalScheme(spaced[2]!) };
+  if (/^(bearer|basic|token)$/i.test(text)) return { headerName: "Authorization", scheme: canonicalScheme(text) };
+  if (/^authorization$/i.test(text)) return { headerName: "Authorization", scheme: "Bearer" };
+  if (/^[A-Za-z][A-Za-z0-9-]*$/.test(text)) return { headerName: text, scheme: null };
+  return null;
+}
+
+function authFromParts(name: string, rest: string): ParsedAuth | null {
+  if (/^authorization$/i.test(name)) {
+    const scheme = /^(bearer|basic|token)\b/i.exec(rest.trim());
+    return { headerName: "Authorization", scheme: scheme ? canonicalScheme(scheme[1]!) : "Bearer" };
+  }
+  if (!/^[A-Za-z][A-Za-z0-9-]*$/.test(name)) return null;
+  return { headerName: name, scheme: null };
+}
+
+/** Имя заголовка для рецепта. Схема, если она не Bearer, остаётся в строке, чтобы вызов собрался так же. */
+export function canonicalAuthHeader(raw: string | null): string | null {
+  if (!raw) return null;
+  const parsed = parseAuthScheme(raw);
+  if (!parsed) return null;
+  if (parsed.scheme === "Basic") return "Authorization: Basic";
+  if (parsed.scheme === "Token") return "Authorization: Token";
+  return parsed.headerName;
+}
+
+export function recipeAuth(raw: string | null): { auth: "bearer" | "basic" | "header"; authHeader: string } {
+  const parsed = raw ? parseAuthScheme(raw) : null;
+  if (!parsed || parsed.scheme === "Bearer") return { auth: "bearer", authHeader: "Authorization" };
+  if (parsed.scheme === "Basic") return { auth: "basic", authHeader: "Authorization" };
+  return { auth: "header", authHeader: parsed.headerName };
+}
+
+function authHeader(raw: string, token: string): Record<string, string> | null {
+  const parsed = parseAuthScheme(raw);
+  if (!parsed) return null;
+  if (!parsed.scheme) return { [parsed.headerName]: token };
+  const value = new RegExp(`^${parsed.scheme}\\s`, "i").test(token) ? token : `${parsed.scheme} ${token}`;
+  return { Authorization: value };
+}
+
+/** GET с путём. Корень хоста и шаблон вроде `/users/{id}` ключ не проверяют. */
+export function isConcreteReadUrl(url: string): boolean {
+  if (/[{}]|%7B|%7D/i.test(url)) return false;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+    if (/\/:[A-Za-z]/.test(u.pathname)) return false;
+    return u.pathname.replace(/\/+$/, "").length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Сначала GET из документации. База API — только если у неё самой есть путь. */
+export function proofUrls(readEndpoints: string[], baseUrl: string | null): string[] {
+  const fromDocs = readEndpoints.filter(isConcreteReadUrl).slice(0, 4);
+  if (fromDocs.length) return fromDocs;
+  if (baseUrl && isConcreteReadUrl(baseUrl)) return [baseUrl];
+  return [];
+}
+
+/**
+ * Ключ доказан, если запрос с ним вернул 2xx.
  * Таймаут, 5xx и 429 — не опровержение.
  */
 export async function proveApiKey(args: {
@@ -142,7 +219,8 @@ export async function proveApiKey(args: {
 }): Promise<ProofResult> {
   const fetchImpl = args.fetchImpl ?? fetch;
   const urls = args.urls.filter((u) => /^https?:\/\//i.test(u)).slice(0, 4);
-  if (!urls.length || !args.headerName.trim() || !args.token) {
+  const headers = authHeader(args.headerName, args.token);
+  if (!urls.length || !headers || !args.token) {
     return { verdict: "not_tried", endpoint: null, detail: "нет адреса или схемы, против которых пробовать" };
   }
   let sawRefused = false;
@@ -152,11 +230,14 @@ export async function proveApiKey(args: {
     try {
       const withKey = await fetchImpl(url, {
         method: "GET",
-        headers: authHeader(args.headerName, args.token),
+        headers,
         redirect: "manual",
         signal: AbortSignal.timeout(8_000),
       });
       await withKey.body?.cancel().catch(() => undefined);
+      if (withKey.status >= 200 && withKey.status < 300) {
+        return { verdict: "green", endpoint: url, detail: `${url} ответил ${withKey.status} с ключом` };
+      }
       if (withKey.status === 401 || withKey.status === 403) {
         sawRefused = true;
         lastDetail = `${url} ответил ${withKey.status} с ключом`;
@@ -167,18 +248,8 @@ export async function proveApiKey(args: {
         lastDetail = `${url} ответил ${withKey.status}: такого пути нет`;
         continue;
       }
-      if (withKey.status >= 300) {
-        sawInconclusive = true;
-        lastDetail = `${url} ответил ${withKey.status}`;
-        continue;
-      }
-      const bare = await fetchImpl(url, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(8_000) });
-      await bare.body?.cancel().catch(() => undefined);
-      if (bare.status === 401 || bare.status === 403) {
-        return { verdict: "green", endpoint: url, detail: `${url} открывается с ключом и закрыт без него (${bare.status})` };
-      }
-      lastDetail = `${url} отвечает ${bare.status} и без ключа`;
       sawInconclusive = true;
+      lastDetail = `${url} ответил ${withKey.status}`;
     } catch (e) {
       sawInconclusive = true;
       lastDetail = `${url}: ${e instanceof Error ? e.message : String(e)}`;

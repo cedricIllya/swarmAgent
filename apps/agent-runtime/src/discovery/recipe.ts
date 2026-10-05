@@ -1,4 +1,5 @@
 import type { ServiceRecipe } from "@swarm/contracts";
+import { recipeAuth } from "../connect";
 import { hostOf, rootDomain, sameBrand } from "../domains";
 import { httpsUrl } from "./http";
 import type { ApiFinding, McpFinding } from "./types";
@@ -23,13 +24,14 @@ export function composeRecipe(args: {
   const mcpRoot = args.mcp?.verified ? rootDomain(hostOf(args.mcp.url)) : "";
   if (mcpRoot && args.domain && mcpRoot !== args.domain && sameBrand(mcpRoot, args.domain)) domains.push(mcpRoot);
   const base = { slug: args.slug, name: args.name, domains, notes: args.notes, discoveredBy: args.agentId };
+  const apiAuth = args.api ? recipeAuth(args.api.authHeader) : null;
   const api =
-    args.api?.baseUrl && httpsUrl(args.api.baseUrl)
+    args.api?.baseUrl && httpsUrl(args.api.baseUrl) && apiAuth
       ? {
           baseUrl: httpsUrl(args.api.baseUrl)!,
           ...(httpsUrl(args.api.docsUrl) ? { docsUrl: httpsUrl(args.api.docsUrl)! } : {}),
-          auth: "bearer" as const,
-          authHeader: args.api.authHeader || "Authorization",
+          auth: apiAuth.auth,
+          authHeader: apiAuth.authHeader,
         }
       : undefined;
   const browser =

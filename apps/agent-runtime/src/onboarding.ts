@@ -10,8 +10,10 @@ import {
   OWNER_OUTAGE,
   interpretApiKeyOutput,
   looksLikeServiceApprovalWait,
+  proofUrls,
   proveApiKey,
   readPagePrompt,
+  recipeAuth,
   type ConnectDecision,
   type Proof,
 } from "./connect";
@@ -520,8 +522,7 @@ async function seekApiKey(
   }
   if (notes) await rt.step(run.id, "note", notes.slice(0, 300));
 
-  const endpoints = (args.discovery?.api?.readEndpoints ?? []).filter((u) => credentialHostAllowed(u, anchors));
-  const proveUrls = endpoints.length ? endpoints : baseUrl && credentialHostAllowed(baseUrl, anchors) ? [baseUrl] : [];
+  const proveUrls = proofUrls(args.discovery?.api?.readEndpoints ?? [], baseUrl).filter((u) => credentialHostAllowed(u, anchors));
   if (!token || !authHeader || !proveUrls.length) {
     return { token, proof: token ? "not_tried" : "not_tried", baseUrl, authHeader, docsUrl, notes };
   }
@@ -559,6 +560,7 @@ async function persistConnection(
   const domains = args.domain ? [args.domain] : [];
   const browser = /^https?:\/\//i.test(args.loginUrl) && /^https?:\/\//i.test(args.appUrl) ? { loginUrl: args.loginUrl, appUrl: args.appUrl } : undefined;
   if (args.mode === "api" && args.baseUrl) {
+    const auth = recipeAuth(args.authHeader);
     const recipe: ServiceRecipe = {
       slug: args.slug,
       name: args.service,
@@ -566,8 +568,8 @@ async function persistConnection(
       domains,
       api: {
         baseUrl: args.baseUrl,
-        auth: args.authHeader && /^authorization$/i.test(args.authHeader) ? "bearer" : "header",
-        authHeader: args.authHeader || "Authorization",
+        auth: auth.auth,
+        authHeader: auth.authHeader,
         ...(args.docsUrl ? { docsUrl: args.docsUrl } : {}),
       },
       ...(browser ? { browser } : {}),
