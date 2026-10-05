@@ -5,6 +5,7 @@ import { HermesClient } from "../hermes";
 import { OpenRouterClient } from "../openrouter";
 import { Store } from "../store";
 import { SkyvernClient } from "../browser/skyvern";
+import { resumeDeferredMail } from "../inbox";
 import { systemPrompt } from "../prompts";
 import { redactInternal } from "../redact";
 import { ensureRunId } from "../service-work";
@@ -53,6 +54,9 @@ export class AgentRuntime {
     this.hermes = new HermesClient({ apiUrl: cfg.hermesApiUrl, apiKey: cfg.hermesApiKey, fallback: this.openRouter });
     this.controlPlane = new ControlPlaneClient(cfg.controlPlaneUrl, cfg.agentId, cfg.runtimeToken);
     this.skyvern = cfg.skyvernApiKey ? new SkyvernClient(cfg.skyvernApiKey, this.store, cfg.email) : null;
+    this.skyvern?.setMailboxReleaseHook(() => {
+      void resumeDeferredMail(this);
+    });
     this.approvals = new Approvals(this);
     this.handoffs = new Handoffs(this);
     this.browser = new BrowserControl(this);
@@ -72,7 +76,9 @@ export class AgentRuntime {
     }
   }
 
+  /** Сессия Skyvern или свой браузер заняты: машину не усыплять и не перезапускать. */
   get busyInBrowser(): boolean {
+    if (this.skyvern?.busy) return true;
     return this.browser.waitingForCode;
   }
 

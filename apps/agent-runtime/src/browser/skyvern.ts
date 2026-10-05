@@ -10,24 +10,71 @@ import { log, warn } from "../log";
  * Skyvern — только онбординг: принять приглашение, зарегистрироваться, войти.
  * Задачи внутри сервиса — свой Chromium.
  *
- * Коды и magic link из писем Skyvern сам не получает: runtime принимает письмо на адрес
- * агента и отдаёт его в Skyvern через `POST /v1/credentials/totp` с `totp_identifier`
- * равным этому адресу. Задача запускается с тем же `totp_identifier`, поэтому код
- * попадает в нужный запуск.
+ * Код и magic link в страницу не вставляем. Задача стартует с `totp_identifier` = почта
+ * агента. Письмо целиком уходит в `POST /v1/credentials/totp` с тем же идентификатором,
+ * Skyvern сам достаёт код или открывает ссылку.
  * https://docs.skyvern.com/credentials/totp
  */
 
 const TERMINAL = new Set(["completed", "failed", "terminated", "canceled", "timed_out"]);
+const TOTP_CONTENT_MAX = 6000;
+const TOTP_BUFFER_TTL_MS = 15 * 60 * 1000;
+
+/** Страница ждёт письмо: не выдумывать код, не брать его со страницы, не пропускать шаг. */
+const TOTP_WAIT =
+  "Если страница просит код из письма или присылает ссылку подтверждения или входа — подожди. Письмо придёт в этот ящик и будет передано в эту задачу. Код не выдумывай, не бери его со страницы и не пропускай этот шаг.";
 
 /**
- * Content для Skyvern TOTP: полное письмо предпочтительнее — сервис сам вытащит код.
- * Иначе — фраза с цифрами или сама ссылка.
+ * Тело для TOTP: первая строка — тема, дальше plain text.
+ * Нет текста — HTML без тегов и со схлопнутыми пробелами. Код из письма не вырезаем.
  */
-export function totpContent(v: { kind: "code" | "link"; value: string; emailBody?: string | undefined }): string {
-  const body = v.emailBody?.trim();
-  if (body && body.length > 10) return body.slice(0, 8000);
-  if (v.kind === "code") return `Your verification code is ${v.value}`;
-  return v.value;
+export function skyvernInboxContent(email: { subject: string; text: string; html: string }): string {
+  const subject = email.subject.replace(/\s+/g, " ").trim();
+  const plain = email.text.trim();
+  const body = plain || stripHtml(email.html);
+  return `${subject}\n${body}`.slice(0, TOTP_CONTENT_MAX);
+}
+
+function codePoint(code: number): string {
+  if (!Number.isInteger(code) || code < 0 || code > 0x10ffff) return " ";
+  return String.fromCodePoint(code);
+}
+
+function stripHtml(html: string): string {
+  const links: string[] = [];
+  const withoutScripts = html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/\s(?:href|src)\s*=\s*["']([^"']+)["']/gi, (_full, url: string) => {
+      links.push(url);
+      return " ";
+    });
+  const text = withoutScripts
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => codePoint(Number.parseInt(n, 16)))
+    .replace(/&#(\d+);/g, (_, n) => codePoint(Number(n)))
+    .replace(/&[a-z]+;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const missing = links.filter((url) => url && !text.includes(url));
+  return [text, ...missing].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function totpSource(service: string): string {
+  const name = service.replace(/\s+/g, " ").trim() || "mail";
+  return `${name}-inbox`;
+}
+
+function hostLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "mail";
+  }
 }
 
 export const INVITE_OUTPUT_SCHEMA = {
@@ -84,6 +131,9 @@ export interface SkyvernLoginArgs {
   prompt: string;
   credentials: Record<string, string>;
   timeoutMs?: number;
+  /** Имя сервиса для `source` в TOTP. Иначе — хост url. */
+  service?: string;
+  browserSessionId?: string | null;
   onSession?: (session: BrowserSession) => Promise<void>;
 }
 
@@ -92,6 +142,16 @@ interface ActiveRun {
   sessionId: string;
   runId: string;
   startedAt: number;
+  service: string;
+  expectTotp: boolean;
+}
+
+interface TotpOffer {
+  /** Письмо забрала задача входа: новый сценарий сейчас не открывать. */
+  taken: boolean;
+  posted: boolean;
+  /** Код, который вернул Skyvern. Пусто — не ошибка: в письме может быть ссылка. */
+  code: string | null;
 }
 
 /** Текст задачи Skyvern: принять приглашение. Существующий аккаунт — только вход, без нового пароля. */
@@ -105,7 +165,7 @@ export function inviteTaskPrompt(args: {
   const identity = [
     `Имя вводи сам, до кнопки отправки: в name, full name, first name, last name, display name и username — «${args.agentName}». Одно слово — и в имя, и в фамилию. Пустым имя не оставляй. Адрес электронной почты — только ${args.email}.`,
     "Способ входа — только почта (Continue with email). Google, Microsoft, GitHub, Apple и SSO не выбирай, если есть обычный путь.",
-    "Если просят код из письма или magic link — жди: письмо придёт на этот адрес, код или ссылка появятся сами. Код не выдумывай.",
+    TOTP_WAIT,
     "Капча решается сама. Подожди и продолжи. outcome=blocked и blocker_kind=captcha — только если после ожидания страница всё ещё не пускает.",
     "SSO без почты, аппаратный 2FA, телефон или оплата — outcome=blocked и blocker_kind (sso_only, two_factor, phone, payment). Не обходи.",
     "Не нажимай unsubscribe и help. Не меняй настройки, никого не приглашай, ничего не оплачивай.",
@@ -192,14 +252,19 @@ export function interpretInviteOutput(
 
 export class SkyvernClient {
   private readonly active = new Map<string, ActiveRun>();
-  /** Сессия жива до close или до таймаута: почта в это время удерживается. */
+  /** Сессия жива до close или до таймаута: машину в это время не усыпляем. */
   private readonly held = new Map<string, number>();
   private readonly sessionLive = new Map<string, string | null>();
   /** CDP-адрес сессии для экспорта cookies в свой Chromium. */
   private readonly sessionCdp = new Map<string, string | null>();
   private readonly metas = new Map<string, BrowserSession>();
-  /** Код пришёл между задачами одной сессии — отдадим в следующую. */
-  private readonly pendingTotp: string[] = [];
+  /** Захват ящика на время задачи входа. Счётчик: внешний вызов и runTask. */
+  private mailboxHolds = 0;
+  /** Письма до totp_identifier. Живут около 15 минут и уходят в задачу на старте. */
+  private readonly totpBuffer: Array<{ at: number; content: string }> = [];
+  /** Уже отданные письма, чтобы повтор после отпускания ящика не слать второй раз. */
+  private readonly forwarded = new Map<string, number>();
+  private onMailboxRelease: (() => void) | null = null;
   /** Задачи runtime, которые пользователь остановил — опрос Skyvern выходит сразу. */
   private readonly canceledRuns = new Set<string>();
 
@@ -212,7 +277,17 @@ export class SkyvernClient {
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
-  /** Идёт задача или открыта сессия онбординга: почта с кодом должна уйти в неё. */
+  /** После отпускания ящика разобрать отложенные письма обычным путём. */
+  setMailboxReleaseHook(fn: () => void): void {
+    this.onMailboxRelease = fn;
+  }
+
+  /** Ящик захвачен задачей входа, регистрации или сброса пароля. */
+  get mailboxCaptured(): boolean {
+    return this.mailboxHolds > 0;
+  }
+
+  /** Идёт задача или открыта сессия онбординга. Машину не усыплять; почту само по себе не глотать. */
   get busy(): boolean {
     const now = Date.now();
     for (const [id, until] of this.held) if (until <= now) this.held.delete(id);
@@ -323,7 +398,6 @@ export class SkyvernClient {
     this.held.delete(browserSessionId);
     this.sessionLive.delete(browserSessionId);
     this.sessionCdp.delete(browserSessionId);
-    this.pendingTotp.length = 0;
     const meta = this.metas.get(`skyvern-${browserSessionId}`);
     this.metas.delete(`skyvern-${browserSessionId}`);
     if (meta) {
@@ -346,13 +420,15 @@ export class SkyvernClient {
    * и закрывается, если человек не нужен. Переданная сессия остаётся открытой.
    */
   async acceptInvite(args: SkyvernInviteArgs): Promise<AcceptInviteResult & { session: BrowserSession }> {
+    this.captureMailbox();
     const owned = !args.browserSessionId;
-    const opened = args.browserSessionId
-      ? { browserSessionId: args.browserSessionId, liveUrl: this.sessionLive.get(args.browserSessionId) ?? null }
-      : await this.openBrowserSession();
-    const password = args.password ?? generatePassword();
-    const existing = args.existing ?? Boolean(args.password);
+    let opened: { browserSessionId: string; liveUrl: string | null } | null = null;
     try {
+      opened = args.browserSessionId
+        ? { browserSessionId: args.browserSessionId, liveUrl: this.sessionLive.get(args.browserSessionId) ?? null }
+        : await this.openBrowserSession();
+      const password = args.password ?? generatePassword();
+      const existing = args.existing ?? Boolean(args.password);
       const prompt = inviteTaskPrompt({
         service: args.service,
         agentName: args.agentName,
@@ -371,6 +447,7 @@ export class SkyvernClient {
         browserSessionId: opened.browserSessionId,
         leaveOpen: true,
         expectTotp: true,
+        service: args.service,
         onSession: args.onSession,
         onStep: args.onStep,
       });
@@ -382,8 +459,10 @@ export class SkyvernClient {
       if (owned && result.status !== "needs_human") await this.closeBrowserSession(opened.browserSessionId);
       return { ...result, session: r.session };
     } catch (e) {
-      if (owned) await this.closeBrowserSession(opened.browserSessionId);
+      if (owned && opened) await this.closeBrowserSession(opened.browserSessionId);
       throw e;
+    } finally {
+      this.releaseMailbox();
     }
   }
 
@@ -414,89 +493,152 @@ export class SkyvernClient {
 
   /** Вход или регистрация по готовой инструкции агента (`POST /skyvern/login`). */
   async runLoginOrSignup(args: SkyvernLoginArgs): Promise<{ session: BrowserSession; status: string; output: unknown }> {
-    const creds = Object.entries(args.credentials)
-      .map(([k, v]) => `${k}: ${v}`)
-      .join("\n");
-    const prompt = [
-      args.prompt,
-      creds ? `\nДанные для формы:\n${creds}` : "",
-      "\nЕсли просят код из письма или ссылку для входа — дождись, он придёт сам. Google, Microsoft и SSO не выбирай.",
-    ].join("\n");
-    const r = await this.runTask({
-      runId: args.runId,
-      url: args.url,
-      prompt,
-      purpose: `${args.purpose}: ${args.url}`,
-      schema: LOGIN_OUTPUT_SCHEMA,
-      maxSteps: 25,
-      timeoutMs: args.timeoutMs,
-      expectTotp: true,
-      onSession: args.onSession,
-    });
-    return { session: r.session, status: r.status, output: r.output };
+    this.captureMailbox();
+    let owned: string | null = null;
+    try {
+      let browserSessionId = args.browserSessionId ?? null;
+      if (!browserSessionId) {
+        const opened = await this.openBrowserSession();
+        browserSessionId = opened.browserSessionId;
+        owned = browserSessionId;
+      }
+      const creds = Object.entries(args.credentials)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join("\n");
+      const prompt = [args.prompt, creds ? `\nДанные для формы:\n${creds}` : "", "", TOTP_WAIT, "Google, Microsoft и SSO не выбирай."].join("\n");
+      const r = await this.runTask({
+        runId: args.runId,
+        url: args.url,
+        prompt,
+        purpose: `${args.purpose}: ${args.url}`,
+        schema: LOGIN_OUTPUT_SCHEMA,
+        maxSteps: 25,
+        timeoutMs: args.timeoutMs,
+        browserSessionId,
+        expectTotp: true,
+        service: args.service?.trim() || hostLabel(args.url),
+        onSession: args.onSession,
+      });
+      if (owned) {
+        await this.closeBrowserSession(owned);
+        owned = null;
+      }
+      return { session: r.session, status: r.status, output: r.output };
+    } finally {
+      if (owned) await this.closeBrowserSession(owned).catch(() => undefined);
+      this.releaseMailbox();
+    }
   }
 
   /**
-   * Код или ссылка из письма → в Skyvern.
-   * В `content` лучше полное тело письма: Skyvern сам вытащит цифры или magic link.
-   * Привязываем к последней задаче, чтобы при нескольких код не ушёл не туда.
+   * Письмо целиком → в задачу входа. Код и ссылку не разбираем.
+   * Нет живой задачи — кладём в буфер на 15 минут. Захват ящика значит «не открывать новый сценарий».
    */
-  async pushCode(v: {
-    kind: "code" | "link";
-    value: string;
-    /** Тема + тело письма — предпочтительный content для TOTP API. */
-    emailBody?: string | undefined;
-  }): Promise<{ ok: boolean; buffered: boolean; content: string }> {
-    const content = totpContent(v);
-    const latest = [...this.active.values()].sort((a, b) => b.startedAt - a.startedAt)[0];
-    if (!latest) {
-      if (this.held.size === 0) return { ok: false, buffered: false, content };
-      this.pendingTotp.push(content);
-      log("skyvern", "код придержан до следующей задачи сессии", {
-        kind: v.kind,
-        ...(v.kind === "code" ? { code: v.value } : { link: v.value.slice(0, 120) }),
-      });
-      return { ok: true, buffered: true, content };
+  async offerEmail(content: string): Promise<TotpOffer> {
+    const body = content.trim().slice(0, TOTP_CONTENT_MAX);
+    if (!body) return { taken: false, posted: false, code: null };
+    this.pruneTotp();
+    const tasks = this.totpTasks();
+    if (tasks.length > 0) {
+      if (this.forwarded.has(body)) return { taken: true, posted: false, code: null };
+      const target = [...tasks].sort((a, b) => b.startedAt - a.startedAt)[0] ?? null;
+      const posted = await this.postTotp(target, body);
+      if (posted.ok) this.forwarded.set(body, Date.now());
+      else this.rememberTotp(body);
+      return { taken: true, posted: posted.ok, code: posted.code };
     }
-    const ok = await this.postTotp(latest, content, v.kind === "code" ? "code" : "link", v.value);
-    return { ok, buffered: false, content };
+    if (!this.forwarded.has(body)) this.rememberTotp(body);
+    if (this.mailboxCaptured) {
+      log("skyvern", "письмо придержано до старта задачи входа", { totpIdentifier: this.totpIdentifier });
+      return { taken: true, posted: false, code: null };
+    }
+    return { taken: false, posted: false, code: null };
   }
 
-  private async postTotp(
-    target: ActiveRun,
-    content: string,
-    kind: "code" | "link" | "buffered",
-    displayValue?: string,
-  ): Promise<boolean> {
-    const res = await this.fetchImpl(`${this.base}/v1/credentials/totp`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": this.apiKey },
-      body: JSON.stringify({
-        totp_identifier: this.totpIdentifier,
-        content,
-        source: "email",
-        task_id: target.skyvernRunId,
-      }),
-    });
-    const digits = displayValue?.match(/^\d{4,8}$/) ? displayValue : content.match(/\b(\d{4,8})\b/)?.[1];
-    await this.store.appendBrowserAction(target.sessionId, {
-      type: "code-from-email",
-      kind,
-      delivered: res.ok,
-      totpContent: content.slice(0, 500),
-      ...(digits ? { code: digits } : kind === "link" ? { link: displayValue ?? content.slice(0, 200) } : {}),
-    });
-    if (!res.ok) {
-      warn("skyvern", "не удалось передать код", { status: res.status, body: (await res.text()).slice(0, 300) });
-      return false;
+  private captureMailbox(): void {
+    this.mailboxHolds++;
+  }
+
+  private releaseMailbox(): void {
+    if (this.mailboxHolds === 0) return;
+    this.mailboxHolds--;
+    if (this.mailboxHolds === 0) this.onMailboxRelease?.();
+  }
+
+  private totpTasks(): ActiveRun[] {
+    return [...this.active.values()].filter((t) => t.expectTotp);
+  }
+
+  private pruneTotp(): void {
+    const cutoff = Date.now() - TOTP_BUFFER_TTL_MS;
+    while (this.totpBuffer.length > 0 && this.totpBuffer[0]!.at < cutoff) this.totpBuffer.shift();
+    for (const [key, at] of this.forwarded) if (at < cutoff) this.forwarded.delete(key);
+  }
+
+  private rememberTotp(content: string): void {
+    this.pruneTotp();
+    if (this.totpBuffer.some((item) => item.content === content)) return;
+    if (this.totpBuffer.length >= 30) this.totpBuffer.shift();
+    this.totpBuffer.push({ at: Date.now(), content });
+  }
+
+  private async flushBuffer(task: ActiveRun): Promise<void> {
+    this.pruneTotp();
+    const pending = this.totpBuffer.splice(0);
+    for (const item of pending) {
+      const posted = await this.postTotp(task, item.content);
+      if (posted.ok) this.forwarded.set(item.content, Date.now());
+      else this.rememberTotp(item.content);
     }
-    log("skyvern", "код из письма передан в Skyvern TOTP", {
-      kind,
-      skyvernRunId: target.skyvernRunId,
-      totpIdentifier: this.totpIdentifier,
-      ...(digits ? { code: digits } : { link: (displayValue ?? content).slice(0, 120) }),
-    });
-    return true;
+  }
+
+  /**
+   * POST /v1/credentials/totp. Ошибка логируется и не бросается: вход продолжается.
+   * `task_id` только когда известна ровно одна ждущая задача.
+   */
+  private async postTotp(target: ActiveRun | null, content: string): Promise<{ ok: boolean; code: string | null }> {
+    const payload: Record<string, string> = {
+      totp_identifier: this.totpIdentifier,
+      content,
+      source: totpSource(target?.service ?? "mail"),
+    };
+    if (target && this.totpTasks().length === 1) payload.task_id = target.skyvernRunId;
+    try {
+      const res = await this.fetchImpl(`${this.base}/v1/credentials/totp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": this.apiKey },
+        body: JSON.stringify(payload),
+      });
+      const raw = await res.text();
+      if (!res.ok) {
+        warn("skyvern", "не удалось передать письмо в TOTP", { status: res.status, body: raw.slice(0, 300) });
+        return { ok: false, code: null };
+      }
+      let code: string | null = null;
+      try {
+        const parsed = JSON.parse(raw) as { code?: unknown };
+        code = typeof parsed.code === "string" && parsed.code.trim() ? parsed.code.trim() : null;
+      } catch {
+        code = null;
+      }
+      log("skyvern", "письмо передано в TOTP", {
+        totpIdentifier: this.totpIdentifier,
+        ...(target ? { skyvernRunId: target.skyvernRunId } : {}),
+        code,
+      });
+      if (target) {
+        await this.store.appendBrowserAction(target.sessionId, {
+          type: "code-from-email",
+          delivered: true,
+          totpContent: content.slice(0, 500),
+          ...(code ? { code } : {}),
+        });
+      }
+      return { ok: true, code };
+    } catch (e) {
+      warn("skyvern", "не удалось передать письмо в TOTP", { error: String(e) });
+      return { ok: false, code: null };
+    }
   }
 
   private async runTask(args: {
@@ -510,8 +652,33 @@ export class SkyvernClient {
     browserSessionId?: string | undefined;
     /** Не помечать сессию закрытой: следующая задача или человек ещё в ней. */
     leaveOpen?: boolean | undefined;
-    /** В журнале: задача может ждать код из письма. */
+    /** Задача входа, регистрации или сброса: захватить ящик и ждать письмо. */
     expectTotp?: boolean | undefined;
+    service?: string | undefined;
+    onSession?: ((session: BrowserSession) => Promise<void>) | undefined;
+    onStep?: ((text: string, data?: Record<string, unknown>) => Promise<void> | void) | undefined;
+  }): Promise<{ session: BrowserSession; status: string; output: unknown; failureReason: string | null }> {
+    if (args.expectTotp) this.captureMailbox();
+    try {
+      if (args.expectTotp && !args.browserSessionId) throw new Error("задаче входа нужен browser_session_id");
+      return await this.runTaskBody(args);
+    } finally {
+      if (args.expectTotp) this.releaseMailbox();
+    }
+  }
+
+  private async runTaskBody(args: {
+    runId: string;
+    url: string;
+    prompt: string;
+    purpose: string;
+    schema: unknown;
+    maxSteps: number;
+    timeoutMs?: number | undefined;
+    browserSessionId?: string | undefined;
+    leaveOpen?: boolean | undefined;
+    expectTotp?: boolean | undefined;
+    service?: string | undefined;
     onSession?: ((session: BrowserSession) => Promise<void>) | undefined;
     onStep?: ((text: string, data?: Record<string, unknown>) => Promise<void> | void) | undefined;
   }): Promise<{ session: BrowserSession; status: string; output: unknown; failureReason: string | null }> {
@@ -546,11 +713,17 @@ export class SkyvernClient {
     };
     meta.purpose = args.purpose;
     if (!meta.liveUrl) meta.liveUrl = created.app_url ?? null;
-    const run = { skyvernRunId, sessionId: meta.id, runId: args.runId, startedAt: Date.now() };
+    const run: ActiveRun = {
+      skyvernRunId,
+      sessionId: meta.id,
+      runId: args.runId,
+      startedAt: Date.now(),
+      service: args.service?.trim() || "mail",
+      expectTotp: Boolean(args.expectTotp),
+    };
     this.active.set(skyvernRunId, run);
     this.metas.set(meta.id, meta);
-    const buffered = this.pendingTotp.splice(0);
-    for (const content of buffered) await this.postTotp(run, content, "buffered");
+    if (run.expectTotp) await this.flushBuffer(run);
     await this.store.saveBrowserSession(meta);
     await this.store.appendBrowserAction(meta.id, { type: "skyvern.start", purpose: args.purpose, url: args.url, appUrl: created.app_url ?? null });
     await args.onSession?.(meta);

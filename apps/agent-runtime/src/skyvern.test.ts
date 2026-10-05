@@ -1,15 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
-import { SkyvernClient, interpretInviteOutput, inviteTaskPrompt, totpContent } from "./browser/skyvern";
+import { SkyvernClient, interpretInviteOutput, inviteTaskPrompt, skyvernInboxContent } from "./browser/skyvern";
 import type { Store } from "./store";
 
-describe("totpContent", () => {
-  it("sends the full email body when present so Skyvern can extract the code", () => {
-    const body = "Hello,\nYour verification code is 482913.\nThanks";
-    expect(totpContent({ kind: "code", value: "482913", emailBody: body })).toBe(body);
+describe("skyvernInboxContent", () => {
+  it("puts the subject on the first line and keeps the plain text, including a link", () => {
+    const content = skyvernInboxContent({
+      subject: "Sign in",
+      text: "Your code is 482913.\nhttps://app.acme.io/magic",
+      html: "<p>ignore</p>",
+    });
+    expect(content).toBe("Sign in\nYour code is 482913.\nhttps://app.acme.io/magic");
   });
 
-  it("falls back to a short phrase with the digits", () => {
-    expect(totpContent({ kind: "code", value: "482913" })).toBe("Your verification code is 482913");
+  it("strips tags and collapses whitespace when there is no plain text", () => {
+    const content = skyvernInboxContent({
+      subject: "Sign in",
+      text: "",
+      html: "<p>Click <a href=\"https://app.acme.io/magic\">here</a></p>  <b>4 8 2 9</b>",
+    });
+    expect(content).toBe("Sign in\nClick here 4 8 2 9 https://app.acme.io/magic");
+  });
+
+  it("caps the letter at 6000 characters", () => {
+    const content = skyvernInboxContent({ subject: "S", text: "x".repeat(7000), html: "" });
+    expect(content.length).toBe(6000);
+    expect(content.startsWith("S\n")).toBe(true);
   });
 });
 
@@ -41,7 +56,10 @@ describe("inviteTaskPrompt", () => {
     expect(p).toMatch(/Сам введи его в поле пароля/);
     expect(p).toMatch(/Имя вводи сам/);
     expect(p).not.toMatch(/Если просят задать пароль/);
-    expect(p).toMatch(/жди/i);
+    expect(p).toMatch(/подожди/);
+    expect(p).toMatch(/будет передано в эту задачу/);
+    expect(p).toMatch(/не бери его со страницы/);
+    expect(p).toMatch(/не пропускай этот шаг/);
     expect(p).toMatch(/Google, Microsoft/);
     expect(p).toContain("pending_approval");
     expect(p).toMatch(/после регистрации/);
@@ -154,10 +172,16 @@ describe("SkyvernClient", () => {
     expect(session.extensions).toEqual(["captcha-solver"]);
     expect(String(start.prompt)).toContain("bot@agents.test");
 
-    expect(await client.pushCode({ kind: "code", value: "482913" })).toMatchObject({ ok: true, buffered: false });
+    const letter = "Verify\nYour code is 482913\nhttps://app.acme.io/magic";
+    expect(await client.offerEmail(letter)).toMatchObject({ taken: true, posted: true, code: "482913" });
     const totp = calls.find((c) => c.url.endsWith("/v1/credentials/totp"))!.body as Record<string, unknown>;
-    expect(totp).toMatchObject({ totp_identifier: "bot@agents.test", task_id: "tsk_1", source: "email" });
-    expect(String(totp.content)).toContain("482913");
+    expect(totp).toEqual({
+      totp_identifier: "bot@agents.test",
+      task_id: "tsk_1",
+      source: "Acme-inbox",
+      content: letter,
+    });
+    expect(String(start.prompt)).toMatch(/будет передано в эту задачу/);
 
     await vi.advanceTimersByTimeAsync(11_000);
     const r = await pending;
@@ -231,15 +255,108 @@ describe("SkyvernClient", () => {
     vi.useRealTimers();
   });
 
-  it("pushCode is a no-op without an active run", async () => {
+  it("remembers a letter that arrives before the task and posts it unchanged when the task starts", async () => {
+    vi.useFakeTimers();
+    const { store } = fakeStore();
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      calls.push({ url: u, body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (u.endsWith("/v1/browser_sessions")) return json({ browser_session_id: "pbs_6", app_url: null });
+      if (u.endsWith("/close")) return json({ ok: true });
+      if (u.endsWith("/v1/run/tasks")) return json({ run_id: "tsk_6" });
+      if (u.endsWith("/v1/credentials/totp")) return json({ totp_code_id: "tc_6" });
+      return json({ status: "completed", output: { outcome: "accepted", password_set: true } });
+    });
+    const client = new SkyvernClient("key", store, "bot@agents.test", "https://api.skyvern.test", fetchImpl as typeof fetch);
+    const letter = "Confirm\nOpen https://app.acme.io/magic to continue";
+    expect(await client.offerEmail(letter)).toMatchObject({ taken: false, posted: false });
+    const pending = client.acceptInvite({
+      runId: "run_6",
+      url: "https://app.acme.io/invite/abc",
+      service: "Acme",
+      agentName: "Bot",
+      email: "bot@agents.test",
+    });
+    await vi.advanceTimersByTimeAsync(6_000);
+    await pending;
+    const totp = calls.find((c) => c.url.endsWith("/v1/credentials/totp"))!.body as Record<string, unknown>;
+    expect(totp).toEqual({
+      totp_identifier: "bot@agents.test",
+      task_id: "tsk_6",
+      source: "Acme-inbox",
+      content: letter,
+    });
+    expect(client.mailboxCaptured).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("keeps the invite running when the TOTP post fails", async () => {
+    vi.useFakeTimers();
+    const { store } = fakeStore();
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/v1/browser_sessions")) return json({ browser_session_id: "pbs_7", app_url: null });
+      if (u.endsWith("/close")) return json({ ok: true });
+      if (u.endsWith("/v1/run/tasks")) return json({ run_id: "tsk_7" });
+      if (u.endsWith("/v1/credentials/totp")) return new Response("nope", { status: 500 });
+      return json({ status: "completed", output: { outcome: "accepted", password_set: true } });
+    });
+    const client = new SkyvernClient("key", store, "bot@agents.test", "https://api.skyvern.test", fetchImpl as typeof fetch);
+    const pending = client.acceptInvite({
+      runId: "run_7",
+      url: "https://app.acme.io/invite/abc",
+      service: "Acme",
+      agentName: "Bot",
+      email: "bot@agents.test",
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await client.offerEmail("Verify\n482913")).toMatchObject({ taken: true, posted: false, code: null });
+    await vi.advanceTimersByTimeAsync(6_000);
+    await expect(pending).resolves.toMatchObject({ status: "accepted" });
+    vi.useRealTimers();
+  });
+
+  it("opens a browser session for login so the task has browser_session_id", async () => {
+    vi.useFakeTimers();
+    const { store } = fakeStore();
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      calls.push({ url: u, body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (u.endsWith("/v1/browser_sessions")) return json({ browser_session_id: "pbs_8", app_url: null });
+      if (u.endsWith("/close")) return json({ ok: true });
+      if (u.endsWith("/v1/run/tasks")) return json({ run_id: "tsk_8" });
+      return json({ status: "completed", output: { logged_in: true } });
+    });
+    const client = new SkyvernClient("key", store, "bot@agents.test", "https://api.skyvern.test", fetchImpl as typeof fetch);
+    const pending = client.runLoginOrSignup({
+      runId: "run_8",
+      url: "https://app.acme.io/login",
+      purpose: "login",
+      prompt: "войди",
+      credentials: { email: "bot@agents.test" },
+      service: "Acme",
+    });
+    await vi.advanceTimersByTimeAsync(6_000);
+    await pending;
+    const start = calls.find((c) => c.url.endsWith("/v1/run/tasks"))!.body as Record<string, unknown>;
+    expect(start.browser_session_id).toBe("pbs_8");
+    expect(start.totp_identifier).toBe("bot@agents.test");
+    expect(String(start.prompt)).toMatch(/не пропускай этот шаг/);
+    expect(client.mailboxCaptured).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("does not post a letter while no login task is running", async () => {
     const { store } = fakeStore();
     const fetchImpl = vi.fn();
     const client = new SkyvernClient("key", store, "bot@agents.test", "https://api.skyvern.test", fetchImpl as typeof fetch);
-    expect(await client.pushCode({ kind: "code", value: "1234" })).toMatchObject({ ok: false });
+    expect(await client.offerEmail("Verify\n1234")).toMatchObject({ taken: false, posted: false });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("pushCode prefers the full email body for Skyvern TOTP content", async () => {
+  it("posts the letter as received, without turning it into a bare code", async () => {
     vi.useFakeTimers();
     const { store } = fakeStore();
     const calls: Array<{ url: string; body: unknown }> = [];
@@ -263,10 +380,11 @@ describe("SkyvernClient", () => {
       email: "bot@agents.test",
     });
     await vi.advanceTimersByTimeAsync(10);
-    const body = "Subject: Verify\nYour Acme code is 991122. Expires in 10 minutes.";
-    expect(await client.pushCode({ kind: "code", value: "991122", emailBody: body })).toMatchObject({ ok: true });
+    const body = "Verify\nYour Acme code is 991122. Expires in 10 minutes.\nhttps://app.acme.io/magic";
+    expect(await client.offerEmail(body)).toMatchObject({ taken: true, posted: true, code: "991122" });
     const totp = calls.find((c) => c.url.endsWith("/v1/credentials/totp"))!.body as Record<string, unknown>;
     expect(totp.content).toBe(body);
+    expect(totp.source).toBe("Acme-inbox");
     await vi.advanceTimersByTimeAsync(6_000);
     await pending;
     vi.useRealTimers();

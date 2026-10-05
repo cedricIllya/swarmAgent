@@ -1,4 +1,4 @@
-import { processEmail } from "./inbox";
+import { browserHoldsMail, processEmail } from "./inbox";
 import { tickPrompt } from "./prompts";
 import type { AgentRuntime } from "./runtime";
 import { finishServiceThink } from "./service-work";
@@ -15,7 +15,7 @@ export async function tick(rt: AgentRuntime): Promise<{ deferred: number; checke
   running = true;
   try {
     let deferred = 0;
-    if (!rt.busyInBrowser) {
+    if (!browserHoldsMail(rt)) {
       const emails = await rt.store.takeDeferredEmails();
       deferred = emails.length;
       for (const e of emails) {

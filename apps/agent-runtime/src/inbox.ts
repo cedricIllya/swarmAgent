@@ -1,5 +1,6 @@
 import type { InboundEmail } from "@swarm/contracts";
 import { classifyReply, findDigitCode, matchesThread } from "./approval";
+import { skyvernInboxContent } from "./browser/skyvern";
 import { emailInviteFallback } from "./invite-signal";
 import { isTransientModelError } from "./openrouter";
 import { prepareOnboarding, runConnectFollowup } from "./onboarding";
@@ -39,14 +40,26 @@ export function isMachineSender(from: string): boolean {
  */
 let flushing = false;
 
-/** Отложенные письма читаются, как только браузер освободился, а не на следующем тике. */
+/**
+ * Почта не должна открывать новый сценарий: ящик захвачен задачей входа Skyvern
+ * или свой браузер ждёт код. Открытая сессия Skyvern после отпускания ящика сюда не входит.
+ */
+export function browserHoldsMail(rt: AgentRuntime): boolean {
+  return rt.skyvern?.mailboxCaptured === true || rt.browser.waitingForCode;
+}
+
+/** Отложенные письма читаются, как только ящик отпущен, а не на следующем тике. */
+export async function resumeDeferredMail(rt: AgentRuntime): Promise<void> {
+  await flushDeferred(rt);
+}
+
 async function flushDeferred(rt: AgentRuntime): Promise<void> {
-  if (flushing || rt.busyInBrowser) return;
+  if (flushing || browserHoldsMail(rt)) return;
   flushing = true;
   try {
     const emails = await rt.store.takeDeferredEmails();
     for (const email of emails) {
-      if (rt.busyInBrowser) {
+      if (browserHoldsMail(rt)) {
         await rt.store.deferEmail(email);
         continue;
       }
@@ -71,10 +84,29 @@ async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> 
     return;
   }
 
+  // Ответ в ветке выше уже ушёл мимо Skyvern. Остальное письмо — целиком, без разбора кода.
+  if (rt.skyvern) {
+    const offer = await rt.skyvern.offerEmail(skyvernInboxContent(email));
+    if (offer.taken) {
+      await rt.store.deferEmail(email);
+      const runId = rt.skyvern.activeRunId();
+      if (runId) {
+        const text = offer.posted
+          ? offer.code
+            ? `письмо передано в задачу входа, из него извлечён код ${offer.code}`
+            : "письмо передано в задачу входа"
+          : "письмо придержано до старта задачи входа";
+        await rt.step(runId, "email", text).catch((e) => warn("inbox", "не записал передачу письма", { error: String(e) }));
+      }
+      log("inbox", "письмо ушло в задачу входа, обычный разбор после неё", { subject: email.subject, code: offer.code });
+      return;
+    }
+  }
+
   const owner = ownerAddress(rt);
   const fromOwner = owner !== null && bareAddress(email.from) === owner;
 
-  if (rt.busyInBrowser && !fromOwner) {
+  if (rt.browser.waitingForCode && !fromOwner) {
     await handleWhileInBrowser(rt, email);
     return;
   }
@@ -82,7 +114,7 @@ async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> 
   // Браузер открыт, но код ещё не просил (страница с полем только грузится):
   // код или ссылку придерживаем для сессии, остальная почта идёт обычным путём.
   let known: EmailClassification | null = null;
-  if ((rt.browser.sessions.size > 0 || rt.skyvern?.busy) && !fromOwner) {
+  if (rt.browser.sessions.size > 0 && !fromOwner) {
     if (await deliverEmailChallenge(rt, email)) {
       await rt.store.deferEmail(email);
       return;
@@ -90,7 +122,7 @@ async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> 
     known = await classifyEmail(rt, email, "classify.email.browser-open").catch(() => null);
     if (known?.kind === "verification" && known.hasLoginLink && email.links.length > 0) {
       const link = pickLoginLink(email.links);
-      if (await rt.browser.deliverCode({ kind: "link", value: link, emailBody: emailBodyForLink(email, link) })) {
+      if (await rt.browser.deliverCode({ kind: "link", value: link })) {
         await rt.store.deferEmail(email);
         log("inbox", "ссылка для входа отдана в браузер и письмо сохранено");
         return;
@@ -101,24 +133,18 @@ async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> 
   await handleNewEmail(rt, email, known);
 }
 
-/** Код/OTP из письма → в Skyvern или свой браузер. В Skyvern уходит тело письма целиком. */
+/** Код/OTP из письма → в свой браузер. В задачу Skyvern письмо уходит выше, без разбора. */
 async function deliverEmailChallenge(rt: AgentRuntime, email: InboundEmail): Promise<boolean> {
   const body = `${email.subject}\n${email.replyText || email.text}`.trim();
   const code = findDigitCode(body);
   if (!code) return false;
-  const delivered = await rt.browser.deliverCode({ kind: "code", value: code, emailBody: body });
+  const delivered = await rt.browser.deliverCode({ kind: "code", value: code });
   log("inbox", delivered ? "код из письма отдан в браузер" : "код из письма некуда отдать", {
     code,
     codeLen: code.length,
     delivered,
-    toSkyvern: Boolean(rt.skyvern?.busy),
   });
   return delivered;
-}
-
-function emailBodyForLink(email: InboundEmail, link: string): string {
-  const body = `${email.subject}\n${email.replyText || email.text}`.trim();
-  return body.includes(link) ? body : `${body}\n${link}`.trim();
 }
 
 function shouldResumeParked(email: InboundEmail, c: EmailClassification): boolean {
@@ -170,7 +196,7 @@ async function handleWhileInBrowser(rt: AgentRuntime, email: InboundEmail): Prom
   const c = await classifyEmail(rt, email, "classify.email.in-browser").catch(() => null);
   if (c?.kind === "verification" && c.hasLoginLink && email.links.length > 0) {
     const link = pickLoginLink(email.links);
-    const delivered = await rt.browser.deliverCode({ kind: "link", value: link, emailBody: emailBodyForLink(email, link) });
+    const delivered = await rt.browser.deliverCode({ kind: "link", value: link });
     log("inbox", "ссылка для входа в браузер", { delivered });
     return;
   }
@@ -225,12 +251,12 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
     // Письмо с OTP могло прийти чуть раньше/позже окна busyInBrowser — всё равно пробуем отдать.
     // Успешная передача уже пишет сам код в журнал активной задачи (онбординг / сессия).
     const code = findDigitCode(`${email.subject}\n${email.replyText || email.text}`);
-    if (code && (await rt.browser.deliverCode({ kind: "code", value: code, emailBody: `${email.subject}\n${email.replyText || email.text}` }))) return;
+    if (code && (await rt.browser.deliverCode({ kind: "code", value: code }))) return;
     if (c.hasLoginLink && email.links.length > 0) {
       const link = pickLoginLink(email.links);
-      if (await rt.browser.deliverCode({ kind: "link", value: link, emailBody: emailBodyForLink(email, link) })) return;
+      if (await rt.browser.deliverCode({ kind: "link", value: link })) return;
     }
-    if (rt.busyInBrowser) {
+    if (browserHoldsMail(rt)) {
       await rt.store.deferEmail(email);
       log("inbox", "verification отложен: браузер занят, код не извлечён", { subject: email.subject });
       return;
