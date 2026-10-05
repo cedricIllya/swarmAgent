@@ -33,6 +33,30 @@ const PENDING_CODE_TTL_MS = 10 * 60 * 1000;
 /** Один шаг Stagehand: модель плюс действие на странице. Зависший шаг не держит задачу вечно. */
 const STEP_TIMEOUT_MS = 2 * 60 * 1000;
 const CLOSE_TIMEOUT_MS = 10 * 1000;
+/** SPA после domcontentloaded ещё белая: ждём затишья сети и первого текста, но не дольше этого. */
+const SETTLE_MS = 8 * 1000;
+const TEXT_POLL_MS = 400;
+
+type SettlePage = {
+  waitForLoadState(state: "load" | "domcontentloaded" | "networkidle", timeout?: number): Promise<void>;
+  evaluate<R>(expression: string): Promise<R>;
+  waitForTimeout(ms: number): Promise<void>;
+};
+
+/** Есть ли на странице хоть какой-то текст. Ошибка оценки — считаем, что есть: ждать дальше нечего. */
+async function hasVisibleText(page: SettlePage): Promise<boolean> {
+  return page.evaluate<boolean>("(document.body && document.body.innerText || '').trim().length > 0").catch(() => true);
+}
+
+export async function settlePage(page: SettlePage, opts: { network: boolean; budgetMs?: number }): Promise<void> {
+  const budget = opts.budgetMs ?? SETTLE_MS;
+  const until = Date.now() + budget;
+  if (opts.network) await page.waitForLoadState("networkidle", budget).catch(() => undefined);
+  while (!(await hasVisibleText(page))) {
+    if (Date.now() >= until) return;
+    await page.waitForTimeout(TEXT_POLL_MS);
+  }
+}
 
 async function withTimeout<T>(what: string, ms: number, p: Promise<T>): Promise<T> {
   let timer: NodeJS.Timeout | null = null;
@@ -240,17 +264,25 @@ export class ManagedBrowserSession {
   async goto(url: string): Promise<void> {
     const page = await this.page();
     await page.goto(url, { waitUntil: "domcontentloaded" });
+    await settlePage(page, { network: true });
     await this.action({ type: "goto", url });
     await this.shot();
   }
 
+  /** Перед чтением страницы моделью: после клика SPA дорисовывается не сразу. */
+  private async settled(): Promise<void> {
+    await settlePage(await this.page(), { network: false, budgetMs: SETTLE_MS / 2 }).catch(() => undefined);
+  }
+
   async act(instruction: string): Promise<{ success: boolean; message: string }> {
+    await this.settled();
     try {
       const r = (await withTimeout("act", STEP_TIMEOUT_MS, this.sh().act(instruction))) as { success?: boolean; message?: string };
       const out = { success: r.success ?? true, message: r.message ?? "" };
       await this.action({ type: "act", instruction, ...out });
       return out;
     } finally {
+      await this.settled();
       await this.shot();
     }
   }
@@ -275,6 +307,7 @@ export class ManagedBrowserSession {
 
   async extract(instruction: string, schema?: unknown): Promise<unknown> {
     const zod = toExtractSchema(schema);
+    await this.settled();
     const r = (await withTimeout(
       "extract",
       STEP_TIMEOUT_MS,
@@ -285,6 +318,7 @@ export class ManagedBrowserSession {
   }
 
   async observe(instruction: string): Promise<unknown> {
+    await this.settled();
     const r = (await withTimeout("observe", STEP_TIMEOUT_MS, this.sh().observe(instruction))) as { data?: unknown };
     await this.action({ type: "observe", instruction, result: r.data });
     return r.data;
