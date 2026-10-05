@@ -74,7 +74,7 @@ export function ChatPaneSkeleton() {
   return (
     <div className="chat" aria-busy="true">
       <span className="sr-only">Загрузка сообщений</span>
-      <Skeleton className="skeleton-bubble" width="46%" style={{ marginTop: "auto" }} />
+      <Skeleton className="skeleton-bubble" width="46%" />
       <Skeleton className="skeleton-bubble skeleton-bubble-end" width="62%" />
       <Skeleton className="skeleton-bubble" width="38%" height={72} />
       <Skeleton className="skeleton-bubble skeleton-bubble-end" width="54%" />
