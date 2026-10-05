@@ -18,14 +18,11 @@ export interface RuntimeConfig {
   openRouterApiKey: string;
   hermesApiUrl: string;
   hermesApiKey: string;
-  browserbase: { apiKey: string; projectId: string } | null;
   skyvernApiKey: string | null;
   tickMinutes: number;
 }
 
 export function loadConfig(): RuntimeConfig {
-  const bbKey = process.env.BROWSERBASE_API_KEY;
-  const bbProject = process.env.BROWSERBASE_PROJECT_ID;
   return {
     port: Number(process.env.PORT ?? 8787),
     dataDir: process.env.DATA_DIR ?? "/opt/data",
@@ -40,7 +37,6 @@ export function loadConfig(): RuntimeConfig {
     openRouterApiKey: need("OPENROUTER_API_KEY"),
     hermesApiUrl: process.env.HERMES_API_URL ?? "http://127.0.0.1:8642/v1",
     hermesApiKey: process.env.HERMES_API_KEY ?? process.env.API_SERVER_KEY ?? "",
-    browserbase: bbKey && bbProject ? { apiKey: bbKey, projectId: bbProject } : null,
     skyvernApiKey: process.env.SKYVERN_API_KEY ?? null,
     tickMinutes: Number(process.env.TICK_MINUTES ?? 15),
   };

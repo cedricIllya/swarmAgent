@@ -47,12 +47,9 @@ export function toolRoutes(rt: AgentRuntime): Hono {
   });
 
   // Принять приглашение и зарегистрироваться под почтой агента — всегда в браузере:
-  // Skyvern (коды из писем runtime передаёт ему сам), иначе Stagehand на Browserbase.
+  // Skyvern (коды из писем runtime передаёт ему сам), иначе свой Chromium.
   app.post("/invite/accept", async (c) => {
     noteActivity();
-    if (!rt.browser.canOnboard) {
-      return c.json({ error: "браузер для онбординга не настроен: нужен SKYVERN_API_KEY или Browserbase" }, 400);
-    }
     const body = z
       .object({ runId: z.string(), url: z.string().url(), slug: z.string().min(1), service: z.string().min(1) })
       .parse(await c.req.json());

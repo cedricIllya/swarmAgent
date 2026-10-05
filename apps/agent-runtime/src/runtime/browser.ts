@@ -1,6 +1,5 @@
-import Browserbase from "@browserbasehq/sdk";
 import type { Run, ServiceCredential } from "@swarm/contracts";
-import { ManagedBrowserSession, ensureContext, type BrowserDeps } from "../browser/stagehand";
+import { chromeAvailable, ManagedBrowserSession, type BrowserDeps } from "../browser/stagehand";
 import { acceptInvite, type AcceptInviteResult } from "../browser/invite";
 import { OWNER_OUTAGE } from "../connect";
 import { hostOf, rootDomain } from "../domains";
@@ -8,27 +7,24 @@ import { warn } from "../log";
 import type { AgentRuntime } from "./index";
 
 /**
- * Браузер агента. Онбординг (принять приглашение, зарегистрироваться) всегда идёт в браузере:
- * сначала Skyvern, если его нет или он не справился — сессия Stagehand на Browserbase.
- * Открытые сессии Browserbase живут в этом процессе: открыть, закрыть, передать код из письма.
- * Записи сессий переживают рестарт в Store, сами сессии — нет.
+ * Браузер агента. Онбординг сначала идёт в Skyvern: он обходит капчи.
+ * Если Skyvern не настроен или не довёл вход — тот же цикл на своём Chromium.
+ * Работа внутри сервиса без MCP и API — тоже свой Chromium. Сессии живут в этом
+ * процессе: открыть, закрыть, передать код из письма. Записи шагов переживают рестарт.
  */
 export class BrowserControl {
   readonly sessions = new Map<string, ManagedBrowserSession>();
-  private readonly bb: Browserbase | null;
 
-  constructor(private readonly rt: AgentRuntime) {
-    this.bb = rt.cfg.browserbase ? new Browserbase({ apiKey: rt.cfg.browserbase.apiKey }) : null;
-  }
+  constructor(private readonly rt: AgentRuntime) {}
 
-  /** Есть Browserbase: сессии Stagehand для работы внутри сервиса. */
+  /** Свой Chromium найден на машине. */
   get available(): boolean {
-    return this.bb !== null;
+    return chromeAvailable();
   }
 
-  /** Есть хоть один браузер для онбординга: Skyvern или Browserbase. */
+  /** Онбординг: Skyvern или свой браузер. */
   get canOnboard(): boolean {
-    return this.rt.skyvern !== null || this.bb !== null;
+    return this.rt.skyvern !== null || this.available;
   }
 
   /** Кто-то ждёт код из письма: почта идёт в него, а не в новую задачу. */
@@ -40,22 +36,21 @@ export class BrowserControl {
 
   deps(): BrowserDeps {
     const { rt } = this;
-    if (!this.bb || !rt.cfg.browserbase) throw new Error("Browserbase не настроен: BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID");
-    return {
-      bb: this.bb,
-      projectId: rt.cfg.browserbase.projectId,
-      apiKey: rt.cfg.browserbase.apiKey,
-      openRouter: rt.openRouter,
-      model: rt.model,
-      store: rt.store,
-    };
+    return { openRouter: rt.openRouter, model: rt.model, store: rt.store };
   }
 
   async open(run: Run, args: { purpose: string; serviceSlug: string | null; url?: string }): Promise<ManagedBrowserSession> {
     const { rt } = this;
+    if (args.serviceSlug) {
+      for (const open of this.sessions.values()) {
+        if (open.serviceSlug !== args.serviceSlug) continue;
+        if (args.url) await open.goto(args.url);
+        return open;
+      }
+    }
     const s = await ManagedBrowserSession.open(this.deps(), rt.taskRef(run), { runId: run.id, ...args });
     this.sessions.set(s.id, s);
-    await rt.step(run.id, "browser", `открыт браузер: ${args.purpose}`, { sessionId: s.id, liveUrl: s.meta.liveUrl });
+    await rt.step(run.id, "browser", `открыт браузер: ${args.purpose}`, { sessionId: s.id });
     await rt.announceBrowser(run, s.meta);
     return s;
   }
@@ -65,12 +60,12 @@ export class BrowserControl {
     if (!s) return;
     this.sessions.delete(sessionId);
     const meta = await s.close();
-    await this.rt.step(meta.runId, "browser", "браузер закрыт", { sessionId, hasVideo: meta.hasVideo });
+    await this.rt.step(meta.runId, "browser", "браузер закрыт", { sessionId });
   }
 
   /**
    * Код или ссылка из письма — туда, где её ждут. Задача Skyvern в приоритете: она не умеет
-   * читать почту сама. Иначе — в ждущую сессию Stagehand. Если никто не ждёт, но сессия
+   * читать почту сама. Иначе — в ждущую сессию своего браузера. Если никто не ждёт, но сессия
    * открыта, код придерживается для её ближайшего `wait-code`: письмо часто приходит
    * раньше, чем страница с полем для кода успевает загрузиться.
    */
@@ -90,8 +85,8 @@ export class BrowserControl {
 
   /**
    * Принять приглашение и зарегистрироваться под почтой агента. Skyvern — первый: runtime
-   * отдаёт ему коды из писем. Если Skyvern не настроен или не справился, та же задача идёт
-   * в сессии Stagehand в постоянном контексте сервиса (cookies останутся).
+   * отдаёт ему коды из писем и он обходит капчи. Если Skyvern не настроен или не справился,
+   * та же задача идёт в своём Chromium; cookies остаются в профиле сервиса.
    * После входа записываем доступ (`type=credential`: почта, имя, пароль), а если рецепта
    * ещё нет — минимальный браузерный.
    */
@@ -101,7 +96,6 @@ export class BrowserControl {
     opts?: { persist?: boolean; password?: string | null; skipSkyvern?: boolean },
   ): Promise<AcceptInviteResult> {
     const { rt } = this;
-    if (!this.canOnboard) throw new Error("браузер для онбординга не настроен: нужен SKYVERN_API_KEY или Browserbase");
     const snap = await rt.store.readServices();
     const found = snap?.credentials.find((c) => c.slug === args.slug) ?? null;
     const existing: ServiceCredential | null = opts?.password ? { ...(found ?? { slug: args.slug, kind: "browser" }), password: opts.password } : found;
@@ -133,12 +127,10 @@ export class BrowserControl {
           provider: "skyvern",
         };
       }
-      // Истёкшая ссылка своим браузером не лечится. Остальной сбой Skyvern — повтор в Stagehand.
-      if (result.status === "failed" && result.barrierKind !== "invite_spent" && this.bb) {
-        await rt.step(run.id, "note", "Повторяю вход.");
+      // Истёкшая ссылка своим браузером не лечится. Остальной сбой Skyvern — повтор у себя.
+      if (result.status === "failed" && result.barrierKind !== "invite_spent") {
+        await rt.step(run.id, "note", "Повторяю вход своим браузером.");
         result = await this.acceptInviteWithStagehand(run, args, existing);
-      } else if (result.notes === OWNER_OUTAGE) {
-        await rt.step(run.id, "error", OWNER_OUTAGE);
       }
     } else {
       result = await this.acceptInviteWithStagehand(run, args, existing);
@@ -175,9 +167,7 @@ export class BrowserControl {
     }
 
     const storageState =
-      result.provider === "browserbase" && this.bb
-        ? { provider: "browserbase", contextId: await ensureContext(this.deps(), args.slug) }
-        : existing?.storageState;
+      result.provider === "local" ? { provider: "local" as const, profile: args.slug } : existing?.storageState;
     const credential: ServiceCredential = {
       ...(existing ?? {}),
       slug: args.slug,
@@ -213,9 +203,10 @@ export class BrowserControl {
       await this.close(session.id);
       throw e;
     }
-    result.liveUrl = session.meta.liveUrl;
-    result.browserSessionId = session.id;
-    if (result.status !== "needs_human") await this.close(session.id);
+    result.liveUrl = null;
+    result.browserSessionId = null;
+    result.provider = "local";
+    await this.close(session.id);
     return result;
   }
 }

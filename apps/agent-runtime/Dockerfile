@@ -1,7 +1,10 @@
 # Собирается из корня монорепо:
 #   docker build -f apps/agent-runtime/Dockerfile -t registry.fly.io/swarm-agent-runtime:latest .
 FROM node:24-alpine AS base
-RUN corepack enable && corepack prepare pnpm@10 --activate
+# Свой браузер агента. Stagehand не привозит Chrome сам.
+RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont \
+  && corepack enable && corepack prepare pnpm@10 --activate
+ENV CHROME_PATH=/usr/bin/chromium
 WORKDIR /app
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./

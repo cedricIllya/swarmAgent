@@ -44,8 +44,8 @@ version: 1
    по почте (не Google/SSO), вводит `{{AGENT_EMAIL}}`, придумывает пароль, а коды и magic link из писем
    runtime передаёт ему сам. После входа runtime записывает доступ (`type=credential`: почта, имя,
    пароль) — владелец видит логин и пароль в карточке агента. Если Skyvern не настроен или не
-   справился, то же самое делает сессия Stagehand на Browserbase (`provider: "browserbase"`, cookies
-   остаются в контексте `serviceSlug`).
+   справился, то же самое делает свой Chromium на машине (`provider: "local"`, cookies
+   остаются в профиле `serviceSlug`). Живого экрана у него нет.
 
    Если сервис пишет, что заявка на регистрацию ждёт одобрения администратора — не заканчивай ход фразой «подожду» и не вызывай `POST /approval`. Runtime оставляет карточку: владелец одобряет заявку в сервисе и нажимает «Одобрил, продолжай», либо письмо сервиса на твою почту продолжает вход само.
 
@@ -63,8 +63,8 @@ version: 1
 2. **API.** MCP нет — ищи публичный REST/GraphQL API и способ получить ключ. Ключ лежит в
    `credentials[].token`. Запросы делай через `curl` в терминале. Нашёл способ — сообщи рецепт.
 3. **Браузер.** Ни MCP, ни API — работай в своём браузере через runtime (раздел 2). Открывай сессию с
-   тем же `serviceSlug`. Если шаг 0 делал Stagehand, cookies уже там; если Skyvern — сессия начнёт
-   с формы входа: войди по паролю из `credentials[].password` (через `/browser/act` или `/skyvern/login`),
+   тем же `serviceSlug`. Если шаг 0 делал свой браузер, cookies уже там; если Skyvern — сессия начнёт
+   с формы входа: войди по паролю из `credentials[].password` через `/browser/act`,
    коды из писем runtime передаст сам.
 
 Не понижай ступень: если MCP есть, браузер не открывай.
@@ -119,15 +119,14 @@ curl -s -X POST http://127.0.0.1:8787/skyvern/login \
 Пока идёт задача Skyvern, коды и ссылки для входа из писем runtime передаёт в неё сам — ждать
 `/browser/wait-code` не нужно. Skyvern — только регистрация и вход; действия внутри сервиса он не делает.
 
-Действия внутри сервиса (Stagehand на сессии Browserbase):
+Действия внутри сервиса (свой Chromium, Stagehand решает шаги):
 
 ```bash
 # открыть сессию; serviceSlug сохраняет cookies между сессиями
 curl -s -X POST http://127.0.0.1:8787/browser/open -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"runId":"<runId>","purpose":"создать задачу в трекере","serviceSlug":"example","url":"https://app.example.com"}'
-# → {"sessionId":"...","liveUrl":"https://..."} — liveUrl: живой экран сессии (null, если недоступен).
-#   Владелец и так видит его в чате; если спрашивают «что ты делаешь» — можно дать liveUrl ссылкой.
+# → {"sessionId":"...","liveUrl":null} — у своего браузера живого экрана нет, шаги пишутся в журнал.
 
 curl -s -X POST http://127.0.0.1:8787/browser/act      -d '{"sessionId":"...","instruction":"нажми New issue"}' ...
 curl -s -X POST http://127.0.0.1:8787/browser/extract  -d '{"sessionId":"...","instruction":"список задач на меня","schema":{...json schema...}}' ...

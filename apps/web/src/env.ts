@@ -29,6 +29,10 @@ export const env = {
   get openRouterApiKey() {
     return opt("OPENROUTER_API_KEY") ?? opt("OPEN_ROUTER_API_KEY");
   },
+  /** SHA коммита, из которого собран этот control plane. Пусто — ручная выкладка. */
+  get release() {
+    return opt("RELEASE");
+  },
   mailgun: {
     get apiKey() {
       return opt("MAILGUN_API_KEY");
@@ -53,8 +57,12 @@ export const env = {
     get region() {
       return opt("FLY_REGION") ?? "ams";
     },
+    /** Образ runtime того же коммита, что и control plane. Без RELEASE — `latest`. */
     get runtimeImage() {
-      return opt("AGENT_RUNTIME_IMAGE") ?? "registry.fly.io/swarm-agent-runtime:latest";
+      const explicit = opt("AGENT_RUNTIME_IMAGE");
+      if (explicit) return explicit;
+      const release = opt("RELEASE");
+      return release ? `registry.fly.io/swarm-agent-runtime:${release}` : "registry.fly.io/swarm-agent-runtime:latest";
     },
     get hermesImage() {
       return opt("HERMES_IMAGE") ?? "nousresearch/hermes-agent:latest";
@@ -62,14 +70,6 @@ export const env = {
   },
   get skyvernApiKey() {
     return opt("SKYVERN_API_KEY");
-  },
-  browserbase: {
-    get apiKey() {
-      return opt("BROWSERBASE_API_KEY");
-    },
-    get projectId() {
-      return opt("BROWSERBASE_PROJECT_ID");
-    },
   },
   google: {
     get clientId() {

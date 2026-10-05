@@ -103,6 +103,7 @@ export async function updateAgent(
     flyMachineId: string | null;
     flyVolumeId: string | null;
     runtimeUrl: string | null;
+    runtimeRelease: string | null;
     googleRefreshToken: string | null;
     googleEmail: string | null;
   }>,

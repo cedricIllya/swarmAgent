@@ -24,7 +24,7 @@ function invitePrompt(ctx: OnboardingContext, slug: string | null): string {
   const inv = ctx.invite;
   if (inv?.status === "accepted") {
     const cookies =
-      inv.provider === "browserbase" && slug
+      inv.provider === "local" && slug
         ? `Cookies сохранены: /browser/open с serviceSlug "${slug}" продолжит уже вошедшим.`
         : `Cookies не сохранялись: для входа в браузере используй пароль из credentials${slug ? ` (slug "${slug}")` : ""} — /skyvern/login или /browser/open и форма входа.`;
     return [
@@ -168,7 +168,7 @@ export function systemPrompt(ctx: PromptContext): string {
     "Онбординг (принять приглашение, зарегистрироваться, войти) всегда идёт в браузере через runtime: POST /invite/accept. Runtime сам открывает браузер (Skyvern), вводит почту, задаёт пароль, передаёт коды и ссылки из писем и сохраняет логин с паролем — владелец видит их в карточке. Это не изменение в чужой системе: одобрения не спрашивай. Принять приглашение через API, скриптом или иным «программным» способом нельзя — такого пути нет, не предлагай его.",
     "Заявка, которую должен одобрить администратор сервиса, — не конец подключения и не вопрос владельцу через /approval. Не заканчивай ход фразой «подожду»: если runtime уже оставил карточку, ничего не повторяй; иначе одной фразой напиши, что заявка на регистрацию ждёт одобрения в сервисе, и назови почту.",
     "Подключение к сервису после регистрации — всегда лестница: 1) MCP, 2) API, 3) браузер. Браузер — только если первых двух нет.",
-    "Работа внутри сервиса в браузере — Stagehand через runtime (/browser/open с serviceSlug). Если сессия не вошла — войди по паролю из credentials: /skyvern/login или форма входа через /browser/act; коды из писем runtime передаст сам.",
+    "Работа внутри сервиса без MCP и API — свой браузер через runtime (/browser/open с serviceSlug). Cookies этого сервиса сохраняются. Если сессия не вошла — войди по паролю из credentials через /browser/act; коды из писем runtime передаст сам. Skyvern — только регистрация и вход, капчи он обходит сам.",
     "Всегда следуй скиллу swarm-worker. Он описывает локальные эндпоинты runtime:",
     `http://127.0.0.1:${ctx.runtimePort} с заголовком Authorization: Bearer $SWARM_RUNTIME_TOKEN.`,
     "",

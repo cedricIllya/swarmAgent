@@ -23,15 +23,15 @@ openssl rand -base64 32
 | `FLY_API_TOKEN` | да, чтобы поднять машину | Токен организации: создание приложений, не deploy-токен одного приложения. |
 | `FLY_ORG` | нет | По умолчанию `personal`. На текущем деплое — `copyboy`. |
 | `FLY_REGION` | нет | По умолчанию `ams`. |
-| `AGENT_RUNTIME_IMAGE` | нет | По умолчанию `registry.fly.io/swarm-agent-runtime:latest`. |
+| `RELEASE` | ставит CI | SHA коммита, из которого собран образ. Задаёт образ runtime по умолчанию и порог, до которого control plane дотягивает машины агентов (см. [деплой](deploy.md)). Пусто — обновление агентов выключено. |
+| `AGENT_RUNTIME_IMAGE` | нет | По умолчанию `registry.fly.io/swarm-agent-runtime:<RELEASE>`, без `RELEASE` — `:latest`. |
 | `HERMES_IMAGE` | нет | По умолчанию `nousresearch/hermes-agent:latest`. |
 | `MAILGUN_API_KEY` | для отправки | Письма агентов и сброс пароля (с `no-reply@AGENTS_DOMAIN`). |
 | `MAILGUN_SIGNING_KEY` | см. [почту](mail.md) | Пусто вместе с токеном — вебхук открыт и пишет предупреждение. |
 | `MAILGUN_REGION` | нет | `eu` или `us`. По умолчанию `eu`. |
 | `WEBHOOK_URL` | для `pnpm mailgun route` | Куда Mailgun шлёт письма. Обычно `{APP_URL}/webhooks/email`. |
 | `INBOUND_WEBHOOK_TOKEN` | для JSON-входа | |
-| `SKYVERN_API_KEY` | для онбординга | Регистрация по приглашению и вход идут через Skyvern; коды из писем runtime передаёт ему сам. Без него приглашение принимает Stagehand на Browserbase; MCP Skyvern в конфиг Hermes не добавляется. |
-| `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` | пара | Собственный браузер агента для работы внутри сервиса (и запасной путь онбординга). Без пары `/browser/*` отвечает ошибкой. Нет ни Skyvern, ни Browserbase — `/invite/accept` отвечает 400. |
+| `SKYVERN_API_KEY` | для онбординга | Регистрация по приглашению и обход капчи идут через Skyvern; коды из писем runtime передаёт ему сам. Без него и если Skyvern не довёл вход, приглашение принимает свой Chromium. Без ключа MCP Skyvern в конфиг Hermes не добавляется. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | пара | Без них кнопка Google возвращает на карточку с ошибкой. |
 | `DEV_RUNTIME_URL` | нет | Локальный runtime вместо `*.flycast`. |
 | `SKILL_TEMPLATE_DIR` | в контейнере | Каталог с `swarm-worker/SKILL.md`. В образе это `/app/agent-template`. |
@@ -51,8 +51,8 @@ openssl rand -base64 32
 | `PORT` | По умолчанию 8787. |
 | `HERMES_API_URL` | По умолчанию `http://127.0.0.1:8642/v1`. |
 | `HERMES_API_KEY` | Если пусто, берётся `API_SERVER_KEY`. На машине это runtime-токен. |
-| `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` | |
 | `SKYVERN_API_KEY` | |
+| `CHROME_PATH` | Путь к Chromium. В образе агента это `/usr/bin/chromium`. |
 | `TICK_MINUTES` | По умолчанию 15. |
 | `IDLE_SUSPEND` | `off` — не засыпать. Иначе засыпает, когда задан `CONTROL_PLANE_URL`. |
 | `IDLE_SUSPEND_MS` | Пауза перед сном. По умолчанию 120000. |

@@ -103,8 +103,6 @@ async function machineConfigFor(agent: AgentRow, runtimeToken: string, ownerEmai
       openRouterApiKey,
       runtimeToken,
       skyvernApiKey: env.skyvernApiKey,
-      browserbaseApiKey: env.browserbase.apiKey,
-      browserbaseProjectId: env.browserbase.projectId,
     },
     skillTemplate: skills.worker,
     serviceSkills: skills.serviceSkills,
@@ -125,8 +123,6 @@ async function machineConfigFor(agent: AgentRow, runtimeToken: string, ownerEmai
   };
   if (ownerEmail) machineEnv["OWNER_EMAIL"] = ownerEmail;
   if (env.skyvernApiKey) machineEnv["SKYVERN_API_KEY"] = env.skyvernApiKey;
-  if (env.browserbase.apiKey) machineEnv["BROWSERBASE_API_KEY"] = env.browserbase.apiKey;
-  if (env.browserbase.projectId) machineEnv["BROWSERBASE_PROJECT_ID"] = env.browserbase.projectId;
 
   return buildAgentMachineConfig({
     volumeId,
@@ -160,10 +156,14 @@ async function provision(agent: AgentRow, runtimeToken: string, ownerEmail: stri
     status: "running",
     statusMessage: null,
     runtimeUrl: runtimeUrlFor(appName),
+    runtimeRelease: env.release ?? null,
   });
 }
 
-/** Смена модели или флага: переписать config.yaml и перезапустить машину. */
+/**
+ * Переписать конфиг машины и перезапустить её: смена модели, новый образ runtime.
+ * Образ берётся текущий (`env.fly.runtimeImage`), поэтому машина получает релиз этого control plane.
+ */
 export async function reconfigureAgent(agentId: string, ownerEmail: string | null): Promise<void> {
   const database = db();
   const agent = await getAgentById(database, agentId);
@@ -172,7 +172,7 @@ export async function reconfigureAgent(agentId: string, ownerEmail: string | nul
   await fly.ensureFlycast(agent.flyAppName);
   const config = await machineConfigFor(agent, runtimeTokenOf(agent), ownerEmail, agent.flyVolumeId);
   await fly.updateMachine(agent.flyAppName, agent.flyMachineId, config);
-  await updateAgent(database, agent.id, { runtimeUrl: runtimeUrlFor(agent.flyAppName) });
+  await updateAgent(database, agent.id, { runtimeUrl: runtimeUrlFor(agent.flyAppName), runtimeRelease: env.release ?? null });
 }
 
 /** Отдать агенту его snapshot: общий каталог и только его секреты. */

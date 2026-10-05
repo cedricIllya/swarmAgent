@@ -95,8 +95,12 @@ export function BrowserBubble({
           {!session
             ? "сессия не найдена"
             : session.finishedAt
-              ? "сессия завершена, видео недоступно"
-              : "сессия идёт, ссылки на живой экран пока нет — видео появится после"}
+              ? session.provider === "skyvern"
+                ? "сессия завершена, видео недоступно"
+                : "сессия завершена"
+              : session.provider === "skyvern"
+                ? "сессия идёт, ссылки на живой экран пока нет — видео появится после"
+                : "свой браузер работает, живого экрана нет"}
         </span>
       )}
       <span className="bubble-time">{fmtTime(message.at)}</span>

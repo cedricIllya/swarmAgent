@@ -7,7 +7,7 @@ const INTERNAL_HOST = /https?:\/\/[a-z0-9.-]+\.(?:internal|flycast)(?::\d+)?(?:\
 const DATA_PATH = /\/opt\/data(?:\/[^\s)'"]*)?/g;
 const BEARER = /Bearer\s+\S+/g;
 const SECRET_NAME =
-  /\$?(?:SWARM_RUNTIME_TOKEN|API_SERVER_KEY|API_SERVER_ENABLED|API_SERVER_HOST|API_SERVER_PORT|OPENROUTER_API_KEY|SKYVERN_API_KEY|BROWSERBASE_API_KEY|BROWSERBASE_PROJECT_ID|HERMES_API_KEY|HERMES_API_URL|HERMES_HOME)\b(?:\s*[=:]\s*\S+)?/g;
+  /\$?(?:SWARM_RUNTIME_TOKEN|API_SERVER_KEY|API_SERVER_ENABLED|API_SERVER_HOST|API_SERVER_PORT|OPENROUTER_API_KEY|SKYVERN_API_KEY|HERMES_API_KEY|HERMES_API_URL|HERMES_HOME)\b(?:\s*[=:]\s*\S+)?/g;
 const AUTH_HEADER = /Authorization:\s*/gi;
 /** Пароль из credentials, если модель процитировала JSON доступа. */
 const PASSWORD_FIELD = /"password"\s*:\s*"[^"]*"/gi;

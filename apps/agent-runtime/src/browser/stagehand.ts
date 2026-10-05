@@ -1,12 +1,12 @@
-import Browserbase from "@browserbasehq/sdk";
-import { Stagehand, browserbase } from "@browserbasehq/stagehand";
-import type { BrowserSession } from "@swarm/contracts";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, rm } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
+import { Stagehand, localBrowser } from "@browserbasehq/stagehand";
+import type { BrowserSession } from "@swarm/contracts";
 import type { OpenRouterClient, ChatMessageIn } from "../openrouter";
 import type { Store } from "../store";
 import { recordUsage, type TaskRef } from "../usage";
-import { downloadRecording } from "./recordings";
 import { log, warn } from "../log";
 
 type LLMContentBlock = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -19,13 +19,12 @@ type LLMGenerateParams = {
 };
 
 export interface BrowserDeps {
-  bb: Browserbase;
-  projectId: string;
-  apiKey: string;
   openRouter: OpenRouterClient;
   model: string;
   store: Store;
 }
+
+type LocalBrowserHandle = Awaited<ReturnType<typeof localBrowser.launch>>;
 
 const PENDING_CODE_TTL_MS = 10 * 60 * 1000;
 
@@ -35,28 +34,64 @@ interface CodeWaiter {
   timer: NodeJS.Timeout;
 }
 
+/** Старые сессии писали `browserbase`, пока браузер арендовался. */
+export function isOwnBrowser(provider: string | null | undefined): boolean {
+  return provider === "local" || provider === "browserbase";
+}
+
+function chromeCandidates(): string[] {
+  return [
+    process.env.CHROME_PATH,
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  ].filter((p): p is string => Boolean(p));
+}
+
+export function chromeAvailable(): boolean {
+  return chromeCandidates().some((p) => existsSync(p));
+}
+
+function chromeExecutable(): string {
+  const found = chromeCandidates().find((p) => existsSync(p));
+  if (!found) throw new Error("Chromium не найден: задайте CHROME_PATH");
+  return found;
+}
+
+function profileDir(store: Store, slug: string | null, sessionId: string): string {
+  const name = (slug ?? `_tmp-${sessionId}`).replace(/[^a-zA-Z0-9._-]/g, "-");
+  return path.join(store.dir("browser-profiles"), name);
+}
+
 /**
- * Одна сессия Browserbase со Stagehand поверх неё. Клиент сессии живёт в этом
- * процессе — поэтому письмо с кодом, принятое тем же процессом, можно ввести
- * прямо сюда. Каждый шаг пишется в `actions.jsonl`, после закрытия качается MP4.
+ * Свой браузер агента: Chromium на машине, Stagehand решает шаги моделью агента.
+ * Профиль на slug сервиса хранит cookies между сессиями. Живого экрана нет.
  */
 export class ManagedBrowserSession {
   readonly id: string;
+  readonly serviceSlug: string | null;
   readonly meta: BrowserSession;
   private stagehand: Stagehand | null = null;
-  private browser: Awaited<ReturnType<typeof browserbase.connect>> | null = null;
+  private browser: LocalBrowserHandle | null = null;
   private waiter: CodeWaiter | null = null;
   /** Код пришёл письмом раньше, чем сессия его попросила: держим недолго. */
   private pendingCode: { value: { kind: "code" | "link"; value: string }; at: number } | null = null;
   private closed = false;
+  private readonly profile: string;
+  private readonly ephemeral: boolean;
 
   constructor(
     private readonly deps: BrowserDeps,
     private readonly task: TaskRef,
-    readonly browserbaseSessionId: string,
+    id: string,
+    serviceSlug: string | null,
     meta: Omit<BrowserSession, "id" | "hasVideo" | "finishedAt">,
   ) {
-    this.id = browserbaseSessionId;
+    this.id = id;
+    this.serviceSlug = serviceSlug;
+    this.ephemeral = serviceSlug === null;
+    this.profile = profileDir(deps.store, serviceSlug, id);
     this.meta = { ...meta, id: this.id, finishedAt: null, hasVideo: false };
   }
 
@@ -65,29 +100,13 @@ export class ManagedBrowserSession {
     task: TaskRef,
     args: { runId: string; purpose: string; serviceSlug: string | null; url?: string },
   ): Promise<ManagedBrowserSession> {
-    const contextId = args.serviceSlug ? await ensureContext(deps, args.serviceSlug) : null;
-    const session = await deps.bb.sessions.create({
-      projectId: deps.projectId,
-      keepAlive: true,
-      browserSettings: {
-        recordSession: true,
-        ...(contextId ? { context: { id: contextId, persist: true } } : {}),
-      },
-    });
-    let liveUrl: string | null = null;
-    try {
-      const links = await deps.bb.sessions.debug(session.id);
-      const url = links.debuggerFullscreenUrl;
-      liveUrl = url ? `${url}${url.includes("?") ? "&" : "?"}navbar=false` : null;
-    } catch (e) {
-      warn("browser", "live view недоступен", { error: String(e) });
-    }
-    const s = new ManagedBrowserSession(deps, task, session.id, {
+    const id = `brw_${randomBytes(8).toString("hex")}`;
+    const s = new ManagedBrowserSession(deps, task, id, args.serviceSlug, {
       runId: args.runId,
       startedAt: new Date().toISOString(),
-      provider: "browserbase",
+      provider: "local",
       purpose: args.purpose,
-      liveUrl,
+      liveUrl: null,
     });
     await deps.store.saveBrowserSession(s.meta);
     await s.connect();
@@ -96,7 +115,18 @@ export class ManagedBrowserSession {
   }
 
   private async connect(): Promise<void> {
-    this.browser = await browserbase.connect({ apiKey: this.deps.apiKey, sessionId: this.browserbaseSessionId });
+    await mkdir(this.profile, { recursive: true });
+    for (const name of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+      await rm(path.join(this.profile, name), { force: true }).catch(() => undefined);
+    }
+    this.browser = await localBrowser.launch({
+      headless: true,
+      executablePath: chromeExecutable(),
+      userDataDir: this.profile,
+      preserveUserDataDir: true,
+      chromiumSandbox: process.getuid?.() !== 0,
+      args: ["--disable-dev-shm-usage", "--disable-gpu", "--no-first-run", "--no-default-browser-check"],
+    });
     this.stagehand = await Stagehand.create({
       browser: this.browser,
       model: { generate: (params: LLMGenerateParams) => this.generate(params) },
@@ -150,9 +180,14 @@ export class ManagedBrowserSession {
     return this.stagehand;
   }
 
+  private async page() {
+    if (!this.browser || this.closed) throw new Error("Сессия браузера закрыта");
+    const pages = await this.browser.context.pages();
+    return pages[0] ?? (await this.browser.context.newPage());
+  }
+
   async goto(url: string): Promise<void> {
-    const pages = await this.browser!.context.pages();
-    const page = pages[0] ?? (await this.browser!.context.newPage());
+    const page = await this.page();
     await page.goto(url, { waitUntil: "domcontentloaded" });
     await this.action({ type: "goto", url });
   }
@@ -179,8 +214,7 @@ export class ManagedBrowserSession {
   }
 
   async currentUrl(): Promise<string> {
-    const pages = await this.browser!.context.pages();
-    return pages[0]?.url() ?? "";
+    return await (await this.page()).url();
   }
 
   /**
@@ -244,49 +278,19 @@ export class ManagedBrowserSession {
     try {
       await this.browser?.close();
     } catch {
-      // сессия может быть уже закрыта
+      // процесс Chrome уже мог завершиться
     }
-    try {
-      await this.deps.bb.sessions.update(this.browserbaseSessionId, {
-        projectId: this.deps.projectId,
-        status: "REQUEST_RELEASE",
-      });
-    } catch (e) {
-      warn("browser", "release", { error: String(e) });
-    }
+    if (this.ephemeral) await rm(this.profile, { recursive: true, force: true }).catch(() => undefined);
     await this.action({ type: "close" });
-    const hasVideo = await downloadRecording(
-      this.deps.bb,
-      this.browserbaseSessionId,
-      this.deps.store.videoPath(this.id),
-    );
     this.meta.finishedAt = new Date().toISOString();
-    this.meta.hasVideo = hasVideo;
+    this.meta.hasVideo = false;
     this.meta.liveUrl = null;
     await this.deps.store.saveBrowserSession(this.meta);
-    log("browser", "сессия закрыта", { id: this.id, hasVideo });
+    log("browser", "сессия закрыта", { id: this.id });
     return this.meta;
   }
 }
 
 function stripFence(text: string): string {
   return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-}
-
-/**
- * Browserbase Context хранит cookies между сессиями. Один контекст на сервис,
- * id лежит в `browser-profiles/<slug>.json` на volume этого агента.
- */
-export async function ensureContext(deps: BrowserDeps, slug: string): Promise<string> {
-  const file = path.join(deps.store.dir("browser-profiles"), `${slug}.json`);
-  try {
-    const saved = JSON.parse(await readFile(file, "utf8")) as { contextId: string };
-    if (saved.contextId) return saved.contextId;
-  } catch {
-    // нет профиля — создадим
-  }
-  const ctx = await deps.bb.contexts.create({ projectId: deps.projectId });
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify({ contextId: ctx.id, createdAt: new Date().toISOString() }));
-  return ctx.id;
 }

@@ -46,7 +46,7 @@ Volume Fly, 3 GB, смонтирован в `/opt/data` обоим контей�
 | `sent.json` | Message-ID писем агента → задача и approval |
 | `approvals.json` | Вопросы, на которые ещё нет «да» или «нет» |
 | `browser-sessions/<id>/` | `session.json`, `actions.jsonl`, `video.mp4` |
-| `browser-profiles/<slug>.json` | id Browserbase Context, чтобы cookies сервиса жили между сессиями |
+| `browser-profiles/<slug>/` | Профиль Chromium сервиса: cookies живут между сессиями своего браузера |
 | `deferred-emails/` | Письма, пришедшие, пока агент был в браузере |
 | `usage.jsonl` | Один вызов модели — одна строка |
 | `google_token.json` | Формат `google-auth-oauthlib`, его читает скилл Hermes |

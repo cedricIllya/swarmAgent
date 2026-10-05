@@ -5,6 +5,7 @@ import { runConnectFollowup } from "../onboarding";
 import { escalationNote } from "../prompts";
 import { redactInternal } from "../redact";
 import { warn } from "../log";
+import { isOwnBrowser } from "../browser/stagehand";
 import { newId } from "./ids";
 import type { AgentRuntime } from "./index";
 
@@ -14,7 +15,7 @@ export interface HandoffContext {
   slug: string;
   service: string;
   discovery: DiscoveryResult | null;
-  provider: "skyvern" | "browserbase";
+  provider: "skyvern" | "local";
   browserSessionId: string | null;
   /** Пароль, который браузер уже напечатал: человек должен поставить тот же. */
   password: string | null;
@@ -139,7 +140,7 @@ export class Handoffs {
 
     if (!done) {
       if (ctx?.provider === "skyvern" && ctx.browserSessionId) await rt.skyvern?.closeBrowserSession(ctx.browserSessionId);
-      if (ctx?.provider === "browserbase" && ctx.browserSessionId) await rt.browser.close(ctx.browserSessionId);
+      if (isOwnBrowser(ctx?.provider) && ctx?.browserSessionId) await rt.browser.close(ctx.browserSessionId);
       const run = await rt.createRun("approval", `Отменено: ${service}`, original?.threadId ?? null);
       await rt.step(run.id, "note", "человек отменил вход, браузер закрыт");
       await rt.finishRun(run, "failed", "Вход отменён человеком, браузер закрыт.");

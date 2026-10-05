@@ -1,5 +1,6 @@
 import type { Run, ServiceCredential, ServiceRecipe } from "@swarm/contracts";
 import type { AcceptInviteResult } from "./browser/invite";
+import { isOwnBrowser } from "./browser/stagehand";
 import {
   API_KEY_SCHEMA,
   apiKeyPrompt,
@@ -33,7 +34,7 @@ export interface OnboardingContext {
   invite: AcceptInviteResult | null;
   /** Почему приглашение не принимали автоматически (нет браузера, нет ссылки). */
   inviteSkipped: string | null;
-  /** У агента есть свой браузер (Browserbase) для работы внутри сервиса и ручного дожима. */
+  /** Свой браузер на машине есть всегда: им работают внутри сервиса и повторяют вход. */
   browserAvailable: boolean;
   /** Slug сервиса, даже если рецепта ещё нет. */
   slug: string | null;
@@ -145,7 +146,7 @@ function originOf(url: string): string | null {
 }
 
 interface ResumeArgs {
-  provider: "skyvern" | "browserbase";
+  provider: "skyvern" | "local";
   browserSessionId: string | null;
   password: string | null;
   serviceWait?: boolean | undefined;
@@ -229,8 +230,8 @@ async function connectInvite(
     return { invite, engine };
   };
 
-  // Повтор после своего браузера остаётся в нём: Skyvern сессию Browserbase не продолжает.
-  if (rt.skyvern && resume?.provider !== "browserbase") {
+  // Повтор после своего браузера остаётся в нём: Skyvern эту сессию не продолжает.
+  if (rt.skyvern && !isOwnBrowser(resume?.provider)) {
     const skyvern = rt.skyvern;
     const reuse = resume?.provider === "skyvern" && resume.browserSessionId && skyvern.sessionAlive(resume.browserSessionId) ? resume.browserSessionId : null;
     let sessionId: string | null = null;
@@ -368,12 +369,12 @@ async function connectInvite(
         });
         return { invite: null, engine: toEngine(decision, null) };
       }
-      await rt.step(run.id, "note", "Повторяю вход.");
+      await rt.step(run.id, "note", "Повторяю вход своим браузером.");
     }
   }
 
-  // Stagehand: cookies живут в контексте сервиса, поэтому после handoff просто входим заново.
-  if (resume?.provider === "browserbase" && resume.browserSessionId) await rt.browser.close(resume.browserSessionId);
+  // Свой браузер: cookies в профиле сервиса, после handoff входим заново.
+  if (isOwnBrowser(resume?.provider) && resume?.browserSessionId) await rt.browser.close(resume.browserSessionId);
   try {
     const invite = await rt.browser.acceptInvite(
       run,
@@ -414,7 +415,7 @@ async function connectInvite(
     if (decision.closeBrowser && invite.browserSessionId) await rt.browser.close(invite.browserSessionId);
     await rt.step(run.id, "note", decision.reason);
     return escalate(decision, invite, {
-      provider: "browserbase",
+      provider: "local",
       browserSessionId: invite.browserSessionId ?? null,
       password: invite.password ?? stored ?? null,
       liveUrl: invite.liveUrl ?? null,
@@ -577,7 +578,7 @@ export function parkSource(
   service: string;
   discovery: DiscoveryResult | null;
   password: string | null;
-  provider: "skyvern" | "browserbase";
+  provider: "skyvern" | "local";
   browserSessionId: string | null;
 } | null {
   if (!ctx.inviteUrl || !ctx.slug) return null;
@@ -587,7 +588,7 @@ export function parkSource(
     service: ctx.recipe?.name ?? ctx.discovery?.service ?? service,
     discovery: ctx.discovery,
     password: ctx.invite?.password ?? null,
-    provider: rt.skyvern ? "skyvern" : "browserbase",
+    provider: rt.skyvern ? "skyvern" : "local",
     browserSessionId: ctx.invite?.browserSessionId ?? null,
   };
 }

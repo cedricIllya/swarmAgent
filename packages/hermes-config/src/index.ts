@@ -96,8 +96,6 @@ export interface HermesEnvInput {
   openRouterApiKey: string;
   runtimeToken: string;
   skyvernApiKey?: string | undefined;
-  browserbaseApiKey?: string | undefined;
-  browserbaseProjectId?: string | undefined;
 }
 
 /**
@@ -115,8 +113,6 @@ export function renderHermesEnv(input: HermesEnvInput): string {
     `SWARM_RUNTIME_TOKEN=${input.runtimeToken}`,
   ];
   if (input.skyvernApiKey) lines.push(`SKYVERN_API_KEY=${input.skyvernApiKey}`);
-  if (input.browserbaseApiKey) lines.push(`BROWSERBASE_API_KEY=${input.browserbaseApiKey}`);
-  if (input.browserbaseProjectId) lines.push(`BROWSERBASE_PROJECT_ID=${input.browserbaseProjectId}`);
   return lines.join("\n") + "\n";
 }
 

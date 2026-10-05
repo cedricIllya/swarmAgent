@@ -7,7 +7,7 @@ import { log, warn } from "../log";
 
 /**
  * Skyvern — только онбординг: принять приглашение, зарегистрироваться, войти.
- * Задачи внутри сервиса — Stagehand.
+ * Задачи внутри сервиса — свой Chromium.
  *
  * Коды и magic link из писем Skyvern сам не получает: runtime принимает письмо на адрес
  * агента и отдаёт его в Skyvern через `POST /v1/credentials/totp` с `totp_identifier`

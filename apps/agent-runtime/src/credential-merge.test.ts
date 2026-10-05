@@ -7,7 +7,7 @@ const prev: ServiceCredential = {
   accountEmail: "agent@agents.test",
   accountName: "Агент",
   password: "secret",
-  storageState: { provider: "browserbase", contextId: "ctx" },
+  storageState: { provider: "local", profile: "acme" },
 };
 
 describe("mergeCredential", () => {
@@ -17,6 +17,6 @@ describe("mergeCredential", () => {
     expect(next.accountEmail).toBe("agent@agents.test");
     expect(next.accountName).toBe("Агент");
     expect(next.password).toBe("secret");
-    expect(next.storageState).toEqual({ provider: "browserbase", contextId: "ctx" });
+    expect(next.storageState).toEqual({ provider: "local", profile: "acme" });
   });
 });

@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 /**
  * Принять приглашение в сервис и зарегистрироваться под почтой агента.
- * Браузер — Stagehand; коды и magic link приходят на почту агента, runtime
+ * Браузер — свой Chromium и Stagehand; коды и magic link приходят на почту агента, runtime
  * передаёт их в ту же сессию. Один цикл «посмотри страницу → сделай шаг».
  */
 
@@ -97,8 +97,8 @@ export interface AcceptInviteResult {
   steps: number;
   finalUrl: string;
   notes: string;
-  /** Кто принимал приглашение: Skyvern или сессия Stagehand на Browserbase. */
-  provider?: "skyvern" | "browserbase";
+  /** Кто принимал приглашение: Skyvern или свой Chromium. */
+  provider?: "skyvern" | "local";
   /** Закрытая причина барьера, если она из списка. Свободный текст остаётся в notes. */
   barrierKind?: string | null;
   liveUrl?: string | null;
@@ -149,7 +149,7 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
     steps,
     finalUrl: await browser.currentUrl().catch(() => ""),
     notes,
-    provider: "browserbase",
+    provider: "local",
   });
 
   await browser.goto(args.url);

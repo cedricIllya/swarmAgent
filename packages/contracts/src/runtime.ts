@@ -65,10 +65,11 @@ export const BrowserSessionSchema = z.object({
   runId: z.string(),
   startedAt: z.string(),
   finishedAt: z.string().nullable(),
-  provider: z.enum(["browserbase", "skyvern"]),
+  /** `browserbase` — старые сессии, пока браузер арендовался. Новые свои — `local`. */
+  provider: z.enum(["local", "skyvern", "browserbase"]),
   purpose: z.string(),
   hasVideo: z.boolean(),
-  /** Browserbase Live View, пока сессия открыта. После закрытия — null. */
+  /** Живой экран Skyvern, пока сессия открыта. У своего браузера всегда null. */
   liveUrl: z.string().nullable(),
 });
 

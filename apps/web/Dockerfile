@@ -20,7 +20,9 @@ RUN pnpm --filter @swarm/web build
 
 FROM node:24-alpine AS runner
 WORKDIR /app
-ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 SKILL_TEMPLATE_DIR=/app/agent-template
+# SHA коммита из CI. По нему control plane выбирает образ runtime и обновляет машины агентов.
+ARG RELEASE=
+ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 SKILL_TEMPLATE_DIR=/app/agent-template RELEASE=$RELEASE
 COPY --from=build /app/apps/web/.next/standalone ./
 COPY --from=build /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=build /app/agent-template ./agent-template

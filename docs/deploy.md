@@ -6,14 +6,24 @@ Control plane — приложение Fly `swarm-control-plane` в регион
 
 ## Пуш в `main`
 
-Пуш в `main` запускает [`.github/workflows/fly-deploy.yml`](../.github/workflows/fly-deploy.yml). Два задания идут параллельно, каждое ждёт, если предыдущая выкладка того же приложения ещё идёт:
+Пуш в `main` запускает [`.github/workflows/fly-deploy.yml`](../.github/workflows/fly-deploy.yml). Два задания идут по очереди, каждое ждёт, если предыдущая выкладка того же приложения ещё идёт:
 
 | Задание | Команда |
 | --- | --- |
-| control plane | `flyctl deploy --remote-only --ha=false` |
-| образ runtime | `flyctl deploy --remote-only --build-only --push --image-label latest -c fly.runtime.toml` |
+| образ runtime | `flyctl deploy --remote-only --build-only --push --image-label <sha> -c fly.runtime.toml` |
+| control plane | `flyctl deploy --remote-only --ha=false --build-arg RELEASE=<sha>` |
+
+`<sha>` — коммит, который выкладывается. Образ runtime помечен им, а control plane получает его переменной `RELEASE` и собирает из неё имя образа для новых агентов: `registry.fly.io/swarm-agent-runtime:<sha>`. Поэтому образ пушится первым.
 
 Ручной запуск того же workflow: Actions → Fly Deploy → Run workflow.
+
+### Обновление уже созданных агентов
+
+Машина агента сама образ не меняет: он записан в её конфиг при создании. Control plane после выкладки переводит агентов на новый образ сам — через 20 секунд после старта процесса и дальше раз в 15 минут вместе с тиком ([`agent-rollout.ts`](../apps/web/src/lib/agent-rollout.ts)).
+
+Кандидаты — агенты со статусом `running`, у которых `agents.runtime_release` отличается от `RELEASE` или пуст. Машину трогают только когда ей нечего терять: спящая обновляется сразу (она уснула, потому что runtime простаивал), у запущенной control plane спрашивает `/state` и ждёт, пока нет задач `running`/`queued` и браузер не держит сессию с кодом из письма. Занятые и переходные (`starting`, `suspending`) агенты дожидаются следующего прохода. Обновление — тот же `updateMachine`, что и при смене модели: новый конфиг, перезапуск, запись `runtime_release`. Fly принимает его и для спящей машины, она при этом просыпается, runtime без дел снова усыпит её через пару минут.
+
+Если control plane спал во время выкладки — обновление запустится, как только его разбудят (первый HTTP-запрос или ежечасное расписание). Ручная выкладка без `RELEASE` агентов не трогает и пишет в `runtime_release` пустое значение: следующий деплой из CI подхватит их как отставших.
 
 В секретах GitHub лежат deploy-токены одного приложения. Их создают так и вставляют в приглашение `gh` (значение в терминал не печатать):
 
@@ -128,7 +138,7 @@ fly secrets set -a swarm-control-plane AUTH_SECRET="$(openssl rand -base64 32)"
 
 ## Образ runtime
 
-Собран и запушен как `registry.fly.io/swarm-agent-runtime:latest`. Пересобрать:
+CI пушит его как `registry.fly.io/swarm-agent-runtime:<sha коммита>`. Пересобрать руками:
 
 Для него отдельный файл `fly.runtime.toml`: в нём нет HTTP-сервиса и нет release command. Сборка идёт удалённо, машина не запускается.
 
@@ -137,7 +147,7 @@ fly apps create swarm-agent-runtime --org copyboy
 fly deploy --build-only --push --image-label latest -c fly.runtime.toml
 ```
 
-Не подставляйте сюда `fly.toml` control plane. Без `--build-only` эта команда выложила бы сайт заново, а не только образ агента. Метка `latest` совпадает с `AGENT_RUNTIME_IMAGE` по умолчанию.
+Не подставляйте сюда `fly.toml` control plane. Без `--build-only` эта команда выложила бы сайт заново, а не только образ агента. Метка `latest` — для control plane без `RELEASE` (локальная или ручная выкладка): тогда `AGENT_RUNTIME_IMAGE` по умолчанию указывает на неё.
 
 Дальше control plane сможет создавать машины агентов, когда в секретах появится `FLY_API_TOKEN` организации `copyboy` (`fly tokens create org -o copyboy`). Deploy-токена одного приложения недостаточно: код создаёт новое приложение на каждого агента.
 
@@ -146,8 +156,7 @@ Hermes берётся готовым образом `nousresearch/hermes-agent:l
 ## Чего не хватает до полного сценария
 
 1. Свой домен агентов по шагам выше. Секреты Mailgun уже отложены в приложении и применятся первой выкладкой.
-2. `BROWSERBASE_API_KEY` и `BROWSERBASE_PROJECT_ID`, если нужен браузер.
-3. `SKYVERN_API_KEY`, если нужен вход через Skyvern.
-4. `GOOGLE_CLIENT_ID` и `GOOGLE_CLIENT_SECRET`, redirect `https://swarm-control-plane.fly.dev/api/google/callback`.
+2. `SKYVERN_API_KEY`, если нужен вход через Skyvern и обход капчи. Свой браузер для работы внутри сервиса уже в образе runtime.
+3. `GOOGLE_CLIENT_ID` и `GOOGLE_CLIENT_SECRET`, redirect `https://swarm-control-plane.fly.dev/api/google/callback`.
 
 Вход, регистрация и пустой список агентов работают без этих пунктов.

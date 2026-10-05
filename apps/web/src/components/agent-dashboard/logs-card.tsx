@@ -156,7 +156,7 @@ function RunItem({
       {sessions.map((s) => (
         <div key={s.id} style={{ marginTop: 12 }}>
           <div className="small muted">
-            {s.provider === "skyvern" ? "Skyvern" : "Browserbase"} · {s.purpose} · {fmtTime(s.startedAt)}
+            {s.provider === "skyvern" ? "Skyvern" : "браузер"} · {s.purpose} · {fmtTime(s.startedAt)}
           </div>
           {s.hasVideo ? (
             <video controls preload="none" src={`/api/agents/${agent.id}/browser-sessions/${s.id}/video`} />
@@ -165,7 +165,15 @@ function RunItem({
               сессия идёт — смотреть браузер
             </a>
           ) : (
-            <span className="faint small">{s.finishedAt ? "видео недоступно" : "сессия идёт, видео появится после"}</span>
+            <span className="faint small">
+              {s.finishedAt
+                ? s.provider === "skyvern"
+                  ? "видео недоступно"
+                  : "шаги в журнале задачи"
+                : s.provider === "skyvern"
+                  ? "сессия идёт, видео появится после"
+                  : "сессия идёт"}
+            </span>
           )}
         </div>
       ))}
