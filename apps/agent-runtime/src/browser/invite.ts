@@ -272,10 +272,10 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
         if (!got || !got.value) return finish("needs_human", i, "письмо с кодом не пришло вовремя");
         if (got.kind === "link") {
           await browser.goto(got.value);
-          await step("перешёл по ссылке из письма");
+          await step(`перешёл по ссылке из письма: ${got.value}`);
         } else {
           await browser.act(`Введи код подтверждения ${got.value} и отправь форму`);
-          await step("ввёл код из письма");
+          await step(`ввёл код из письма: ${got.value}`);
         }
         break;
       }

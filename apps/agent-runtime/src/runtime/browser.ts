@@ -70,24 +70,76 @@ export class BrowserControl {
    * открыта, код придерживается для её ближайшего `wait-code`: письмо часто приходит
    * раньше, чем страница с полем для кода успевает загрузиться.
    */
-  async deliverCode(v: { kind: "code" | "link"; value: string }): Promise<boolean> {
+  async deliverCode(v: {
+    kind: "code" | "link";
+    value: string;
+    /** Полный текст письма — Skyvern сам вытащит код из content. */
+    emailBody?: string | undefined;
+  }): Promise<boolean> {
+    let ok = false;
+    let via: "skyvern" | "skyvern-buffered" | "local" | null = null;
+    let totpPayload: string | null = null;
     if (this.rt.skyvern?.busy) {
       try {
-        const ok = await this.rt.skyvern.pushCode(v);
+        const pushed = await this.rt.skyvern.pushCode(v);
+        ok = pushed.ok;
+        totpPayload = pushed.content;
+        via = pushed.buffered ? "skyvern-buffered" : pushed.ok ? "skyvern" : null;
         if (!ok) warn("browser", "Skyvern не принял код из письма", { kind: v.kind });
-        return ok;
       } catch (e) {
         warn("browser", "код в Skyvern не ушёл", { error: String(e) });
         return false;
       }
+    } else {
+      for (const s of this.sessions.values()) {
+        if (s.waitingForCode && s.deliverCode(v)) {
+          ok = true;
+          via = "local";
+          break;
+        }
+      }
+      if (!ok) {
+        const latest = [...this.sessions.values()].at(-1);
+        if (!latest) return false;
+        latest.stashCode(v);
+        ok = true;
+        via = "local";
+      }
     }
+    if (ok) await this.noteChallenge(v, via, totpPayload);
+    return ok;
+  }
+
+  /** В журнал задачи: сам код и куда ушёл (Skyvern TOTP или свой браузер). */
+  private async noteChallenge(
+    v: { kind: "code" | "link"; value: string },
+    via: "skyvern" | "skyvern-buffered" | "local" | null,
+    totpPayload: string | null,
+  ): Promise<void> {
+    const runId = this.challengeRunId();
+    if (!runId) return;
+    let text: string;
+    if (v.kind === "code") {
+      if (via === "skyvern") text = `код из письма ${v.value} — передан в Skyvern для ввода`;
+      else if (via === "skyvern-buffered") text = `код из письма ${v.value} — Skyvern ещё между шагами, передам в TOTP сразу как задача продолжится`;
+      else text = `код подтверждения из письма: ${v.value}`;
+    } else {
+      if (via === "skyvern" || via === "skyvern-buffered") {
+        text = `ссылка из письма — ${via === "skyvern-buffered" ? "придержана для" : "передана в"} Skyvern: ${v.value}`;
+      } else text = `ссылка для входа из письма: ${v.value}`;
+    }
+    await this.rt
+      .step(runId, "email", text, totpPayload ? { totpContentPreview: totpPayload.slice(0, 240) } : undefined)
+      .catch((e) => warn("browser", "не записал код в журнал", { error: String(e) }));
+  }
+
+  private challengeRunId(): string | null {
+    const fromSkyvern = this.rt.skyvern?.activeRunId() ?? null;
+    if (fromSkyvern) return fromSkyvern;
     for (const s of this.sessions.values()) {
-      if (s.waitingForCode && s.deliverCode(v)) return true;
+      if (s.waitingForCode) return s.meta.runId;
     }
-    const latest = [...this.sessions.values()].at(-1);
-    if (!latest) return false;
-    latest.stashCode(v);
-    return true;
+    return [...this.sessions.values()].at(-1)?.meta.runId ?? null;
   }
 
   /**

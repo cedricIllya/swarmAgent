@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { SkyvernClient, interpretInviteOutput, inviteTaskPrompt } from "./browser/skyvern";
+import { SkyvernClient, interpretInviteOutput, inviteTaskPrompt, totpContent } from "./browser/skyvern";
 import type { Store } from "./store";
+
+describe("totpContent", () => {
+  it("sends the full email body when present so Skyvern can extract the code", () => {
+    const body = "Hello,\nYour verification code is 482913.\nThanks";
+    expect(totpContent({ kind: "code", value: "482913", emailBody: body })).toBe(body);
+  });
+
+  it("falls back to a short phrase with the digits", () => {
+    expect(totpContent({ kind: "code", value: "482913" })).toBe("Your verification code is 482913");
+  });
+});
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -143,9 +154,9 @@ describe("SkyvernClient", () => {
     expect(session.extensions).toEqual(["captcha-solver"]);
     expect(String(start.prompt)).toContain("bot@agents.test");
 
-    expect(await client.pushCode({ kind: "code", value: "482913" })).toBe(true);
+    expect(await client.pushCode({ kind: "code", value: "482913" })).toMatchObject({ ok: true, buffered: false });
     const totp = calls.find((c) => c.url.endsWith("/v1/credentials/totp"))!.body as Record<string, unknown>;
-    expect(totp).toMatchObject({ totp_identifier: "bot@agents.test", task_id: "tsk_1" });
+    expect(totp).toMatchObject({ totp_identifier: "bot@agents.test", task_id: "tsk_1", source: "email" });
     expect(String(totp.content)).toContain("482913");
 
     await vi.advanceTimersByTimeAsync(11_000);
@@ -224,7 +235,40 @@ describe("SkyvernClient", () => {
     const { store } = fakeStore();
     const fetchImpl = vi.fn();
     const client = new SkyvernClient("key", store, "bot@agents.test", "https://api.skyvern.test", fetchImpl as typeof fetch);
-    expect(await client.pushCode({ kind: "code", value: "1234" })).toBe(false);
+    expect(await client.pushCode({ kind: "code", value: "1234" })).toMatchObject({ ok: false });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("pushCode prefers the full email body for Skyvern TOTP content", async () => {
+    vi.useFakeTimers();
+    const { store } = fakeStore();
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      calls.push({ url: u, body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (u.endsWith("/v1/browser_sessions")) {
+        return json({ browser_session_id: "pbs_5", app_url: null, browser_address: "wss://x" });
+      }
+      if (u.endsWith("/close")) return json({ ok: true });
+      if (u.endsWith("/v1/run/tasks")) return json({ run_id: "tsk_5" });
+      if (u.endsWith("/v1/credentials/totp")) return json({ totp_code_id: "tc_5", code: "991122" });
+      return json({ status: "completed", output: { outcome: "accepted", password_set: true } });
+    });
+    const client = new SkyvernClient("key", store, "bot@agents.test", "https://api.skyvern.test", fetchImpl as typeof fetch);
+    const pending = client.acceptInvite({
+      runId: "run_5",
+      url: "https://app.acme.io/invite/abc",
+      service: "Acme",
+      agentName: "Bot",
+      email: "bot@agents.test",
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    const body = "Subject: Verify\nYour Acme code is 991122. Expires in 10 minutes.";
+    expect(await client.pushCode({ kind: "code", value: "991122", emailBody: body })).toMatchObject({ ok: true });
+    const totp = calls.find((c) => c.url.endsWith("/v1/credentials/totp"))!.body as Record<string, unknown>;
+    expect(totp.content).toBe(body);
+    await vi.advanceTimersByTimeAsync(6_000);
+    await pending;
+    vi.useRealTimers();
   });
 });

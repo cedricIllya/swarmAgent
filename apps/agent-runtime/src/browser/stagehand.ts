@@ -285,7 +285,9 @@ export class ManagedBrowserSession {
   /** Вызывает inbox: передать код/ссылку в ждущую сессию. */
   deliverCode(v: { kind: "code" | "link"; value: string }): boolean {
     if (!this.waiter) return false;
-    this.action({ type: "code-from-email", kind: v.kind }).catch(() => undefined);
+    this.action({ type: "code-from-email", kind: v.kind, ...(v.kind === "code" ? { code: v.value } : { link: v.value }) }).catch(
+      () => undefined,
+    );
     this.waiter.resolve(v);
     return true;
   }
@@ -294,7 +296,12 @@ export class ManagedBrowserSession {
   stashCode(v: { kind: "code" | "link"; value: string }): void {
     if (this.closed) return;
     this.pendingCode = { value: v, at: Date.now() };
-    this.action({ type: "code-from-email", kind: v.kind, stashed: true }).catch(() => undefined);
+    this.action({
+      type: "code-from-email",
+      kind: v.kind,
+      stashed: true,
+      ...(v.kind === "code" ? { code: v.value } : { link: v.value }),
+    }).catch(() => undefined);
   }
 
   async close(): Promise<BrowserSession> {

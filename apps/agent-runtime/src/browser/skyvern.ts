@@ -19,6 +19,17 @@ import { log, warn } from "../log";
 
 const TERMINAL = new Set(["completed", "failed", "terminated", "canceled", "timed_out"]);
 
+/**
+ * Content для Skyvern TOTP: полное письмо предпочтительнее — сервис сам вытащит код.
+ * Иначе — фраза с цифрами или сама ссылка.
+ */
+export function totpContent(v: { kind: "code" | "link"; value: string; emailBody?: string | undefined }): string {
+  const body = v.emailBody?.trim();
+  if (body && body.length > 10) return body.slice(0, 8000);
+  if (v.kind === "code") return `Your verification code is ${v.value}`;
+  return v.value;
+}
+
 export const INVITE_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
@@ -79,6 +90,7 @@ export interface SkyvernLoginArgs {
 interface ActiveRun {
   skyvernRunId: string;
   sessionId: string;
+  runId: string;
   startedAt: number;
 }
 
@@ -205,6 +217,17 @@ export class SkyvernClient {
     return this.active.size > 0 || this.held.size > 0;
   }
 
+  /** runId задачи, в которую сейчас идёт браузер Skyvern (для журнала кода). */
+  activeRunId(): string | null {
+    const latest = [...this.active.values()].sort((a, b) => b.startedAt - a.startedAt)[0];
+    if (latest) return latest.runId;
+    // Сессия жива между задачами (поиск ключа): код всё равно пишем в её run.
+    for (const meta of this.metas.values()) {
+      if (!meta.finishedAt) return meta.runId;
+    }
+    return null;
+  }
+
   /** Одна сессия на весь онбординг: captcha-solver и общие cookies. */
   async openBrowserSession(): Promise<{ browserSessionId: string; liveUrl: string | null; browserAddress: string | null }> {
     const res = await this.fetchImpl(`${this.base}/v1/browser_sessions`, {
@@ -329,6 +352,7 @@ export class SkyvernClient {
         timeoutMs: args.timeoutMs,
         browserSessionId: opened.browserSessionId,
         leaveOpen: true,
+        expectTotp: true,
         onSession: args.onSession,
         onStep: args.onStep,
       });
@@ -388,44 +412,72 @@ export class SkyvernClient {
       schema: LOGIN_OUTPUT_SCHEMA,
       maxSteps: 25,
       timeoutMs: args.timeoutMs,
+      expectTotp: true,
       onSession: args.onSession,
     });
     return { session: r.session, status: r.status, output: r.output };
   }
 
   /**
-   * Код или ссылка из письма → в Skyvern. Привязываем к последней запущенной задаче,
-   * чтобы при нескольких задачах код не ушёл не туда.
+   * Код или ссылка из письма → в Skyvern.
+   * В `content` лучше полное тело письма: Skyvern сам вытащит цифры или magic link.
+   * Привязываем к последней задаче, чтобы при нескольких код не ушёл не туда.
    */
-  async pushCode(v: { kind: "code" | "link"; value: string }): Promise<boolean> {
-    const content = v.kind === "code" ? `Your verification code is ${v.value}` : v.value;
+  async pushCode(v: {
+    kind: "code" | "link";
+    value: string;
+    /** Тема + тело письма — предпочтительный content для TOTP API. */
+    emailBody?: string | undefined;
+  }): Promise<{ ok: boolean; buffered: boolean; content: string }> {
+    const content = totpContent(v);
     const latest = [...this.active.values()].sort((a, b) => b.startedAt - a.startedAt)[0];
     if (!latest) {
-      if (this.held.size === 0) return false;
+      if (this.held.size === 0) return { ok: false, buffered: false, content };
       this.pendingTotp.push(content);
-      log("skyvern", "код придержан до следующей задачи сессии");
-      return true;
+      log("skyvern", "код придержан до следующей задачи сессии", {
+        kind: v.kind,
+        ...(v.kind === "code" ? { code: v.value } : { link: v.value.slice(0, 120) }),
+      });
+      return { ok: true, buffered: true, content };
     }
-    return this.postTotp(latest, content, v.kind);
+    const ok = await this.postTotp(latest, content, v.kind === "code" ? "code" : "link", v.value);
+    return { ok, buffered: false, content };
   }
 
-  private async postTotp(target: ActiveRun, content: string, kind: "code" | "link" | "buffered"): Promise<boolean> {
+  private async postTotp(
+    target: ActiveRun,
+    content: string,
+    kind: "code" | "link" | "buffered",
+    displayValue?: string,
+  ): Promise<boolean> {
     const res = await this.fetchImpl(`${this.base}/v1/credentials/totp`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": this.apiKey },
       body: JSON.stringify({
         totp_identifier: this.totpIdentifier,
         content,
-        source: "swarm-inbox",
+        source: "email",
         task_id: target.skyvernRunId,
       }),
     });
-    await this.store.appendBrowserAction(target.sessionId, { type: "code-from-email", kind, delivered: res.ok });
+    const digits = displayValue?.match(/^\d{4,8}$/) ? displayValue : content.match(/\b(\d{4,8})\b/)?.[1];
+    await this.store.appendBrowserAction(target.sessionId, {
+      type: "code-from-email",
+      kind,
+      delivered: res.ok,
+      totpContent: content.slice(0, 500),
+      ...(digits ? { code: digits } : kind === "link" ? { link: displayValue ?? content.slice(0, 200) } : {}),
+    });
     if (!res.ok) {
       warn("skyvern", "не удалось передать код", { status: res.status, body: (await res.text()).slice(0, 300) });
       return false;
     }
-    log("skyvern", "код из письма передан", { kind, skyvernRunId: target.skyvernRunId });
+    log("skyvern", "код из письма передан в Skyvern TOTP", {
+      kind,
+      skyvernRunId: target.skyvernRunId,
+      totpIdentifier: this.totpIdentifier,
+      ...(digits ? { code: digits } : { link: (displayValue ?? content).slice(0, 120) }),
+    });
     return true;
   }
 
@@ -440,6 +492,8 @@ export class SkyvernClient {
     browserSessionId?: string | undefined;
     /** Не помечать сессию закрытой: следующая задача или человек ещё в ней. */
     leaveOpen?: boolean | undefined;
+    /** В журнале: задача может ждать код из письма. */
+    expectTotp?: boolean | undefined;
     onSession?: ((session: BrowserSession) => Promise<void>) | undefined;
     onStep?: ((text: string, data?: Record<string, unknown>) => Promise<void> | void) | undefined;
   }): Promise<{ session: BrowserSession; status: string; output: unknown; failureReason: string | null }> {
@@ -474,7 +528,7 @@ export class SkyvernClient {
     };
     meta.purpose = args.purpose;
     if (!meta.liveUrl) meta.liveUrl = created.app_url ?? null;
-    const run = { skyvernRunId, sessionId: meta.id, startedAt: Date.now() };
+    const run = { skyvernRunId, sessionId: meta.id, runId: args.runId, startedAt: Date.now() };
     this.active.set(skyvernRunId, run);
     this.metas.set(meta.id, meta);
     const buffered = this.pendingTotp.splice(0);
@@ -483,6 +537,11 @@ export class SkyvernClient {
     await this.store.appendBrowserAction(meta.id, { type: "skyvern.start", purpose: args.purpose, url: args.url, appUrl: created.app_url ?? null });
     await args.onSession?.(meta);
     await args.onStep?.(`Skyvern: ${args.purpose}`, { sessionId: meta.id, appUrl: created.app_url ?? null });
+    if (args.expectTotp) {
+      await args.onStep?.(
+        `Skyvern ждёт код или ссылку из письма на ${this.totpIdentifier} — runtime прочитает письмо и передаст в TOTP сам`,
+      );
+    }
 
     const deadline = Date.now() + (args.timeoutMs ?? 15 * 60 * 1000);
     let status = "running";

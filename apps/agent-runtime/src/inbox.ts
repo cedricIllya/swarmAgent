@@ -89,7 +89,8 @@ async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> 
     }
     known = await classifyEmail(rt, email, "classify.email.browser-open").catch(() => null);
     if (known?.kind === "verification" && known.hasLoginLink && email.links.length > 0) {
-      if (await rt.browser.deliverCode({ kind: "link", value: pickLoginLink(email.links) })) {
+      const link = pickLoginLink(email.links);
+      if (await rt.browser.deliverCode({ kind: "link", value: link, emailBody: emailBodyForLink(email, link) })) {
         await rt.store.deferEmail(email);
         log("inbox", "ссылка для входа отдана в браузер и письмо сохранено");
         return;
@@ -100,16 +101,24 @@ async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> 
   await handleNewEmail(rt, email, known);
 }
 
-/** Код/OTP из письма → в Skyvern или свой браузер. */
+/** Код/OTP из письма → в Skyvern или свой браузер. В Skyvern уходит тело письма целиком. */
 async function deliverEmailChallenge(rt: AgentRuntime, email: InboundEmail): Promise<boolean> {
-  const code = findDigitCode(`${email.subject}\n${email.replyText || email.text}`);
+  const body = `${email.subject}\n${email.replyText || email.text}`.trim();
+  const code = findDigitCode(body);
   if (!code) return false;
-  const delivered = await rt.browser.deliverCode({ kind: "code", value: code });
+  const delivered = await rt.browser.deliverCode({ kind: "code", value: code, emailBody: body });
   log("inbox", delivered ? "код из письма отдан в браузер" : "код из письма некуда отдать", {
+    code,
     codeLen: code.length,
     delivered,
+    toSkyvern: Boolean(rt.skyvern?.busy),
   });
   return delivered;
+}
+
+function emailBodyForLink(email: InboundEmail, link: string): string {
+  const body = `${email.subject}\n${email.replyText || email.text}`.trim();
+  return body.includes(link) ? body : `${body}\n${link}`.trim();
 }
 
 function shouldResumeParked(email: InboundEmail, c: EmailClassification): boolean {
@@ -160,7 +169,8 @@ async function handleWhileInBrowser(rt: AgentRuntime, email: InboundEmail): Prom
 
   const c = await classifyEmail(rt, email, "classify.email.in-browser").catch(() => null);
   if (c?.kind === "verification" && c.hasLoginLink && email.links.length > 0) {
-    const delivered = await rt.browser.deliverCode({ kind: "link", value: pickLoginLink(email.links) });
+    const link = pickLoginLink(email.links);
+    const delivered = await rt.browser.deliverCode({ kind: "link", value: link, emailBody: emailBodyForLink(email, link) });
     log("inbox", "ссылка для входа в браузер", { delivered });
     return;
   }
@@ -213,17 +223,12 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
 
   if (c.kind === "verification") {
     // Письмо с OTP могло прийти чуть раньше/позже окна busyInBrowser — всё равно пробуем отдать.
-    if (await deliverEmailChallenge(rt, email)) {
-      const run = await rt.createRun("email", email.subject || "Код подтверждения", email.messageId);
-      await rt.step(run.id, "email", `verification: код передан в браузер`);
-      await rt.finishRun(run, "done", "Код подтверждения передан в браузер");
-      return;
-    }
-    if (c.hasLoginLink && email.links.length > 0 && (await rt.browser.deliverCode({ kind: "link", value: pickLoginLink(email.links) }))) {
-      const run = await rt.createRun("email", email.subject || "Ссылка для входа", email.messageId);
-      await rt.step(run.id, "email", `verification: ссылка передана в браузер`);
-      await rt.finishRun(run, "done", "Ссылка для входа передана в браузер");
-      return;
+    // Успешная передача уже пишет сам код в журнал активной задачи (онбординг / сессия).
+    const code = findDigitCode(`${email.subject}\n${email.replyText || email.text}`);
+    if (code && (await rt.browser.deliverCode({ kind: "code", value: code, emailBody: `${email.subject}\n${email.replyText || email.text}` }))) return;
+    if (c.hasLoginLink && email.links.length > 0) {
+      const link = pickLoginLink(email.links);
+      if (await rt.browser.deliverCode({ kind: "link", value: link, emailBody: emailBodyForLink(email, link) })) return;
     }
     if (rt.busyInBrowser) {
       await rt.store.deferEmail(email);
@@ -231,7 +236,7 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
       return;
     }
     const run = await rt.createRun("email", email.subject || "Письмо", email.messageId);
-    await rt.step(run.id, "email", `verification: ${c.summary}`);
+    await rt.step(run.id, "email", `verification: ${c.summary}${code ? ` (код ${code})` : ""}`);
     await rt.finishRun(run, "done", `Без действий: ${c.summary}`);
     return;
   }
