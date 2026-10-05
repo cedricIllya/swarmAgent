@@ -1,7 +1,9 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { timingSafeEqual } from "node:crypto";
+import { ZodError } from "zod";
 import { loadConfig } from "./config";
+import { describeZodError } from "./http/lenient";
 import { applyBootstrap } from "./bootstrap";
 import { AgentRuntime } from "./runtime";
 import { resumeConnect } from "./onboarding";
@@ -39,7 +41,14 @@ app.use("*", async (c, next) => {
   return next();
 });
 
-app.onError((err, c) => {
+app.onError(async (err, c) => {
+  if (err instanceof ZodError) {
+    // Hono кеширует разобранное тело — перечитать можно.
+    const received = await c.req.json().catch(() => null);
+    const described = describeZodError(err, received);
+    warn("http", "неверное тело запроса", { path: c.req.path, issues: described.issues, received: described.received });
+    return c.json(described, 400);
+  }
   warn("http", "ошибка", { path: c.req.path, error: String(err) });
   return c.json({ error: String(err) }, 500);
 });

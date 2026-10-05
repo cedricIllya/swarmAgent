@@ -4,6 +4,7 @@ import { RuntimeReportSchema } from "@swarm/contracts";
 import type { AgentRuntime } from "../runtime";
 import { noteActivity } from "../idle";
 import { redactInternal } from "../redact";
+import { withAliases } from "./lenient";
 
 /**
  * Hermes (соседний контейнер) → runtime: инструменты скилла swarm-worker без браузера —
@@ -14,7 +15,9 @@ export function toolRoutes(rt: AgentRuntime): Hono {
 
   app.post("/approval", async (c) => {
     noteActivity();
-    const body = z.object({ runId: z.string(), description: z.string().min(1) }).parse(await c.req.json());
+    const body = z
+      .object({ runId: z.string(), description: z.string().min(1) })
+      .parse(withAliases(await c.req.json(), { runId: ["run_id", "run"], description: ["text", "reason", "action", "message"] }));
     const r = await rt.approvals.request(body.runId, body.description);
     return c.json({ approved: r.approved, pendingId: r.pending?.id ?? null });
   });
@@ -86,7 +89,7 @@ export function toolRoutes(rt: AgentRuntime): Hono {
     noteActivity();
     const body = z
       .object({ runId: z.string(), to: z.string(), subject: z.string(), text: z.string(), inReplyTo: z.string().optional() })
-      .parse(await c.req.json());
+      .parse(withAliases(await c.req.json(), { runId: ["run_id", "run"], text: ["body", "message", "content"], inReplyTo: ["in_reply_to"] }));
     const { runId, ...mail } = body;
     const { messageId } = await rt.controlPlane.sendEmail({ ...mail, text: redactInternal(mail.text) });
     await rt.store.rememberSent(messageId, { runId, to: mail.to, approvalId: null });
@@ -96,13 +99,18 @@ export function toolRoutes(rt: AgentRuntime): Hono {
 
   app.post("/runs/:id/step", async (c) => {
     noteActivity();
+    const raw = withAliases(await c.req.json(), {
+      kind: ["type", "step", "category"],
+      text: ["message", "note", "description", "content", "summary", "step_text"],
+      data: ["meta", "details"],
+    });
     const body = z
       .object({
-        kind: z.enum(["model", "tool", "mcp", "api", "browser", "email", "note", "error"]),
+        kind: z.enum(["model", "tool", "mcp", "api", "browser", "email", "note", "error"]).catch("note"),
         text: z.string(),
         data: z.record(z.string(), z.unknown()).optional(),
       })
-      .parse(await c.req.json());
+      .parse(raw);
     await rt.step(c.req.param("id"), body.kind, redactInternal(body.text), body.data);
     return c.json({ ok: true });
   });
