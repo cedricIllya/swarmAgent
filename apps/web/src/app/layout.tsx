@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { ConfirmProvider } from "@/components/confirm-dialog";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -22,7 +23,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           }
         `}</style>
         <div className="scroll-edge" aria-hidden="true" />
-        {children}
+        <ConfirmProvider>{children}</ConfirmProvider>
       </body>
     </html>
   );

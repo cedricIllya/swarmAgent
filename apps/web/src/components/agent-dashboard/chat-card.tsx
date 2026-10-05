@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import type { Agent, ChatMessage, ChatThread, Run, RunStep, RuntimeState } from "@swarm/contracts";
+import { useConfirm } from "../confirm-dialog";
 import { ApprovalRow } from "./approval-bubbles";
 import { ChatList } from "./chat-list";
 import { ChatMessages } from "./chat-messages";
@@ -34,6 +35,7 @@ export function ChatCard({
 }) {
   const params = useSearchParams();
   const router = useRouter();
+  const confirm = useConfirm();
   const selected = params.get("chat");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [text, setText] = useState("");
@@ -146,7 +148,13 @@ export function ChatCard({
   }
 
   async function removeChat() {
-    if (!activeId || !confirm("Удалить этот чат? История пропадёт.")) return;
+    if (!activeId) return;
+    const ok = await confirm({
+      title: "Удалить этот чат?",
+      body: "История пропадёт.",
+      confirmLabel: "Удалить",
+    });
+    if (!ok) return;
     await fetch(`/api/agents/${agent.id}/chats/${activeId}`, { method: "DELETE" });
     select("new");
   }

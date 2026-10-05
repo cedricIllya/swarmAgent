@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Agent } from "@swarm/contracts";
+import { useConfirm } from "../confirm-dialog";
 import { StatusBadge } from "../status-badge";
 import { ChatCard } from "./chat-card";
 import { EmailCard } from "./email-card";
@@ -14,10 +15,16 @@ import { useAgentLive } from "./use-agent-live";
 export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
   const { detail, stepsByRun, actionsBySession, onChatMessage } = useAgentLive(initialAgent);
   const router = useRouter();
+  const confirm = useConfirm();
   const { agent, state, runtimeError, asleep, waking } = detail;
 
   async function remove() {
-    if (!confirm(`Удалить агента ${agent.name}? Машина и диск будут уничтожены, адрес освободится.`)) return;
+    const ok = await confirm({
+      title: `Удалить агента ${agent.name}?`,
+      body: "Машина и диск будут уничтожены, адрес освободится.",
+      confirmLabel: "Удалить",
+    });
+    if (!ok) return;
     const res = await fetch(`/api/agents/${agent.id}`, { method: "DELETE" });
     if (res.ok) router.push("/");
   }
