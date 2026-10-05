@@ -46,6 +46,45 @@ describe("renderConfigYaml", () => {
     expect((doc.mcp_servers["linear"] as { tools?: { include?: string[] } }).tools?.include).toEqual(["list_issues"]);
   });
 
+  it("не подключает MCP с авторизацией, пока токена нет; без авторизации — подключает", () => {
+    const yaml = renderConfigYaml({
+      agentId: "agt_1",
+      agentName: "Ops",
+      email: "ops@agents.test",
+      model: "m",
+      autonomous: false,
+      skyvern: { enabled: false },
+      services: {
+        generatedAt: "t",
+        recipes: [
+          {
+            slug: "trello",
+            name: "Trello",
+            kind: "mcp",
+            domains: ["trello.com"],
+            mcp: { url: "https://mcp.trello.com/v1", transport: "streamable_http", auth: "bearer", includeTools: [] },
+            notes: "",
+            discoveredBy: null,
+          },
+          {
+            slug: "open",
+            name: "Open",
+            kind: "mcp",
+            domains: ["open.test"],
+            mcp: { url: "https://open.test/mcp", transport: "streamable_http", auth: "none", includeTools: [] },
+            notes: "",
+            discoveredBy: null,
+          },
+        ],
+        credentials: [{ slug: "trello", kind: "browser", password: "pw" }],
+      },
+    });
+    const doc = parse(yaml) as { mcp_servers: Record<string, unknown>; approvals: Record<string, string> };
+    expect(doc.mcp_servers["trello"]).toBeUndefined();
+    expect(doc.mcp_servers["open"]).toEqual({ url: "https://open.test/mcp" });
+    expect(doc.approvals).toEqual({ mode: "off", unattended_mode: "approve", cron_mode: "approve" });
+  });
+
   it("replaces only mcp_servers and keeps the rest of config.yaml", () => {
     const original = renderConfigYaml({
       agentId: "agt_1",

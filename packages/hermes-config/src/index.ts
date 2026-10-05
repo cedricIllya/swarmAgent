@@ -30,7 +30,12 @@ export function renderMcpServers(services: ServicesSnapshot, _skyvernEnabled: bo
     const cred = services.credentials.find((c) => c.slug === recipe.slug);
     const headers: Record<string, string> = {};
     const token = cred?.token ?? cred?.oauth?.accessToken;
-    if (recipe.mcp.auth !== "none" && token) headers["Authorization"] = `Bearer ${token}`;
+    // Сервер с авторизацией, но без токена, отвечает 401 на каждом старте Hermes и тянет
+    // повтор по SSE. Пока токена нет, инструментов всё равно не будет — не подключаем.
+    if (recipe.mcp.auth !== "none") {
+      if (!token) continue;
+      headers["Authorization"] = `Bearer ${token}`;
+    }
     const entry: Record<string, unknown> = { url: recipe.mcp.url };
     if (recipe.mcp.transport === "sse") entry["transport"] = "sse";
     if (Object.keys(headers).length) entry["headers"] = headers;
@@ -72,6 +77,10 @@ export function renderConfigYaml(input: HermesConfigInput): string {
     memory: { enabled: true },
     skills: { auto_create: true },
     terminal: { backend: "local" },
+    // Hermes спрашивает человека про «опасные» команды терминала сам, а задачи ему приходят
+    // через api_server, где ответить некому: curl к runtime зависал в pending_approval.
+    // Контейнер — машина агента; одобрения на изменения в чужих системах даёт runtime (/approval).
+    approvals: { mode: "off", unattended_mode: "approve", cron_mode: "approve" },
     toolsets: ["default", "mcp", "skills", "memory", "cronjob"],
     mcp_servers: renderMcpServers(input.services, input.skyvern.enabled),
     swarm: {
