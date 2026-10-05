@@ -38,8 +38,10 @@ export async function tick(rt: AgentRuntime): Promise<{ deferred: number; checke
     try {
       const turn = await rt.think(run, tickPrompt(services!), "hermes.tick");
       const { text, status } = await finishServiceThink(rt, run, turn);
+      if (await rt.isCanceled(run.id)) return { deferred, checkedServices: true };
       if (status !== "waiting_approval") await rt.finishRun(run, status, text);
     } catch (e) {
+      if (await rt.isCanceled(run.id)) return { deferred, checkedServices: true };
       await rt.step(run.id, "error", String(e));
       await rt.finishRun(run, "failed", String(e));
     }

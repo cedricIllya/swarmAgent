@@ -143,6 +143,10 @@ export class RuntimeClient {
     return this.call("GET", `/runs/${id}`);
   }
 
+  cancelRun(id: string): Promise<{ runId: string; status: string }> {
+    return this.call("POST", `/runs/${id}/cancel`, {}, 30_000);
+  }
+
   browserActions(sessionId: string): Promise<unknown[]> {
     return this.call("GET", `/browser-sessions/${sessionId}/actions`);
   }

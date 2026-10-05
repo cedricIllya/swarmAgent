@@ -53,6 +53,12 @@ export class Handoffs {
     for (const [id, ctx] of Object.entries(all)) this.contexts.set(id, ctx);
   }
 
+  /** Снять контекст без продолжения (остановка задачи). */
+  drop(handoffId: string): void {
+    if (!this.contexts.delete(handoffId)) return;
+    void this.persist().catch((e) => warn("handoff", "не удалось записать контексты", { error: String(e) }));
+  }
+
   private async persist(): Promise<void> {
     const all: Record<string, HandoffContext> = {};
     for (const [id, ctx] of this.contexts) all[id] = ctx;

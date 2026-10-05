@@ -200,6 +200,8 @@ export class SkyvernClient {
   private readonly metas = new Map<string, BrowserSession>();
   /** Код пришёл между задачами одной сессии — отдадим в следующую. */
   private readonly pendingTotp: string[] = [];
+  /** Задачи runtime, которые пользователь остановил — опрос Skyvern выходит сразу. */
+  private readonly canceledRuns = new Set<string>();
 
   constructor(
     private readonly apiKey: string,
@@ -215,6 +217,22 @@ export class SkyvernClient {
     const now = Date.now();
     for (const [id, until] of this.held) if (until <= now) this.held.delete(id);
     return this.active.size > 0 || this.held.size > 0;
+  }
+
+  /** Остановить задачи Skyvern и закрыть сессии, привязанные к runId. */
+  cancelForRun(runId: string): void {
+    this.canceledRuns.add(runId);
+    for (const [skyvernRunId, run] of this.active) {
+      if (run.runId !== runId) continue;
+      void this.cancel(skyvernRunId);
+    }
+    for (const [metaId, meta] of [...this.metas.entries()]) {
+      if (meta.runId !== runId || meta.finishedAt) continue;
+      const browserSessionId = metaId.startsWith("skyvern-") ? metaId.slice("skyvern-".length) : null;
+      if (browserSessionId && this.held.has(browserSessionId)) {
+        void this.closeBrowserSession(browserSessionId);
+      }
+    }
   }
 
   /** runId задачи, в которую сейчас идёт браузер Skyvern (для журнала кода). */
@@ -550,6 +568,13 @@ export class SkyvernClient {
     let recordingUrl: string | null = null;
     try {
       while (Date.now() < deadline) {
+        if (this.canceledRuns.has(args.runId)) {
+          status = "canceled";
+          failureReason = "остановлено пользователем";
+          await this.cancel(skyvernRunId);
+          await this.store.appendBrowserAction(meta.id, { type: "skyvern.finish", status, failureReason });
+          break;
+        }
         await new Promise((r) => setTimeout(r, 5000));
         const r = await this.fetchImpl(`${this.base}/v1/runs/${skyvernRunId}`, { headers: { "x-api-key": this.apiKey } });
         if (!r.ok) continue;
@@ -579,6 +604,7 @@ export class SkyvernClient {
       }
     } finally {
       this.active.delete(skyvernRunId);
+      this.canceledRuns.delete(args.runId);
     }
 
     if (recordingUrl) {

@@ -131,7 +131,7 @@ export async function retryChatRun(
 ): Promise<{ run: Run; chatId: string } | { error: "not_found" | "busy" }> {
   const chat = await rt.store.chats.get(args.chatId);
   const prior = await rt.store.getRun(args.runId);
-  if (!chat || !prior || prior.trigger !== "chat" || prior.threadId !== args.chatId || prior.status !== "failed") {
+  if (!chat || !prior || prior.trigger !== "chat" || prior.threadId !== args.chatId || (prior.status !== "failed" && prior.status !== "canceled")) {
     return { error: "not_found" };
   }
   const running = (await rt.store.listRuns(200)).some(
@@ -183,12 +183,14 @@ function startChatTask(
           domain: classification.serviceDomain,
           links,
         });
+        if (await rt.isCanceled(run.id)) return;
         const engine = onboarding.engine;
         if (engine.status === "ready" || engine.status === "needs_secret") {
           const service = classification.service || onboarding.discovery?.service || "сервис";
           try {
             await runConnectFollowup(rt, run, chatId, service, { status: engine.status, mode: engine.mode });
           } catch (e) {
+            if (await rt.isCanceled(run.id)) return;
             const note = `Подключение готово (${engine.mode ?? "browser"}). Задачи не проверены: ${String(e)}`;
             await rt.finishRun(run, "done", note);
             await rt.addChat({ role: "agent", text: note, runId: run.id, chatId });
@@ -211,10 +213,12 @@ function startChatTask(
       const { text, status } = await finishServiceThink(rt, run, turn, {
         allowIdle: classification.kind !== "credential",
       });
+      if (await rt.isCanceled(run.id)) return;
       if (status === "waiting_approval") return;
       await rt.finishRun(run, status, text);
       await rt.addChat({ role: "agent", text, runId: run.id, chatId });
     } catch (e) {
+      if (await rt.isCanceled(run.id)) return;
       warn("chat", "задача упала", { error: String(e) });
       await rt.step(run.id, "error", String(e));
       await rt.finishRun(run, "failed", String(e));

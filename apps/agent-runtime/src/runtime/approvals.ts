@@ -87,6 +87,7 @@ export class Approvals {
       });
     }
     if (handoff) return rt.handoffs.resolve(pending, approved, chatId);
+    if (await rt.isCanceled(run.id)) return run;
     run.status = "running";
     await rt.store.saveRun(run);
     await rt.step(run.id, "note", approved ? "одобрено человеком" : "отклонено человеком");
@@ -95,6 +96,7 @@ export class Approvals {
     const { text, status } = approved
       ? await finishServiceThink(rt, run, turn, { allowIdle: false })
       : { text: turn.text, status: "done" as const };
+    if (await rt.isCanceled(run.id)) return run;
     if (status !== "waiting_approval") await rt.finishRun(run, status, text);
     await rt.addChat({ role: "agent", text, runId: run.id, chatId });
     return run;

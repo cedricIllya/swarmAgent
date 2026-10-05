@@ -118,6 +118,16 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
     return c.json({ run, steps: await rt.store.listSteps(run.id) });
   });
 
+  app.post("/runs/:id/cancel", async (c) => {
+    noteActivity();
+    const run = await rt.cancelRun(c.req.param("id"));
+    if (!run) return c.json({ error: "not found" }, 404);
+    if (run.status !== "canceled") {
+      return c.json({ error: "not cancelable", run }, 409);
+    }
+    return c.json({ runId: run.id, status: run.status });
+  });
+
   app.get("/browser-sessions/:id/actions", async (c) => c.json(await rt.store.browserActions(c.req.param("id"))));
 
   app.get("/browser-sessions/:id/shots/:file", async (c) => {

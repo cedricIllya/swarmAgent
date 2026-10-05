@@ -285,6 +285,7 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
       await rt.addChat({ role: "agent", text, runId: run.id });
     }
   } catch (e) {
+    if (await rt.isCanceled(run.id)) return;
     warn("inbox", "задача упала", { error: String(e) });
     await rt.step(run.id, "error", String(e));
     await rt.finishRun(run, "failed", String(e));

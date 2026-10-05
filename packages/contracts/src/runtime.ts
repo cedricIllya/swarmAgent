@@ -38,7 +38,7 @@ export const GoogleTokenRequestSchema = z.object({
   token: z.record(z.string(), z.unknown()),
 });
 
-export const RunStatus = z.enum(["queued", "running", "waiting_approval", "done", "failed", "escalated"]);
+export const RunStatus = z.enum(["queued", "running", "waiting_approval", "done", "failed", "escalated", "canceled"]);
 
 export const RunSchema = z.object({
   id: z.string(),

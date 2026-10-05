@@ -11,10 +11,11 @@ import { EmailCard } from "./email-card";
 import { LogsCard } from "./logs-card";
 import { ServicesCard } from "./services-card";
 import { UsageCard } from "./usage-card";
+import { AgentModelControl } from "./agent-model-control";
 import { useAgentLive } from "./use-agent-live";
 
 export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
-  const { detail, stepsByRun, actionsBySession, onChatMessage, livePending } = useAgentLive(initialAgent);
+  const { detail, stepsByRun, actionsBySession, onChatMessage, livePending, patchAgent } = useAgentLive(initialAgent);
   const router = useRouter();
   const confirm = useConfirm();
   const [removing, setRemoving] = useState(false);
@@ -56,9 +57,9 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
             {state?.busyInBrowser && <span className="badge badge-warn"><span className="badge-dot pulse" />в браузере</span>}
           </div>
           <div className="faint small" style={{ marginTop: 4 }}>
-            {agent.model}
-            {agent.statusMessage ? ` · ${agent.statusMessage}` : ""}
+            {agent.statusMessage ?? ""}
           </div>
+          <AgentModelControl agent={agent} onUpdated={patchAgent} />
         </div>
         <button className="btn btn-sm btn-danger" type="button" onClick={remove} disabled={removing}>
           {removing ? "Удаляем…" : "Удалить"}

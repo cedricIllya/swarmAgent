@@ -64,6 +64,12 @@ export class BrowserControl {
     await this.rt.step(meta.runId, "browser", "браузер закрыт", { sessionId });
   }
 
+  /** Закрыть все свои сессии, привязанные к задаче (остановка пользователем). */
+  async closeForRun(runId: string): Promise<void> {
+    const ids = [...this.sessions.entries()].filter(([, s]) => s.meta.runId === runId).map(([id]) => id);
+    for (const id of ids) await this.close(id);
+  }
+
   /**
    * Код или ссылка из письма — туда, где её ждут. Задача Skyvern в приоритете: она не умеет
    * читать почту сама. Иначе — в ждущую сессию своего браузера. Если никто не ждёт, но сессия

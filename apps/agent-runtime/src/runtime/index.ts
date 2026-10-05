@@ -42,6 +42,8 @@ export class AgentRuntime {
   readonly research: Research;
   model: string;
   autonomous: boolean;
+  /** Abort текущих ходов Hermes по id задачи. */
+  private readonly aborts = new Map<string, AbortController>();
 
   constructor(readonly cfg: RuntimeConfig) {
     this.store = new Store(cfg.dataDir);
@@ -88,6 +90,7 @@ export class AgentRuntime {
       threadId,
     };
     await this.store.saveRun(run);
+    this.armAbort(run.id);
     log("run", "начата", { id: run.id, trigger, title: run.title });
     return run;
   }
@@ -98,11 +101,77 @@ export class AgentRuntime {
   }
 
   async finishRun(run: Run, status: Run["status"], summary: string): Promise<void> {
+    const current = (await this.store.getRun(run.id)) ?? run;
+    // Отмена пользователем не должна быть перезаписана поздним finish из фоновой задачи.
+    if (current.status === "canceled" && status !== "canceled") return;
     run.status = status;
     run.summary = redactInternal(summary).slice(0, 2000);
     run.finishedAt = status === "waiting_approval" ? null : new Date().toISOString();
     await this.store.saveRun(run);
+    if (status !== "running" && status !== "queued" && status !== "waiting_approval") {
+      this.disarmAbort(run.id);
+    }
     log("run", "завершена", { id: run.id, status });
+  }
+
+  /** Задача ещё отменяема: идёт, в очереди или ждёт человека. */
+  canCancel(run: Run): boolean {
+    return run.status === "running" || run.status === "queued" || run.status === "waiting_approval";
+  }
+
+  async isCanceled(runId: string): Promise<boolean> {
+    const run = await this.store.getRun(runId);
+    return run?.status === "canceled";
+  }
+
+  /**
+   * Остановить задачу: оборвать Hermes, закрыть браузер, снять ожидания одобрения.
+   * Фоновые await после этого увидят cancel и не перезапишут итог.
+   */
+  async cancelRun(runId: string): Promise<Run | null> {
+    const run = await this.store.getRun(runId);
+    if (!run) return null;
+    if (!this.canCancel(run)) return run;
+
+    this.aborts.get(runId)?.abort();
+    this.skyvern?.cancelForRun(runId);
+    await this.browser.closeForRun(runId);
+
+    const approvals = await this.store.listApprovals();
+    const keep = approvals.filter((p) => p.runId !== runId);
+    const dropped = approvals.filter((p) => p.runId === runId);
+    if (dropped.length) {
+      for (const p of dropped) {
+        if (p.kind === "handoff") this.handoffs.drop(p.id);
+      }
+      await this.store.saveApprovals(keep);
+    }
+
+    await this.step(runId, "note", "остановлено пользователем");
+    await this.finishRun(run, "canceled", "Остановлено пользователем");
+    await this.addChat({
+      role: "agent",
+      text: "Задача остановлена.",
+      runId: run.id,
+      chatId: await this.chatIdForRun(run),
+    });
+    log("run", "отменена пользователем", { id: run.id });
+    return run;
+  }
+
+  signalFor(runId: string): AbortSignal | undefined {
+    return this.aborts.get(runId)?.signal;
+  }
+
+  private armAbort(runId: string): AbortController {
+    this.aborts.get(runId)?.abort();
+    const c = new AbortController();
+    this.aborts.set(runId, c);
+    return c;
+  }
+
+  private disarmAbort(runId: string): void {
+    this.aborts.delete(runId);
   }
 
   taskRef(run: Run): TaskRef {
@@ -111,6 +180,7 @@ export class AgentRuntime {
 
   /** Одна «мысль» Hermes в контексте задачи. Hermes сам ходит в MCP и скиллы. */
   async think(run: Run, prompt: string, action = "hermes.turn"): Promise<ThinkResult> {
+    if (await this.isCanceled(run.id)) throw new DOMException("Задача остановлена", "AbortError");
     const services = await this.store.readServices();
     const system = systemPrompt({
       agentName: this.cfg.agentName,
@@ -123,7 +193,9 @@ export class AgentRuntime {
     const withRun = ensureRunId(run.id, prompt);
     const startedAt = new Date().toISOString();
     await this.step(run.id, "model", "запрос модели", { chars: withRun.length });
-    const r = await this.hermes.run(withRun, { sessionId: run.threadId ?? run.id, system, model: this.model });
+    const signal = this.signalFor(run.id) ?? this.armAbort(run.id).signal;
+    const r = await this.hermes.run(withRun, { sessionId: run.threadId ?? run.id, system, model: this.model, signal });
+    if (await this.isCanceled(run.id)) throw new DOMException("Задача остановлена", "AbortError");
     const details = turnDetails(await this.store.listSteps(run.id), startedAt);
     await recordUsage(this.store, this.taskRef(run), action, "hermes", r, details);
     const text = redactInternal(r.text);

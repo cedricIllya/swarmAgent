@@ -1,14 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import type { Agent } from "@swarm/contracts";
-
-interface ModelOption {
-  id: string;
-  name: string;
-  promptPerM: number;
-  completionPerM: number;
-}
+import { ModelSelect } from "./model-select";
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4.5";
 
@@ -16,23 +10,8 @@ export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string;
   const [name, setName] = useState("");
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [localPart, setLocalPart] = useState("");
-  const [models, setModels] = useState<ModelOption[]>([]);
-  const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/models")
-      .then((r) => r.json())
-      .then((j: { models: ModelOption[] }) => setModels(j.models ?? []))
-      .catch(() => setModels([]));
-  }, []);
-
-  const shown = useMemo(() => {
-    const f = filter.trim().toLowerCase();
-    const list = f ? models.filter((m) => m.id.includes(f) || m.name.toLowerCase().includes(f)) : models;
-    return list.slice(0, 60);
-  }, [models, filter]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -72,15 +51,7 @@ export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string;
       </div>
       <div className="field">
         <label className="label">Модель (OpenRouter)</label>
-        <input className="input" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Поиск по моделям…" />
-        <select className="select" value={model} onChange={(e) => setModel(e.target.value)}>
-          {!shown.some((m) => m.id === model) && <option value={model}>{model}</option>}
-          {shown.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name} — ${m.promptPerM.toFixed(2)} / ${m.completionPerM.toFixed(2)} за 1M
-            </option>
-          ))}
-        </select>
+        <ModelSelect value={model} onChange={setModel} disabled={busy} />
       </div>
       {error && <p className="error">{error}</p>}
       <div className="row" style={{ justifyContent: "flex-end" }}>

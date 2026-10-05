@@ -1,6 +1,6 @@
 import type { ChatMessage } from "@swarm/contracts";
 
-/** Куда повесить «Повторить»: последнее обычное сообщение упавшей задачи. */
+/** Куда повесить «Повторить»: последнее обычное сообщение упавшей или остановленной задачи. */
 export function retryBubbleIndexes(messages: ChatMessage[], failedRunIds: Set<string>): Set<number> {
   const last = new Map<string, number>();
   messages.forEach((m, i) => {

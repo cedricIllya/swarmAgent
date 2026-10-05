@@ -42,7 +42,12 @@ export class HermesClient {
     this.f = opts.fetchImpl ?? fetch;
   }
 
-  async run(prompt: string, args: { sessionId: string; system?: string; model: string }): Promise<ChatResult> {
+  async run(
+    prompt: string,
+    args: { sessionId: string; system?: string; model: string; signal?: AbortSignal },
+  ): Promise<ChatResult> {
+    const timeout = AbortSignal.timeout(20 * 60 * 1000);
+    const signal = args.signal ? AbortSignal.any([timeout, args.signal]) : timeout;
     try {
       const res = await this.f(`${this.opts.apiUrl}/chat/completions`, {
         method: "POST",
@@ -59,7 +64,7 @@ export class HermesClient {
           ],
           stream: false,
         }),
-        signal: AbortSignal.timeout(20 * 60 * 1000),
+        signal,
       });
       if (!res.ok) throw new Error(`Hermes ${res.status}: ${await res.text()}`);
       const json = (await res.json()) as {
@@ -79,6 +84,8 @@ export class HermesClient {
         ...usage,
       };
     } catch (e) {
+      // Отмена пользователем — не уходим в OpenRouter без инструментов.
+      if (args.signal?.aborted || (e instanceof Error && e.name === "AbortError")) throw e;
       warn("hermes", "api_server недоступен, отвечаем без инструментов", { error: String(e) });
       const fallback = await this.opts.fallback.chat(
         [

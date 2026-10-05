@@ -104,6 +104,7 @@ function ChatWorkspace({
   const [busy, setBusy] = useState(false);
   const [awaiting, setAwaiting] = useState(false);
   const [deciding, setDeciding] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   const chats = state?.chats ?? [];
   const activeId = selected && selected !== "new" && chats.some((c) => c.id === selected) ? selected : null;
@@ -210,6 +211,17 @@ function ChatWorkspace({
     }
   }
 
+  async function stopRun(runId: string) {
+    if (stopping) return;
+    setStopping(true);
+    try {
+      await fetch(`/api/agents/${agent.id}/runs/${runId}/cancel`, { method: "POST" });
+    } finally {
+      setStopping(false);
+      setAwaiting(false);
+    }
+  }
+
   async function rename(title: string) {
     if (!activeId) return;
     await fetch(`/api/agents/${agent.id}/chats/${activeId}`, {
@@ -271,6 +283,9 @@ function ChatWorkspace({
           onDecide={(id, approved) => void decide(id, approved)}
           working={working}
           activity={activity}
+          liveRunId={liveRun?.id ?? null}
+          stopping={stopping}
+          onStop={() => liveRun && void stopRun(liveRun.id)}
           retryEnabled={running && !working}
           onRetry={(runId) => void retry(runId)}
           loading={messagesLoading || selecting}

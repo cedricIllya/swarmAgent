@@ -71,6 +71,30 @@ describe("HermesClient cost", () => {
     expect(r.usedFallback).toBe(true);
   });
 
+  it("does not fall back when the caller aborts the turn", async () => {
+    const fallback = { chat: vi.fn() } as unknown as OpenRouterClient;
+    const controller = new AbortController();
+    const c = new HermesClient({
+      apiUrl: "http://127.0.0.1:8642/v1",
+      apiKey: "rt",
+      fallback,
+      fetchImpl: vi.fn(async (_url, init) => {
+        const signal = init?.signal;
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            const err = new Error("aborted");
+            err.name = "AbortError";
+            reject(err);
+          });
+        });
+      }) as unknown as typeof fetch,
+    });
+    const pending = c.run("привет", { sessionId: "run_1", model: "m", signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(fallback.chat).not.toHaveBeenCalled();
+  });
+
   it("records only the increase when the same Hermes session is reused", async () => {
     let total = 1;
     const fetchImpl = vi.fn(async (url: string) => {

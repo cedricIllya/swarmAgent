@@ -21,6 +21,9 @@ export function ChatMessages({
   onDecide,
   working,
   activity,
+  liveRunId,
+  stopping,
+  onStop,
   retryEnabled,
   onRetry,
   loading,
@@ -34,6 +37,9 @@ export function ChatMessages({
   onDecide: (approvalId: string, approved: boolean) => void;
   working: boolean;
   activity: string;
+  liveRunId: string | null;
+  stopping: boolean;
+  onStop: () => void;
   /** Агент на связи и в этом чате сейчас ничего не выполняется. */
   retryEnabled: boolean;
   onRetry: (runId: string) => void;
@@ -47,7 +53,7 @@ export function ChatMessages({
 
   const failedRunIds = new Set(
     (state?.runs ?? [])
-      .filter((r) => r.status === "failed" && r.trigger === "chat")
+      .filter((r) => (r.status === "failed" || r.status === "canceled") && r.trigger === "chat")
       .map((r) => r.id),
   );
   const retryAt = retryBubbleIndexes(messages, failedRunIds);
@@ -96,6 +102,11 @@ export function ChatMessages({
             <span />
           </span>
           <span>{activity}</span>
+          {liveRunId && (
+            <button type="button" className="btn btn-ghost btn-sm" disabled={stopping} onClick={onStop} style={{ marginLeft: "auto" }}>
+              {stopping ? "…" : "Остановить"}
+            </button>
+          )}
         </div>
       )}
       <div ref={bottom} />

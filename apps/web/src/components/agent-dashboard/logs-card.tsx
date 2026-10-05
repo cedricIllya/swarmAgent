@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useState, type MouseEvent } from "react";
 import type { Agent, BrowserSession, Run, RunStep, RuntimeState } from "@swarm/contracts";
 import { SessionShots } from "./browser-bubble";
 import { fmtTime } from "./format";
@@ -14,6 +14,7 @@ const STATUS_LABEL: Record<Run["status"], { text: string; cls: string }> = {
   done: { text: "готово", cls: "badge-ok" },
   failed: { text: "ошибка", cls: "badge-danger" },
   escalated: { text: "нужен человек", cls: "badge-warn" },
+  canceled: { text: "остановлено", cls: "" },
 };
 
 const TRIGGER_LABEL: Record<Run["trigger"], string> = {
@@ -101,12 +102,25 @@ function RunItem({
 }) {
   const [loaded, setLoaded] = useState<RunStep[] | null>(null);
   const [open, setOpen] = useState(run.status === "running");
+  const [stopping, setStopping] = useState(false);
   const router = useRouter();
   const params = useSearchParams();
 
   async function load() {
     const res = await fetch(`/api/agents/${agent.id}/runs/${run.id}`);
     if (res.ok) setLoaded(((await res.json()) as { steps: RunStep[] }).steps);
+  }
+
+  async function stop(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (stopping) return;
+    setStopping(true);
+    try {
+      await fetch(`/api/agents/${agent.id}/runs/${run.id}/cancel`, { method: "POST" });
+    } finally {
+      setStopping(false);
+    }
   }
 
   useEffect(() => {
@@ -120,6 +134,7 @@ function RunItem({
 
   const st = STATUS_LABEL[run.status];
   const steps = mergeSteps(loaded, liveSteps);
+  const canStop = run.status === "running" || run.status === "queued" || run.status === "waiting_approval";
   return (
     <details
       className="list-item"
@@ -156,7 +171,14 @@ function RunItem({
             )}
           </div>
         </div>
-        <span className={`badge ${st.cls}`}>{st.text}</span>
+        <div className="row" style={{ gap: 8, flexShrink: 0 }}>
+          {canStop && (
+            <button type="button" className="btn btn-ghost btn-sm" disabled={stopping} onClick={(e) => void stop(e)}>
+              {stopping ? "…" : "Остановить"}
+            </button>
+          )}
+          <span className={`badge ${st.cls}`}>{st.text}</span>
+        </div>
       </summary>
       {run.summary && <p className="small" style={{ margin: "10px 0 0", whiteSpace: "pre-wrap" }}>{run.summary}</p>}
       <div className="steps">

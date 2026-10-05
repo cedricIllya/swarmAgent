@@ -135,5 +135,9 @@ export function useAgentLive(initialAgent: Agent) {
   }, [initialAgent.id]);
 
   const livePending = detail.state === null && !settled;
-  return { detail, stepsByRun, actionsBySession, onChatMessage, livePending };
+  const patchAgent = useCallback((agent: Agent) => {
+    setDetail((prev) => ({ ...prev, agent }));
+  }, []);
+
+  return { detail, stepsByRun, actionsBySession, onChatMessage, livePending, patchAgent };
 }
