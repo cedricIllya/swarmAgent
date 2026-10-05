@@ -156,12 +156,30 @@ export interface PromptContext {
   services: ServicesSnapshot | null;
 }
 
+function recipeLines(r: NonNullable<PromptContext["services"]>["recipes"][number], credAccount: string): string[] {
+  const head = `- ${r.name} (${r.slug}): способ ${r.kind}${credAccount ? `, аккаунт ${credAccount}` : ""}`;
+  const detail: string[] = [head];
+  if (r.mcp) {
+    detail.push(`  MCP: ${r.mcp.url} (${r.mcp.transport}, auth ${r.mcp.auth}). Инструменты: mcp_${r.slug}_*`);
+  }
+  if (r.api) {
+    const header =
+      r.api.authHeader && r.api.authHeader !== "Authorization" ? `, заголовок ${r.api.authHeader}` : "";
+    detail.push(`  API: ${r.api.baseUrl}${r.api.docsUrl ? `, docs ${r.api.docsUrl}` : ""}, auth ${r.api.auth}${header}`);
+  }
+  if (r.browser) {
+    detail.push(`  Браузер: приложение ${r.browser.appUrl}, вход ${r.browser.loginUrl}`);
+  }
+  if (r.notes) detail.push(`  Заметки: ${r.notes}`);
+  return detail;
+}
+
 export function systemPrompt(ctx: PromptContext): string {
   const recipes = ctx.services?.recipes ?? [];
   const line = (r: (typeof recipes)[number]) => {
     const cred = ctx.services?.credentials.find((c) => c.slug === r.slug);
     const who = [cred?.accountName, cred?.accountEmail].filter(Boolean).join(", ");
-    return `- ${r.name} (${r.slug}): способ ${r.kind}${who ? `, аккаунт ${who}` : ""}`;
+    return recipeLines(r, who).join("\n");
   };
   const own = recipes.filter((r) => ctx.services?.credentials.some((c) => c.slug === r.slug)).map(line);
   const catalog = recipes.filter((r) => !ctx.services?.credentials.some((c) => c.slug === r.slug)).map(line);
@@ -178,6 +196,7 @@ export function systemPrompt(ctx: PromptContext): string {
     "Если сервис не пускает, пока его администратор не включит аккаунт, runtime сам оставляет карточку в чате. Не вызывай /approval и не обещай ждать. Карточки нет — вход уже есть: выпускай секрет или смотри задачи, повторно не регистрируйся.",
     "Подключение к сервису после регистрации — всегда лестница: 1) MCP, 2) API, 3) браузер. Браузер — только если первых двух нет.",
     "Задачу выполняй в самом сервисе тем же способом. Письмо-уведомление только сообщает о ней: ответ на такое письмо работой не считается.",
+    "После каждого действия в сервисе (MCP, curl к API, шаг браузера) сразу пиши в журнал POST /runs/<runId>/step с kind mcp|api|browser. Без записи задача не считается выполненной.",
     "Работа внутри сервиса без MCP и API — свой браузер через runtime (/browser/open с serviceSlug). Cookies этого сервиса сохраняются (после своего браузера или переноса из Skyvern). Если сессия не вошла — войди по паролю из credentials через /browser/act; коды из писем runtime передаст сам. Skyvern — только регистрация и вход, капчи он обходит сам.",
     "Всегда следуй скиллу swarm-worker. Он описывает локальные эндпоинты runtime:",
     `http://127.0.0.1:${ctx.runtimePort} с заголовком Authorization: Bearer $SWARM_RUNTIME_TOKEN.`,

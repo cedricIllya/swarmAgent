@@ -1,6 +1,7 @@
 import { processEmail } from "./inbox";
 import { tickPrompt } from "./prompts";
 import type { AgentRuntime } from "./runtime";
+import { finishServiceThink } from "./service-work";
 import { log, warn } from "./log";
 
 let running = false;
@@ -35,9 +36,9 @@ export async function tick(rt: AgentRuntime): Promise<{ deferred: number; checke
 
     const run = await rt.createRun("cron", "Плановая проверка сервисов", null);
     try {
-      const text = await rt.think(run, tickPrompt(services!), "hermes.tick");
-      const current = await rt.store.getRun(run.id);
-      if (current?.status !== "waiting_approval") await rt.finishRun(run, "done", text);
+      const turn = await rt.think(run, tickPrompt(services!), "hermes.tick");
+      const { text, status } = await finishServiceThink(rt, run, turn);
+      if (status !== "waiting_approval") await rt.finishRun(run, status, text);
     } catch (e) {
       await rt.step(run.id, "error", String(e));
       await rt.finishRun(run, "failed", String(e));

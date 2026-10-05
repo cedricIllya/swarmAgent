@@ -76,7 +76,10 @@ async function skillTemplates(): Promise<{ worker: string; serviceSkills: Array<
   };
   return {
     worker: await read("swarm-worker/SKILL.md"),
-    serviceSkills: [{ slug: "gensite", content: await read("gensite/SKILL.md") }],
+    serviceSkills: [
+      { slug: "gensite", content: await read("gensite/SKILL.md") },
+      { slug: "pneumatic", content: await read("pneumatic/SKILL.md") },
+    ],
   };
 }
 

@@ -43,7 +43,32 @@ describe("HermesClient cost", () => {
     const r = await client(fetchImpl as unknown as typeof fetch).run("привет", { sessionId: "run_1", model: "m" });
     expect(r.promptTokens).toBe(100);
     expect(r.costUsd).toBe(0.37);
+    expect(r.usedFallback).toBe(false);
     expect(String(fetchImpl.mock.calls[1]?.[0])).toBe("http://127.0.0.1:8642/api/sessions/api-abc");
+  });
+
+  it("marks OpenRouter fallback when Hermes is down", async () => {
+    const fallback = {
+      chat: vi.fn(async () => ({
+        text: "без инструментов",
+        promptTokens: 1,
+        completionTokens: 1,
+        costUsd: 0,
+        model: "m",
+        citations: [],
+      })),
+    } as unknown as OpenRouterClient;
+    const c = new HermesClient({
+      apiUrl: "http://127.0.0.1:8642/v1",
+      apiKey: "rt",
+      fallback,
+      fetchImpl: vi.fn(async () => {
+        throw new Error("ECONNREFUSED");
+      }) as unknown as typeof fetch,
+    });
+    const r = await c.run("привет", { sessionId: "run_1", model: "m" });
+    expect(r.text).toBe("без инструментов");
+    expect(r.usedFallback).toBe(true);
   });
 
   it("records only the increase when the same Hermes session is reused", async () => {

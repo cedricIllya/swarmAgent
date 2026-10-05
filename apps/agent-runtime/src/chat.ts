@@ -16,6 +16,7 @@ import { coerceChatClassification } from "./invite-signal";
 import { prepareOnboarding, runConnectFollowup } from "./onboarding";
 import { log, warn } from "./log";
 import { redactInternal } from "./redact";
+import { finishServiceThink } from "./service-work";
 import { recordUsage } from "./usage";
 
 /**
@@ -206,10 +207,12 @@ function startChatTask(
         links,
         recipe: task.recipe,
       });
-      const text = await rt.think(run, prompt);
-      const current = await rt.store.getRun(run.id);
-      if (current?.status === "waiting_approval") return;
-      await rt.finishRun(run, "done", text);
+      const turn = await rt.think(run, prompt);
+      const { text, status } = await finishServiceThink(rt, run, turn, {
+        allowIdle: classification.kind !== "credential",
+      });
+      if (status === "waiting_approval") return;
+      await rt.finishRun(run, status, text);
       await rt.addChat({ role: "agent", text, runId: run.id, chatId });
     } catch (e) {
       warn("chat", "задача упала", { error: String(e) });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { escalationNote, humanPage, onboardingPrompt, serviceWorkPrompt } from "./prompts";
+import { escalationNote, humanPage, onboardingPrompt, serviceWorkPrompt, systemPrompt } from "./prompts";
 import { isMachineSender } from "./inbox";
 
 describe("escalationNote", () => {
@@ -45,5 +45,41 @@ describe("service work from a notification", () => {
     expect(prompt).toMatch(/Отправителю этого письма не отвечай/);
     expect(isMachineSender("Pneumatic <no-reply@pneumatic.app>")).toBe(true);
     expect(isMachineSender("Владелец <owner@cedricillya.online>")).toBe(false);
+  });
+});
+
+describe("systemPrompt recipe details", () => {
+  it("shows API baseUrl, docs and journal rule", () => {
+    const text = systemPrompt({
+      agentName: "Бот",
+      email: "bot@example.com",
+      ownerEmail: null,
+      autonomous: false,
+      runtimePort: 8787,
+      services: {
+        generatedAt: "t",
+        recipes: [
+          {
+            slug: "pneumatic",
+            name: "Pneumatic",
+            kind: "api",
+            domains: ["pneumatic.app"],
+            api: {
+              baseUrl: "https://api.pneumatic.app",
+              docsUrl: "https://api-docs.pneumatic.app/",
+              auth: "bearer",
+              authHeader: "Authorization",
+            },
+            notes: "Ключ: Integrations",
+            discoveredBy: null,
+          },
+        ],
+        credentials: [{ slug: "pneumatic", kind: "api", token: "x", accountEmail: "bot@example.com" }],
+      },
+    });
+    expect(text).toContain("https://api.pneumatic.app");
+    expect(text).toContain("https://api-docs.pneumatic.app/");
+    expect(text).toContain("Ключ: Integrations");
+    expect(text).toMatch(/kind mcp\|api\|browser/);
   });
 });

@@ -1,6 +1,7 @@
 import type { PendingApproval, Run } from "@swarm/contracts";
 import { approvalContinuationPrompt } from "../prompts";
 import { redactInternal } from "../redact";
+import { finishServiceThink } from "../service-work";
 import { warn } from "../log";
 import { newId } from "./ids";
 import type { AgentRuntime } from "./index";
@@ -89,8 +90,12 @@ export class Approvals {
     run.status = "running";
     await rt.store.saveRun(run);
     await rt.step(run.id, "note", approved ? "одобрено человеком" : "отклонено человеком");
-    const text = await rt.think(run, approvalContinuationPrompt(pending.description, approved), "hermes.approval");
-    await rt.finishRun(run, "done", text);
+    const turn = await rt.think(run, approvalContinuationPrompt(pending.description, approved), "hermes.approval");
+    // Отказ — делать в сервисе нечего; одобрение — нужна реальная работа.
+    const { text, status } = approved
+      ? await finishServiceThink(rt, run, turn, { allowIdle: false })
+      : { text: turn.text, status: "done" as const };
+    if (status !== "waiting_approval") await rt.finishRun(run, status, text);
     await rt.addChat({ role: "agent", text, runId: run.id, chatId });
     return run;
   }

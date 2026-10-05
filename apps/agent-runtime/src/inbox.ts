@@ -12,6 +12,7 @@ import {
   type EmailClassification,
 } from "./prompts";
 import type { AgentRuntime } from "./runtime";
+import { finishServiceThink } from "./service-work";
 import { recordUsage } from "./usage";
 import { log, warn } from "./log";
 
@@ -81,24 +82,34 @@ async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> 
   // Браузер открыт, но код ещё не просил (страница с полем только грузится):
   // код или ссылку придерживаем для сессии, остальная почта идёт обычным путём.
   let known: EmailClassification | null = null;
-  if (rt.browser.sessions.size > 0 && !fromOwner) {
-    const code = findDigitCode(`${email.subject}\n${email.replyText || email.text}`);
-    if (code) {
-      rt.browser.deliverCode({ kind: "code", value: code });
+  if ((rt.browser.sessions.size > 0 || rt.skyvern?.busy) && !fromOwner) {
+    if (await deliverEmailChallenge(rt, email)) {
       await rt.store.deferEmail(email);
-      log("inbox", "код из письма отдан в браузер и письмо сохранено");
       return;
     }
     known = await classifyEmail(rt, email, "classify.email.browser-open").catch(() => null);
     if (known?.kind === "verification" && known.hasLoginLink && email.links.length > 0) {
-      rt.browser.deliverCode({ kind: "link", value: pickLoginLink(email.links) });
-      await rt.store.deferEmail(email);
-      log("inbox", "ссылка для входа отдана в браузер и письмо сохранено");
-      return;
+      if (await rt.browser.deliverCode({ kind: "link", value: pickLoginLink(email.links) })) {
+        await rt.store.deferEmail(email);
+        log("inbox", "ссылка для входа отдана в браузер и письмо сохранено");
+        return;
+      }
     }
   }
 
   await handleNewEmail(rt, email, known);
+}
+
+/** Код/OTP из письма → в Skyvern или свой браузер. */
+async function deliverEmailChallenge(rt: AgentRuntime, email: InboundEmail): Promise<boolean> {
+  const code = findDigitCode(`${email.subject}\n${email.replyText || email.text}`);
+  if (!code) return false;
+  const delivered = await rt.browser.deliverCode({ kind: "code", value: code });
+  log("inbox", delivered ? "код из письма отдан в браузер" : "код из письма некуда отдать", {
+    codeLen: code.length,
+    delivered,
+  });
+  return delivered;
 }
 
 function shouldResumeParked(email: InboundEmail, c: EmailClassification): boolean {
@@ -135,24 +146,21 @@ async function handleThreadReply(
 
   const run = await rt.createRun("email", email.subject || "Задача из письма", threadId);
   await rt.step(run.id, "email", `новая задача в ветке от ${email.from}`);
-  const text = await rt.think(run, emailTaskPrompt(email, "task"));
-  await rt.finishRun(run, "done", text);
+  const turn = await rt.think(run, emailTaskPrompt(email, "task"));
+  const { text, status } = await finishServiceThink(rt, run, turn);
+  if (status === "waiting_approval") return;
+  await rt.finishRun(run, status, text);
   await replyInThread(rt, email, run.id, text);
 }
 
 async function handleWhileInBrowser(rt: AgentRuntime, email: InboundEmail): Promise<void> {
   await rt.store.deferEmail(email);
 
-  const code = findDigitCode(`${email.subject}\n${email.replyText || email.text}`);
-  if (code) {
-    const delivered = rt.browser.deliverCode({ kind: "code", value: code });
-    log("inbox", "код из письма в браузер", { delivered });
-    return;
-  }
+  if (await deliverEmailChallenge(rt, email)) return;
 
   const c = await classifyEmail(rt, email, "classify.email.in-browser").catch(() => null);
   if (c?.kind === "verification" && c.hasLoginLink && email.links.length > 0) {
-    const delivered = rt.browser.deliverCode({ kind: "link", value: pickLoginLink(email.links) });
+    const delivered = await rt.browser.deliverCode({ kind: "link", value: pickLoginLink(email.links) });
     log("inbox", "ссылка для входа в браузер", { delivered });
     return;
   }
@@ -203,7 +211,32 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
     return;
   }
 
-  if (c.kind === "other" || c.kind === "verification") {
+  if (c.kind === "verification") {
+    // Письмо с OTP могло прийти чуть раньше/позже окна busyInBrowser — всё равно пробуем отдать.
+    if (await deliverEmailChallenge(rt, email)) {
+      const run = await rt.createRun("email", email.subject || "Код подтверждения", email.messageId);
+      await rt.step(run.id, "email", `verification: код передан в браузер`);
+      await rt.finishRun(run, "done", "Код подтверждения передан в браузер");
+      return;
+    }
+    if (c.hasLoginLink && email.links.length > 0 && (await rt.browser.deliverCode({ kind: "link", value: pickLoginLink(email.links) }))) {
+      const run = await rt.createRun("email", email.subject || "Ссылка для входа", email.messageId);
+      await rt.step(run.id, "email", `verification: ссылка передана в браузер`);
+      await rt.finishRun(run, "done", "Ссылка для входа передана в браузер");
+      return;
+    }
+    if (rt.busyInBrowser) {
+      await rt.store.deferEmail(email);
+      log("inbox", "verification отложен: браузер занят, код не извлечён", { subject: email.subject });
+      return;
+    }
+    const run = await rt.createRun("email", email.subject || "Письмо", email.messageId);
+    await rt.step(run.id, "email", `verification: ${c.summary}`);
+    await rt.finishRun(run, "done", `Без действий: ${c.summary}`);
+    return;
+  }
+
+  if (c.kind === "other") {
     const run = await rt.createRun("email", email.subject || "Письмо", email.messageId);
     await rt.step(run.id, "email", `${c.kind}: ${c.summary}`);
     await rt.finishRun(run, "done", `Без действий: ${c.summary}`);
@@ -237,10 +270,10 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
       await rt.finishRun(run, engine.status === "failed" ? "failed" : engine.status === "escalated" ? "escalated" : "done", note);
       return;
     }
-    const text = await rt.think(run, emailTaskPrompt(email, c.kind));
-    const current = await rt.store.getRun(run.id);
-    if (current?.status === "waiting_approval") return;
-    await rt.finishRun(run, "done", text);
+    const turn = await rt.think(run, emailTaskPrompt(email, c.kind));
+    const { text, status } = await finishServiceThink(rt, run, turn);
+    if (status === "waiting_approval") return;
+    await rt.finishRun(run, status, text);
     if (c.kind === "task" && !isMachineSender(email.from)) {
       await replyInThread(rt, email, run.id, text);
     } else {

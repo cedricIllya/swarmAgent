@@ -70,10 +70,16 @@ export class BrowserControl {
    * открыта, код придерживается для её ближайшего `wait-code`: письмо часто приходит
    * раньше, чем страница с полем для кода успевает загрузиться.
    */
-  deliverCode(v: { kind: "code" | "link"; value: string }): boolean {
+  async deliverCode(v: { kind: "code" | "link"; value: string }): Promise<boolean> {
     if (this.rt.skyvern?.busy) {
-      this.rt.skyvern.pushCode(v).catch((e) => warn("browser", "код в Skyvern не ушёл", { error: String(e) }));
-      return true;
+      try {
+        const ok = await this.rt.skyvern.pushCode(v);
+        if (!ok) warn("browser", "Skyvern не принял код из письма", { kind: v.kind });
+        return ok;
+      } catch (e) {
+        warn("browser", "код в Skyvern не ушёл", { error: String(e) });
+        return false;
+      }
     }
     for (const s of this.sessions.values()) {
       if (s.waitingForCode && s.deliverCode(v)) return true;

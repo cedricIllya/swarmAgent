@@ -50,12 +50,17 @@ describe("runConnectFollowup", () => {
     });
     const addChat = vi.fn();
     const run = { id: "run-1", status: "running" } as Run;
+    const startedAt = "2026-01-01T00:00:00.000Z";
     const rt = {
-      think: async () => phrase,
-      store: { getRun: async () => ({ ...run, status: "running" }) },
+      think: async () => ({ text: phrase, usedFallback: false, startedAt }),
+      store: {
+        getRun: async () => ({ ...run, status: "running" }),
+        listSteps: async () => [{ at: startedAt, kind: "note", text: "подключён сервис Pneumatic (API)" }],
+      },
       handoffs: { open },
       finishRun,
       addChat,
+      step: vi.fn(),
     } as unknown as AgentRuntime;
 
     await runConnectFollowup(rt, run, "chat-1", "Pneumatic", { status: "needs_secret", mode: "api" });

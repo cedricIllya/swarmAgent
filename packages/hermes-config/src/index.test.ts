@@ -113,11 +113,17 @@ describe("renderConfigYaml", () => {
       },
       env: { openRouterApiKey: "k", runtimeToken: "t" },
       skillTemplate: "hi",
-      serviceSkills: [{ slug: "gensite", content: "https://gensite.ru/api/mcp {{AGENT_EMAIL}}" }],
+      serviceSkills: [
+        { slug: "gensite", content: "https://gensite.ru/api/mcp {{AGENT_EMAIL}}" },
+        { slug: "pneumatic", content: "api.pneumatic.app {{AGENT_EMAIL}}" },
+      ],
     });
     const gensite = withRecipe.find((f) => f.path === "skills/gensite/SKILL.md")?.content ?? "";
     expect(gensite).toContain("gensite.ru/api/mcp");
     expect(gensite).toContain("ops@agents.test");
     expect(gensite).not.toContain("{{AGENT_EMAIL}}");
+    const pneumatic = withRecipe.find((f) => f.path === "skills/pneumatic/SKILL.md")?.content ?? "";
+    expect(pneumatic).toContain("api.pneumatic.app");
+    expect(pneumatic).toContain("ops@agents.test");
   });
 });

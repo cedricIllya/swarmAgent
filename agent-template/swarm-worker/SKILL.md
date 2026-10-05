@@ -196,12 +196,16 @@ curl -s -X POST http://127.0.0.1:8787/email/send -H "Authorization: Bearer $SWAR
 
 ## 6. Журнал
 
-Важные шаги отмечай, чтобы человек видел их в логах карточки:
+После **каждого** действия в сервисе сразу пиши шаг. Без записи в журнале задача не считается выполненной:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8787/runs/<runId>/step -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" \
-  -H "Content-Type: application/json" -d '{"kind":"note","text":"вошёл в Example, вижу 3 задачи на себя"}'
+  -H "Content-Type: application/json" \
+  -d '{"kind":"mcp","text":"mcp_example_list_issues: 3 задачи на меня"}'
+# kind: mcp | api | browser — по способу; note — только пояснения без вызова
 ```
+
+Важные пояснения тоже отмечай (`kind: note`), чтобы человек видел их в логах карточки.
 
 ## 7. Тик раз в 15 минут
 

@@ -40,6 +40,8 @@ export interface ChatResult {
   model: string;
   /** Источники из веб-поиска, если он был включён. */
   citations: WebCitation[];
+  /** true — ответ собран без Hermes (без MCP/скиллов/терминала). */
+  usedFallback?: boolean;
 }
 
 export interface ChatOptions {

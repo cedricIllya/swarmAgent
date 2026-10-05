@@ -75,11 +75,12 @@ export class HermesClient {
         text: json.choices?.[0]?.message?.content ?? "",
         model: json.model ?? args.model,
         citations: [],
+        usedFallback: false,
         ...usage,
       };
     } catch (e) {
       warn("hermes", "api_server недоступен, отвечаем без инструментов", { error: String(e) });
-      return this.opts.fallback.chat(
+      const fallback = await this.opts.fallback.chat(
         [
           ...(args.system ? [{ role: "system" as const, content: args.system }] : []),
           { role: "user" as const, content: prompt },
@@ -87,6 +88,7 @@ export class HermesClient {
         {},
         args.model,
       );
+      return { ...fallback, usedFallback: true };
     }
   }
 

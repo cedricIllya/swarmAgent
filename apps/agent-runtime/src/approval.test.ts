@@ -31,4 +31,10 @@ describe("findDigitCode", () => {
     expect(findDigitCode("Your code is 482913. It expires soon")).toBe("482913");
     expect(findDigitCode("Order 2024-11-05 shipped")).toBeNull();
   });
+
+  it("finds Atlassian/Trello codes with spaces or in the subject", () => {
+    expect(findDigitCode("Verify your identity\n\n4 8 2 9 1 3\n\nExpires soon")).toBe("482913");
+    expect(findDigitCode("482913 is your verification code")).toBe("482913");
+    expect(findDigitCode("Your verification code is:\n8 3 1 0 4 2")).toBe("831042");
+  });
 });

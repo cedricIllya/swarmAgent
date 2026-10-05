@@ -19,6 +19,7 @@ function fakeRuntime() {
         approvals.splice(0, approvals.length, ...list);
       },
       getRun: async (id: string) => runs.get(id) ?? null,
+      listSteps: async () => [],
       rememberSent: vi.fn(),
       readHandoffContexts: async () => ({}),
       writeHandoffContexts: vi.fn(async () => undefined),
@@ -36,7 +37,11 @@ function fakeRuntime() {
     finishRun: async (run: Run, status: string, summary: string) => {
       Object.assign(run, { status, summary });
     },
-    think: vi.fn(async () => "задач нет"),
+    think: vi.fn(async () => ({
+      text: "задач нет",
+      usedFallback: false,
+      startedAt: "2026-01-01T00:00:00.000Z",
+    })),
   };
   return { rt: rt as unknown as AgentRuntime, approvals, chat, raw: rt };
 }

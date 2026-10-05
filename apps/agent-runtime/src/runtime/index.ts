@@ -7,6 +7,7 @@ import { Store } from "../store";
 import { SkyvernClient } from "../browser/skyvern";
 import { systemPrompt } from "../prompts";
 import { redactInternal } from "../redact";
+import { ensureRunId } from "../service-work";
 import { recordUsage, turnDetails, type TaskRef } from "../usage";
 import type { RuntimeConfig } from "../config";
 import { log } from "../log";
@@ -16,6 +17,13 @@ import { Handoffs } from "./handoffs";
 import { newId } from "./ids";
 import { Research } from "./research";
 import { ServiceCatalog } from "./services";
+
+/** Результат одного хода Hermes: текст + метаданные для проверки работы в сервисе. */
+export interface ThinkResult {
+  text: string;
+  usedFallback: boolean;
+  startedAt: string;
+}
 
 /**
  * Состояние одного агента в одном процессе: задачи, одобрения,
@@ -102,7 +110,7 @@ export class AgentRuntime {
   }
 
   /** Одна «мысль» Hermes в контексте задачи. Hermes сам ходит в MCP и скиллы. */
-  async think(run: Run, prompt: string, action = "hermes.turn"): Promise<string> {
+  async think(run: Run, prompt: string, action = "hermes.turn"): Promise<ThinkResult> {
     const services = await this.store.readServices();
     const system = systemPrompt({
       agentName: this.cfg.agentName,
@@ -112,9 +120,10 @@ export class AgentRuntime {
       runtimePort: this.cfg.port,
       services,
     });
+    const withRun = ensureRunId(run.id, prompt);
     const startedAt = new Date().toISOString();
-    await this.step(run.id, "model", "запрос модели", { chars: prompt.length });
-    const r = await this.hermes.run(prompt, { sessionId: run.threadId ?? run.id, system, model: this.model });
+    await this.step(run.id, "model", "запрос модели", { chars: withRun.length });
+    const r = await this.hermes.run(withRun, { sessionId: run.threadId ?? run.id, system, model: this.model });
     const details = turnDetails(await this.store.listSteps(run.id), startedAt);
     await recordUsage(this.store, this.taskRef(run), action, "hermes", r, details);
     const text = redactInternal(r.text);
@@ -122,8 +131,9 @@ export class AgentRuntime {
       promptTokens: r.promptTokens,
       completionTokens: r.completionTokens,
       costUsd: r.costUsd,
+      usedFallback: r.usedFallback === true,
     });
-    return text;
+    return { text, usedFallback: r.usedFallback === true, startedAt };
   }
 
   // Chat

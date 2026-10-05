@@ -25,6 +25,7 @@ import { isInviteUrl, pickInviteLink } from "./invite-signal";
 import { connectedFollowupPrompt, humanPage, secretFollowupPrompt, type KnownRecipeRef } from "./prompts";
 import type { AgentRuntime } from "./runtime";
 import type { HandoffContext, ResumeConnect } from "./runtime/handoffs";
+import { finishServiceThink } from "./service-work";
 import { warn } from "./log";
 
 /**
@@ -660,9 +661,9 @@ export async function runConnectFollowup(
     engine.status === "needs_secret"
       ? secretFollowupPrompt(service, engine.mode === "api" ? "api" : "mcp")
       : connectedFollowupPrompt(service, engine.mode ?? "browser");
-  const text = await rt.think(run, prompt);
-  const current = await rt.store.getRun(run.id);
-  if (current?.status === "waiting_approval") return;
-  await rt.finishRun(run, "done", text);
+  const turn = await rt.think(run, prompt);
+  const { text, status } = await finishServiceThink(rt, run, turn);
+  if (status === "waiting_approval") return;
+  await rt.finishRun(run, status, text);
   await rt.addChat({ role: "agent", text, runId: run.id, chatId });
 }
