@@ -50,7 +50,7 @@ fly machine update <id> --schedule hourly -a swarm-control-plane -y
 
 | | |
 | --- | --- |
-| Сайт | https://swarm-control-plane.fly.dev |
+| Сайт | https://swarm.cedricillya.online. `swarm-control-plane.fly.dev` закрыт в приложении и отвечает 404. |
 | Приложение | `swarm-control-plane` |
 | База | Managed Postgres `swarm-db`, кластер `kyzl60xz8gyrpj9g`, план Basic, регион `ams` |
 | Домен агентов | `cedricillya.online`, DNS у reg.ru (`ns1.reg.ru`, `ns2.reg.ru`) |

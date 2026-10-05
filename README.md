@@ -2,7 +2,7 @@
 
 Сервис, в котором у пользователя несколько AI-агентов. У каждого агента свой адрес на общем домене Mailgun и своя машина на Fly.io с [Hermes Agent](https://github.com/NousResearch/hermes-agent). Машина засыпает, когда работы нет: процессор и память в этом состоянии не тарифицируются. На адрес присылают приглашение в сервис — агент входит по лестнице **MCP → API → браузер**, онбордится и дальше проверяет задачи в подключённых сервисах. Модели берутся из OpenRouter.
 
-Сейчас control plane открыт на [swarm-control-plane.fly.dev](https://swarm-control-plane.fly.dev). Почта и машины агентов ещё не подключены: нет своего домена с MX и не собран образ runtime. Подробности в [деплое](docs/deploy.md).
+Сейчас control plane открыт на [swarm.cedricillya.online](https://swarm.cedricillya.online). Адрес `swarm-control-plane.fly.dev` отвечает 404. Почта и машины агентов ещё не подключены: нет своего домена с MX и не собран образ runtime. Подробности в [деплое](docs/deploy.md).
 
 ## Документация
 
