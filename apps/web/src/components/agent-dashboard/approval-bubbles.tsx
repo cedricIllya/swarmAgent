@@ -3,7 +3,26 @@
 import type { ChatMessage, PendingApproval } from "@swarm/contracts";
 import { fmtTime } from "./format";
 
-/** Вопрос агента в ленте чата с кнопками «Да» и «Нет», пока решение не принято. */
+interface Labels {
+  title: string;
+  yes: string;
+  no: string;
+}
+
+const APPROVAL: Labels = { title: "Нужно одобрение", yes: "Да", no: "Нет" };
+/** Агент упёрся в барьер и ждёт человека: человек доделывает в браузере и возвращает управление. */
+const HANDOFF: Labels = { title: "Нужна помощь в браузере", yes: "Я доделал, продолжай", no: "Отменить" };
+
+function LiveLink({ url }: { url: string | null | undefined }) {
+  if (!url) return null;
+  return (
+    <a className="btn btn-sm" href={url} target="_blank" rel="noopener noreferrer">
+      открыть браузер агента
+    </a>
+  );
+}
+
+/** Вопрос агента в ленте чата с кнопками, пока решение не принято. */
 export function ApprovalBubble({
   message,
   open,
@@ -15,19 +34,21 @@ export function ApprovalBubble({
   busy: boolean;
   onDecide: (approved: boolean) => void;
 }) {
+  const labels = message.handoff ? HANDOFF : APPROVAL;
   return (
     <div className="bubble bubble-agent bubble-approval">
       <div className="small" style={{ color: "var(--warn)", fontWeight: 500 }}>
-        Нужно одобрение
+        {labels.title}
       </div>
       <div>{message.text}</div>
       {open ? (
         <div className="approval-actions">
+          {message.handoff && <LiveLink url={message.liveUrl} />}
           <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => onDecide(true)}>
-            Да
+            {labels.yes}
           </button>
           <button className="btn btn-sm" disabled={busy} onClick={() => onDecide(false)}>
-            Нет
+            {labels.no}
           </button>
         </div>
       ) : (
@@ -40,15 +61,18 @@ export function ApprovalBubble({
 
 /** Ожидание, у которого нет своей карточки в ленте: показывается над чатом. */
 export function ApprovalRow({ approval, onDecide }: { approval: PendingApproval; onDecide: (approved: boolean) => void }) {
+  const handoff = approval.kind === "handoff";
+  const labels = handoff ? HANDOFF : APPROVAL;
   return (
     <div className="list-item list-item-warn">
       <div>
-        <div className="small" style={{ color: "var(--warn)", fontWeight: 500 }}>Нужно одобрение</div>
+        <div className="small" style={{ color: "var(--warn)", fontWeight: 500 }}>{labels.title}</div>
         <div>{approval.description}</div>
       </div>
       <div className="row">
-        <button className="btn btn-sm btn-primary" onClick={() => onDecide(true)}>Да</button>
-        <button className="btn btn-sm" onClick={() => onDecide(false)}>Нет</button>
+        {handoff && <LiveLink url={approval.liveUrl} />}
+        <button className="btn btn-sm btn-primary" onClick={() => onDecide(true)}>{labels.yes}</button>
+        <button className="btn btn-sm" onClick={() => onDecide(false)}>{labels.no}</button>
       </div>
     </div>
   );

@@ -160,6 +160,10 @@ function RunItem({
           </div>
           {s.hasVideo ? (
             <video controls preload="none" src={`/api/agents/${agent.id}/browser-sessions/${s.id}/video`} />
+          ) : !s.finishedAt && s.liveUrl ? (
+            <a className="small" href={s.liveUrl} target="_blank" rel="noopener noreferrer">
+              сессия идёт — смотреть браузер
+            </a>
           ) : (
             <span className="faint small">{s.finishedAt ? "видео недоступно" : "сессия идёт, видео появится после"}</span>
           )}

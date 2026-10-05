@@ -24,6 +24,8 @@ export function BrowserBubble({
 }) {
   const [loaded, setLoaded] = useState<Array<Record<string, unknown>>>([]);
   const live = Boolean(session && !session.finishedAt && session.liveUrl);
+  // Страница Skyvern не встраивается в iframe и даёт «взять управление» — туда ведём ссылкой.
+  const embeddable = live && session?.provider !== "skyvern";
   const sessionId = message.sessionId!;
 
   useEffect(() => {
@@ -54,7 +56,7 @@ export function BrowserBubble({
           {live && <span className="badge-dot pulse" style={{ marginRight: 6 }} />}
           {message.text}
         </span>
-        {live && session?.liveUrl && (
+        {embeddable && session?.liveUrl && (
           <a className="small" href={session.liveUrl} target="_blank" rel="noopener noreferrer">
             открыть в новой вкладке
           </a>
@@ -62,13 +64,22 @@ export function BrowserBubble({
       </div>
       {live && session?.liveUrl ? (
         <>
-          <iframe
-            className="live-frame"
-            src={session.liveUrl}
-            sandbox="allow-same-origin allow-scripts"
-            allow="clipboard-read; clipboard-write"
-            title={session.purpose}
-          />
+          {embeddable ? (
+            <iframe
+              className="live-frame"
+              src={session.liveUrl}
+              sandbox="allow-same-origin allow-scripts"
+              allow="clipboard-read; clipboard-write"
+              title={session.purpose}
+            />
+          ) : (
+            <div className="approval-actions">
+              <a className="btn btn-sm btn-primary" href={session.liveUrl} target="_blank" rel="noopener noreferrer">
+                смотреть браузер в Skyvern
+              </a>
+              <span className="faint small">там же можно взять управление</span>
+            </div>
+          )}
           {actions.length > 0 && (
             <div className="steps">
               {actions.slice(-8).map((a, i) => (
@@ -85,9 +96,7 @@ export function BrowserBubble({
             ? "сессия не найдена"
             : session.finishedAt
               ? "сессия завершена, видео недоступно"
-              : session.provider === "skyvern"
-                ? "сессия идёт, живой экран для Skyvern недоступен — видео появится после"
-                : "сессия идёт, видео появится после"}
+              : "сессия идёт, ссылки на живой экран пока нет — видео появится после"}
         </span>
       )}
       <span className="bubble-time">{fmtTime(message.at)}</span>
