@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import type { Agent, BrowserSession, Run, RunStep, RuntimeState } from "@swarm/contracts";
+import { SessionShots } from "./browser-bubble";
 import { fmtTime } from "./format";
 import { ListSkeleton, Skeleton } from "../skeleton";
 
@@ -184,16 +185,14 @@ function RunItem({
             <a className="small" href={s.liveUrl} target="_blank" rel="noopener noreferrer">
               сессия идёт — смотреть браузер
             </a>
+          ) : s.provider !== "skyvern" ? (
+            <SessionShots
+              agentId={agent.id}
+              sessionId={s.id}
+              fallback={s.finishedAt ? "кадров нет" : "кадр появится после шага"}
+            />
           ) : (
-            <span className="faint small">
-              {s.finishedAt
-                ? s.provider === "skyvern"
-                  ? "видео недоступно"
-                  : "шаги в журнале задачи"
-                : s.provider === "skyvern"
-                  ? "сессия идёт, видео появится после"
-                  : "сессия идёт"}
-            </span>
+            <span className="faint small">{s.finishedAt ? "видео недоступно" : "сессия идёт, видео появится после"}</span>
           )}
         </div>
       ))}

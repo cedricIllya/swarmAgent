@@ -6,19 +6,24 @@ import { randomBytes } from "node:crypto";
  * передаёт их в ту же сессию. Один цикл «посмотри страницу → сделай шаг».
  */
 
-export type PageState =
-  | "accept_button"
-  | "email_form"
-  | "signup_form"
-  | "password_form"
-  | "auth_choice"
-  | "code_prompt"
-  | "magic_link_sent"
-  | "logged_in"
-  | "captcha"
-  | "expired"
-  | "pending_approval"
-  | "other";
+const PAGE_STATES = [
+  "accept_button",
+  "email_form",
+  "signup_form",
+  "password_form",
+  "auth_choice",
+  "code_prompt",
+  "magic_link_sent",
+  "logged_in",
+  "captcha",
+  "expired",
+  "pending_approval",
+  "account_exists",
+  "password_rejected",
+  "other",
+] as const;
+
+export type PageState = (typeof PAGE_STATES)[number];
 
 export interface PageObservation {
   state: PageState;
@@ -31,23 +36,7 @@ export const PAGE_STATE_SCHEMA = {
   additionalProperties: false,
   required: ["state", "hint"],
   properties: {
-    state: {
-      type: "string",
-      enum: [
-        "accept_button",
-        "email_form",
-        "signup_form",
-        "password_form",
-        "auth_choice",
-        "code_prompt",
-        "magic_link_sent",
-        "logged_in",
-        "captcha",
-        "expired",
-        "pending_approval",
-        "other",
-      ],
-    },
+    state: { type: "string", enum: PAGE_STATES },
     hint: { type: "string" },
   },
 } as const;
@@ -65,7 +54,10 @@ export const PAGE_STATE_INSTRUCTION = [
   "captcha — капча или проверка «я не робот».",
   "expired — приглашение недействительно, истекло или ошибка доступа.",
   "pending_approval — заявка на регистрацию отправлена и ждёт одобрения администратора сервиса. Подтверждение почты кодом или ссылкой — это не оно.",
+  "account_exists — регистрация отвечает ошибкой: пользователь с этим адресом уже есть, email занят.",
+  "password_rejected — форма входа показывает ошибку: неверный пароль, неверный логин или пароль.",
   "other — ничего из перечисленного.",
+  "Если на форме видна красная ошибка — выбирай account_exists или password_rejected, а не форму, на которой она показана.",
 ].join("\n");
 
 /** Минимальный интерфейс сессии, чтобы цикл можно было прогнать без браузера. */
@@ -82,8 +74,10 @@ export interface AcceptInviteArgs {
   service: string;
   agentName: string;
   email: string;
-  /** Пароль, если у агента уже есть аккаунт в сервисе. Иначе придумаем свой. */
+  /** Пароль этого прогона. Для нового аккаунта его задают при регистрации и им же входят сразу после. */
   password?: string | null;
+  /** Аккаунт в сервисе уже был: форму регистрации не заполнять, только войти. */
+  existing?: boolean;
   maxSteps?: number;
   codeTimeoutMs?: number;
   onStep?: (text: string, data?: Record<string, unknown>) => Promise<void> | void;
@@ -112,22 +106,8 @@ export function generatePassword(): string {
 
 function parseObservation(raw: unknown): PageObservation {
   const o = (raw ?? {}) as Partial<PageObservation>;
-  const states: PageState[] = [
-    "accept_button",
-    "email_form",
-    "signup_form",
-    "password_form",
-    "auth_choice",
-    "code_prompt",
-    "magic_link_sent",
-    "logged_in",
-    "captcha",
-    "expired",
-    "pending_approval",
-    "other",
-  ];
   return {
-    state: states.includes(o.state as PageState) ? (o.state as PageState) : "other",
+    state: (PAGE_STATES as readonly string[]).includes(o.state as string) ? (o.state as PageState) : "other",
     hint: typeof o.hint === "string" ? o.hint.slice(0, 200) : "",
   };
 }
@@ -141,8 +121,15 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
   let lastState: PageState | null = null;
   let repeats = 0;
   let waitedForCode = 0;
+  let extractFailures = 0;
+  let accountExistsSeen = false;
 
-  const finish = async (status: AcceptInviteResult["status"], steps: number, notes: string): Promise<AcceptInviteResult> => ({
+  const finish = async (
+    status: AcceptInviteResult["status"],
+    steps: number,
+    notes: string,
+    barrierKind: string | null = null,
+  ): Promise<AcceptInviteResult> => ({
     status,
     accountEmail: args.email,
     password: passwordCreated ? password : null,
@@ -150,13 +137,24 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
     finalUrl: await browser.currentUrl().catch(() => ""),
     notes,
     provider: "local",
+    barrierKind,
   });
 
   await browser.goto(args.url);
   await step(`открыл приглашение в ${args.service}`);
 
   for (let i = 1; i <= maxSteps; i++) {
-    const seen = parseObservation(await browser.extract(PAGE_STATE_INSTRUCTION, PAGE_STATE_SCHEMA));
+    let raw: unknown;
+    try {
+      raw = await browser.extract(PAGE_STATE_INSTRUCTION, PAGE_STATE_SCHEMA);
+      extractFailures = 0;
+    } catch (e) {
+      extractFailures++;
+      await step(`шаг ${i}: страницу не удалось разобрать`, { error: String(e).slice(0, 300) });
+      if (extractFailures >= 2) return finish("failed", i, "страницу не удалось разобрать два раза подряд");
+      continue;
+    }
+    const seen = parseObservation(raw);
     await step(`шаг ${i}: ${seen.state}${seen.hint ? ` — ${seen.hint}` : ""}`);
 
     repeats = seen.state === lastState ? repeats + 1 : 0;
@@ -168,13 +166,36 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
         return finish("accepted", i, `приглашение принято, аккаунт ${args.email}`);
 
       case "captcha":
-        return finish("needs_human", i, `капча: ${seen.hint}`);
+        return finish("needs_human", i, `капча: ${seen.hint}`, "captcha");
 
       case "expired":
-        return finish("failed", i, `приглашение недействительно: ${seen.hint}`);
+        return finish("failed", i, `приглашение недействительно: ${seen.hint}`, "invite_spent");
 
       case "pending_approval":
-        return { ...(await finish("needs_human", i, `заявка ждёт одобрения в сервисе: ${seen.hint}`)), barrierKind: "pending_approval" };
+        return finish("needs_human", i, `заявка ждёт одобрения в сервисе: ${seen.hint}`, "pending_approval");
+
+      case "password_rejected":
+        return finish("needs_human", i, `сервис не принял пароль для ${args.email}: ${seen.hint}`, "password_rejected");
+
+      case "account_exists": {
+        if (accountExistsSeen) {
+          return finish("needs_human", i, `аккаунт ${args.email} уже есть в ${args.service}, а войти в него нечем: ${seen.hint}`, "password_rejected");
+        }
+        accountExistsSeen = true;
+        if (!args.existing) {
+          // Пароль от аккаунта, заведённого раньше, агенту неизвестен: придуманный не подойдёт.
+          password = null;
+          passwordCreated = false;
+        }
+        await browser.act(
+          [
+            `Аккаунт ${args.email} уже есть. Перейди на страницу входа (Войти, Sign in, Log in) и введи этот адрес.`,
+            password ? `Пароль — ${password}.` : "Выбери вход по коду на почту или magic link, если он есть.",
+            "Не регистрируй новый аккаунт и не нажимай «забыли пароль».",
+          ].join(" "),
+        );
+        break;
+      }
 
       case "accept_button":
         await browser.act("Нажми кнопку принять приглашение или присоединиться (Accept, Join, Continue, Принять)");
@@ -189,7 +210,7 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
         break;
 
       case "signup_form": {
-        if (password && args.password) {
+        if (args.existing && password) {
           await browser.act(
             [
               `Это уже существующий аккаунт ${args.email}. Не регистрируй новый и не нажимай «забыли пароль».`,
@@ -198,14 +219,13 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
           );
           break;
         }
-        if (!password) {
-          password = generatePassword();
-          passwordCreated = true;
-        }
+        if (!password) password = generatePassword();
+        passwordCreated = true;
         await browser.act(
           [
             `Заполни форму регистрации: имя ${args.agentName}, адрес ${args.email}, пароль ${password}`,
             "(и подтверждение пароля, если есть). Отметь согласие с условиями, если просят. Отправь форму.",
+            "Если на этой же странице есть ссылка «уже есть аккаунт» или «войти» — не нажимай её: сначала регистрация.",
           ].join(" "),
         );
         break;
@@ -219,7 +239,15 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
           if (!r.success) return finish("needs_human", i, `просят пароль, а у агента его нет: ${seen.hint}`);
           break;
         }
-        await browser.act(`Введи пароль ${password} и отправь форму. Если предлагают код на почту — предпочти его паролю.`);
+        await browser.act(
+          [
+            `Введи пароль ${password} для ${args.email} и отправь форму.`,
+            passwordCreated
+              ? "Это вход сразу после регистрации: пароль тот же, который только что задали. Не регистрируй второй аккаунт."
+              : "Если предлагают код на почту — предпочти его паролю.",
+            "Не нажимай «забыли пароль» и не меняй пароль.",
+          ].join(" "),
+        );
         break;
       }
 

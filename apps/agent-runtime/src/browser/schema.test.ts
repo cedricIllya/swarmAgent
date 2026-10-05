@@ -10,6 +10,7 @@ describe("toExtractSchema", () => {
     expect(typeof s.safeParse).toBe("function");
     expect(s.parse({ state: "email_form", hint: "поле e-mail" })).toEqual({ state: "email_form", hint: "поле e-mail" });
     expect(s.safeParse({ state: "nope", hint: "" }).success).toBe(false);
+    expect(s.safeParse({ state: "password_rejected", hint: "Неверный пароль" }).success).toBe(true);
     expect(z.toJSONSchema(s)).toMatchObject({ type: "object", required: ["state", "hint"] });
   });
 

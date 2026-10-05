@@ -43,6 +43,73 @@ describe("acceptInvite", () => {
     expect(acts[1]).toContain(r.password!);
   });
 
+  it("registers with a prepared password, then signs in with it when the service asks", async () => {
+    const { browser, acts } = fakeBrowser(["signup_form", "password_form", "logged_in"]);
+    const r = await acceptInvite(browser, { ...args, password: "fresh-secret" });
+    expect(r.status).toBe("accepted");
+    expect(r.password).toBe("fresh-secret");
+    expect(acts[0]).toMatch(/форму регистрации/);
+    expect(acts[0]).toContain("fresh-secret");
+    expect(acts[0]).not.toMatch(/Не регистрируй новый/);
+    expect(acts[1]).toContain("fresh-secret");
+    expect(acts[1]).toMatch(/сразу после регистрации/);
+  });
+
+  it("logs into an account that already exists instead of registering again", async () => {
+    const { browser, acts } = fakeBrowser(["signup_form", "logged_in"]);
+    const r = await acceptInvite(browser, { ...args, password: "known-secret", existing: true });
+    expect(r.status).toBe("accepted");
+    expect(r.password).toBeNull();
+    expect(acts[0]).toMatch(/Не регистрируй новый/);
+    expect(acts[0]).toContain("known-secret");
+  });
+
+  it("stops on a rejected password at once and names the barrier", async () => {
+    const { browser, acts } = fakeBrowser(["signup_form", "password_form", "password_rejected"]);
+    const r = await acceptInvite(browser, { ...args, password: "fresh-secret" });
+    expect(r).toMatchObject({ status: "needs_human", barrierKind: "password_rejected", steps: 3 });
+    expect(acts).toHaveLength(2);
+  });
+
+  it("does not type an invented password into an account that existed before", async () => {
+    const { browser, acts } = fakeBrowser(["signup_form", "account_exists", "password_form", "code_prompt", "logged_in"]);
+    const r = await acceptInvite(browser, { ...args, password: "fresh-secret" });
+    expect(r.status).toBe("accepted");
+    expect(r.password).toBeNull();
+    expect(acts[1]).toMatch(/по коду/);
+    expect(acts[1]).not.toContain("fresh-secret");
+    expect(acts[2]).not.toContain("fresh-secret");
+  });
+
+  it("gives up on an existing account it cannot enter", async () => {
+    const r = await acceptInvite(fakeBrowser(["account_exists", "email_form", "account_exists"]).browser, args);
+    expect(r).toMatchObject({ status: "needs_human", barrierKind: "password_rejected" });
+  });
+
+  it("survives one failed page read and fails cleanly after two in a row", async () => {
+    const { browser } = fakeBrowser(["logged_in"]);
+    let calls = 0;
+    const flaky: InviteBrowser = {
+      ...browser,
+      extract: async (...a) => {
+        calls++;
+        if (calls === 1) throw new Error("schema mismatch");
+        return browser.extract(...a);
+      },
+    };
+    expect((await acceptInvite(flaky, args)).status).toBe("accepted");
+
+    const broken: InviteBrowser = { ...browser, extract: async () => Promise.reject(new Error("model down")) };
+    const r = await acceptInvite(broken, args);
+    expect(r.status).toBe("failed");
+    expect(r.notes).toMatch(/два раза подряд/);
+  });
+
+  it("marks captcha and spent invites with their barrier kind", async () => {
+    expect((await acceptInvite(fakeBrowser(["captcha"]).browser, args)).barrierKind).toBe("captcha");
+    expect((await acceptInvite(fakeBrowser(["expired"]).browser, args)).barrierKind).toBe("invite_spent");
+  });
+
   it("reuses a known password instead of inventing a new one", async () => {
     const { browser, acts } = fakeBrowser(["password_form", "logged_in"]);
     const r = await acceptInvite(browser, { ...args, password: "known-secret" });

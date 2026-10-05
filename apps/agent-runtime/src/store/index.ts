@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import type { BrowserSession, InboundEmail, PendingApproval, Run, RunStep, ServicesSnapshot, UsageRecord } from "@swarm/contracts";
 import { parseUsageJsonl, summarizeUsage } from "@swarm/usage";
+import { shotFile } from "../browser/shots";
 import { emitRuntime } from "../events";
 import { ChatStore } from "./chats";
 import { SHARED_MODE, chmodShared, readJson, readJsonl, writeJson } from "./files";
@@ -131,6 +132,13 @@ export class Store {
 
   videoPath(sessionId: string): string {
     return this.dir("browser-sessions", sessionId, "video.mp4");
+  }
+
+  /** Кадр своего браузера. Чужое имя файла сюда не проходит. */
+  shotPath(sessionId: string, file: string): string | null {
+    const name = shotFile(file);
+    if (!name || !/^[\w.-]+$/.test(sessionId)) return null;
+    return this.dir("browser-sessions", sessionId, "shots", name);
   }
 
   async hasVideo(sessionId: string): Promise<boolean> {

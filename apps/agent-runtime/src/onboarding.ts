@@ -18,7 +18,7 @@ import {
 import { generatePassword } from "./browser/invite";
 import { mcpToolNames, type DiscoveryResult } from "./discovery";
 import { hostOf, isNoiseDomain, matchRecipe, pickServiceDomain, rootDomain, sameBrand, slugFor } from "./domains";
-import { connectedFollowupPrompt, secretFollowupPrompt, type KnownRecipeRef } from "./prompts";
+import { connectedFollowupPrompt, humanPage, secretFollowupPrompt, type KnownRecipeRef } from "./prompts";
 import type { AgentRuntime } from "./runtime";
 import type { HandoffContext, ResumeConnect } from "./runtime/handoffs";
 import { warn } from "./log";
@@ -203,9 +203,12 @@ async function connectInvite(
     const handoff = decision.status === "escalated" && (decision.park || (!decision.closeBrowser && ctx.browserSessionId));
     if (handoff) {
       const serviceWait = decision.park;
+      const page = serviceWait ? null : humanPage(ctx.liveUrl);
       const reason = serviceWait
         ? `Заявка на регистрацию в ${args.service} отправлена с ${rt.cfg.email}. Одобрите её в сервисе. Когда одобрите — нажмите «Одобрил, продолжай»: я войду и подключусь. Письмо сервиса на эту почту продолжит вход само.`
-        : decision.reason;
+        : page
+          ? `${decision.reason} Откройте страницу и доделайте шаг за ${rt.cfg.email}: ${page} Что агент уже видел — скриншотами в карточке браузера выше.`
+          : decision.reason;
       const pending = await rt.handoffs.open(
         run,
         reason,
@@ -379,7 +382,7 @@ async function connectInvite(
     const invite = await rt.browser.acceptInvite(
       run,
       { url: args.url, slug: args.slug, service: args.service },
-      { persist: false, skipSkyvern: true, password: typed },
+      { persist: false, skipSkyvern: true, password: typed, existing },
     );
     const pending = invite.barrierKind === "pending_approval" || looksLikeServiceApprovalWait(invite.notes);
     const landed = invite.status === "accepted" && !pending;
@@ -390,7 +393,7 @@ async function connectInvite(
       landedUrl: invite.finalUrl,
       passwordTyped: Boolean(invite.password),
       password,
-      barrierKind: pending ? "pending_approval" : invite.barrierKind === "captcha" ? "captcha" : landed ? null : "other",
+      barrierKind: pending ? "pending_approval" : landed ? null : (blockerKind(invite.barrierKind) ?? "other"),
       notes: invite.notes,
       apiBaseUrl: args.discovery?.api?.baseUrl ?? null,
       apiKeyUsable: false,

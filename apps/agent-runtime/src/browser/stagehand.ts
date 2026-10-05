@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { Stagehand, localBrowser } from "@browserbasehq/stagehand";
@@ -9,6 +9,7 @@ import type { Store } from "../store";
 import { recordUsage, type TaskRef } from "../usage";
 import { log, warn } from "../log";
 import { toExtractSchema } from "./schema";
+import { shotFile } from "./shots";
 
 type LLMContentBlock = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
@@ -79,6 +80,7 @@ export class ManagedBrowserSession {
   /** Код пришёл письмом раньше, чем сессия его попросила: держим недолго. */
   private pendingCode: { value: { kind: "code" | "link"; value: string }; at: number } | null = null;
   private closed = false;
+  private shotN = 0;
   private readonly profile: string;
   private readonly ephemeral: boolean;
 
@@ -191,13 +193,36 @@ export class ManagedBrowserSession {
     const page = await this.page();
     await page.goto(url, { waitUntil: "domcontentloaded" });
     await this.action({ type: "goto", url });
+    await this.shot();
   }
 
   async act(instruction: string): Promise<{ success: boolean; message: string }> {
-    const r = (await this.sh().act(instruction)) as { success?: boolean; message?: string };
-    const out = { success: r.success ?? true, message: r.message ?? "" };
-    await this.action({ type: "act", instruction, ...out });
-    return out;
+    try {
+      const r = (await this.sh().act(instruction)) as { success?: boolean; message?: string };
+      const out = { success: r.success ?? true, message: r.message ?? "" };
+      await this.action({ type: "act", instruction, ...out });
+      return out;
+    } finally {
+      await this.shot();
+    }
+  }
+
+  /** Кадр страницы после шага. В чате это единственный экран своего браузера. */
+  async shot(): Promise<void> {
+    if (this.closed || this.shotN >= 30) return;
+    try {
+      const page = await this.page();
+      const buf = await page.screenshot({ type: "jpeg", quality: 55 });
+      const file = shotFile(`${this.shotN + 1}.jpg`);
+      if (!file) return;
+      this.shotN += 1;
+      const dir = path.join(this.deps.store.dir("browser-sessions", this.id, "shots"));
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, file), buf);
+      await this.action({ type: "screenshot", file, url: page.url() });
+    } catch (e) {
+      warn("browser", "скриншот не сохранился", { error: String(e) });
+    }
   }
 
   async extract(instruction: string, schema?: unknown): Promise<unknown> {

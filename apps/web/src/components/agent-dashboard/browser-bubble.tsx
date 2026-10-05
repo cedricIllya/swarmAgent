@@ -10,6 +10,53 @@ function actionLine(action: Record<string, unknown>): string {
   return extra ? `${type}: ${String(extra)}` : type;
 }
 
+function shotFiles(actions: Array<Record<string, unknown>>): string[] {
+  return actions
+    .filter((a) => a.type === "screenshot" && /^\d{1,3}\.jpg$/.test(String(a.file ?? "")))
+    .map((a) => String(a.file));
+}
+
+/** Кадры сессии: грузит журнал и показывает jpeg после каждого шага. */
+export function SessionShots({
+  agentId,
+  sessionId,
+  fallback,
+}: {
+  agentId: string;
+  sessionId: string;
+  fallback?: string;
+}) {
+  const [files, setFiles] = useState<string[] | null>(null);
+  useEffect(() => {
+    let cancel = false;
+    void fetch(`/api/agents/${agentId}/browser-sessions/${sessionId}/actions`).then(async (res) => {
+      if (!res.ok || cancel) return;
+      const data = (await res.json()) as { actions?: Array<Record<string, unknown>> };
+      if (!cancel) setFiles(shotFiles(data.actions ?? []));
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [agentId, sessionId]);
+  if (files === null) return <span className="faint small">загружаю кадры</span>;
+  if (!files.length) return fallback ? <span className="faint small">{fallback}</span> : null;
+  return <BrowserShots agentId={agentId} sessionId={sessionId} files={files} />;
+}
+
+/** Кадры своего браузера: что страница показывала после каждого шага. */
+export function BrowserShots({ agentId, sessionId, files }: { agentId: string; sessionId: string; files: string[] }) {
+  if (!files.length) return null;
+  return (
+    <div className="shot-list">
+      {files.map((file, i) => (
+        <a key={file} href={`/api/agents/${agentId}/browser-sessions/${sessionId}/shots/${file}`} target="_blank" rel="noopener noreferrer">
+          <img src={`/api/agents/${agentId}/browser-sessions/${sessionId}/shots/${file}`} alt={`шаг ${i + 1}`} />
+        </a>
+      ))}
+    </div>
+  );
+}
+
 /** Сессия браузера в ленте чата: живой экран, пока открыта, после закрытия — запись. */
 export function BrowserBubble({
   agent,
@@ -22,14 +69,13 @@ export function BrowserBubble({
   session: BrowserSession | null;
   liveActions: Array<Record<string, unknown>>;
 }) {
-  const [loaded, setLoaded] = useState<Array<Record<string, unknown>>>([]);
+  const [loaded, setLoaded] = useState<Array<Record<string, unknown>> | null>(null);
   const live = Boolean(session && !session.finishedAt && session.liveUrl);
   // Страница Skyvern не встраивается в iframe и даёт «взять управление» — туда ведём ссылкой.
   const embeddable = live && session?.provider !== "skyvern";
   const sessionId = message.sessionId!;
 
   useEffect(() => {
-    if (!live) return;
     let cancel = false;
     void fetch(`/api/agents/${agent.id}/browser-sessions/${sessionId}/actions`).then(async (res) => {
       if (!res.ok || cancel) return;
@@ -39,15 +85,16 @@ export function BrowserBubble({
     return () => {
       cancel = true;
     };
-  }, [agent.id, sessionId, live]);
+  }, [agent.id, sessionId]);
 
   const seen = new Set<string>();
-  const actions = [...loaded, ...liveActions].filter((a) => {
+  const actions = [...(loaded ?? []), ...liveActions].filter((a) => {
     const key = JSON.stringify(a);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+  const shots = shotFiles(actions);
 
   return (
     <div className="bubble bubble-agent bubble-browser">
@@ -80,9 +127,10 @@ export function BrowserBubble({
               <span className="faint small">там же можно взять управление</span>
             </div>
           )}
+          <BrowserShots agentId={agent.id} sessionId={sessionId} files={shots} />
           {actions.length > 0 && (
             <div className="steps">
-              {actions.slice(-8).map((a, i) => (
+              {actions.filter((a) => a.type !== "screenshot").slice(-8).map((a, i) => (
                 <div key={i} className="step">{actionLine(a)}</div>
               ))}
             </div>
@@ -90,17 +138,21 @@ export function BrowserBubble({
         </>
       ) : session?.hasVideo ? (
         <video controls preload="none" src={`/api/agents/${agent.id}/browser-sessions/${session.id}/video`} />
+      ) : shots.length > 0 ? (
+        <BrowserShots agentId={agent.id} sessionId={sessionId} files={shots} />
       ) : (
         <span className="faint small">
           {!session
             ? "сессия не найдена"
-            : session.finishedAt
-              ? session.provider === "skyvern"
-                ? "сессия завершена, видео недоступно"
-                : "сессия завершена"
-              : session.provider === "skyvern"
-                ? "сессия идёт, ссылки на живой экран пока нет — видео появится после"
-                : "свой браузер работает, живого экрана нет"}
+            : loaded === null
+              ? "загружаю шаги браузера"
+              : session.finishedAt
+                ? session.provider === "skyvern"
+                  ? "сессия завершена, видео недоступно"
+                  : "сессия завершена, кадров нет"
+                : session.provider === "skyvern"
+                  ? "сессия идёт, ссылки на живой экран пока нет — видео появится после"
+                  : "свой браузер работает, кадр появится после шага"}
         </span>
       )}
       <span className="bubble-time">{fmtTime(message.at)}</span>

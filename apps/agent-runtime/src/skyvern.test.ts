@@ -30,6 +30,8 @@ describe("inviteTaskPrompt", () => {
     expect(p).toMatch(/жди/i);
     expect(p).toMatch(/Google, Microsoft/);
     expect(p).toContain("pending_approval");
+    expect(p).toMatch(/после регистрации/);
+    expect(p).toMatch(/тем же паролем/);
   });
 
   it("signs in to an existing account without resetting the password", () => {

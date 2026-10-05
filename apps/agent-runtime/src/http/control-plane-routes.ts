@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { Readable } from "node:stream";
 import { z } from "zod";
 import {
@@ -119,6 +119,13 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
   });
 
   app.get("/browser-sessions/:id/actions", async (c) => c.json(await rt.store.browserActions(c.req.param("id"))));
+
+  app.get("/browser-sessions/:id/shots/:file", async (c) => {
+    const file = rt.store.shotPath(c.req.param("id"), c.req.param("file"));
+    if (!file || !existsSync(file)) return c.json({ error: "no screenshot" }, 404);
+    const stream = Readable.toWeb(createReadStream(file)) as ReadableStream;
+    return new Response(stream, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=86400" } });
+  });
 
   app.get("/browser-sessions/:id/video", async (c) => {
     const id = c.req.param("id");

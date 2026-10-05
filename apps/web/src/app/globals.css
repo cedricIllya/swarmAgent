@@ -715,6 +715,21 @@ code {
   display: inline-block;
   color: var(--warn);
 }
+.shot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.shot-list a {
+  display: block;
+}
+.shot-list img {
+  display: block;
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
 .bubble-working {
   display: flex;
   align-items: center;

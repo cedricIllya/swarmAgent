@@ -84,11 +84,19 @@ export function secretFollowupPrompt(service: string, kind: "mcp" | "api"): stri
   ].join("\n");
 }
 
+/** Страница сервиса, которую человек может открыть у себя. Живой экран Skyvern сюда не входит. */
+export function humanPage(url: string | null | undefined): string | null {
+  if (!url || !/^https?:\/\//i.test(url) || /skyvern\.com/i.test(url)) return null;
+  return url;
+}
+
 export function escalationNote(reason: string, liveUrl: string | null): string {
-  const handoff = liveUrl
-    ? `Браузер оставлен открытым, можно взять управление: ${liveUrl}`
-    : "Браузер уже закрыт, взять управление некуда.";
-  return `${reason} ${handoff}`;
+  if (liveUrl && /skyvern\.com/i.test(liveUrl)) {
+    return `${reason} Браузер оставлен открытым, можно взять управление: ${liveUrl}`;
+  }
+  const page = humanPage(liveUrl);
+  if (page) return `${reason} Откройте страницу, на которой остановился агент, и доделайте шаг: ${page}`;
+  return `${reason} Браузер уже закрыт, взять управление некуда.`;
 }
 
 export function onboardingPrompt(ctx: OnboardingContext = EMPTY_ONBOARDING): string {

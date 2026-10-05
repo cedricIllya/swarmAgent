@@ -16,9 +16,10 @@ const SERVICE_WAIT: Labels = { title: "Жду одобрения в сервис
 
 function LiveLink({ url }: { url: string | null | undefined }) {
   if (!url) return null;
+  const own = /skyvern\.com/i.test(url);
   return (
     <a className="btn btn-sm" href={url} target="_blank" rel="noopener noreferrer">
-      открыть браузер агента
+      {own ? "открыть браузер агента" : "открыть страницу"}
     </a>
   );
 }

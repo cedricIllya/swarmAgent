@@ -156,6 +156,12 @@ export class RuntimeClient {
       headers: { Authorization: `Bearer ${this.token}` },
     });
   }
+
+  async shot(sessionId: string, file: string): Promise<Response> {
+    return fetch(`${this.baseUrl}/browser-sessions/${sessionId}/shots/${encodeURIComponent(file)}`, {
+      headers: { Authorization: `Bearer ${this.token}` },
+    });
+  }
 }
 
 /** Разбудить машину и только потом звать runtime. Опрос карточки сюда не ходит. */

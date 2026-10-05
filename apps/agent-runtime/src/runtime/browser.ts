@@ -93,12 +93,13 @@ export class BrowserControl {
   async acceptInvite(
     run: Run,
     args: { url: string; slug: string; service: string },
-    opts?: { persist?: boolean; password?: string | null; skipSkyvern?: boolean },
+    opts?: { persist?: boolean; password?: string | null; skipSkyvern?: boolean; existing?: boolean },
   ): Promise<AcceptInviteResult> {
     const { rt } = this;
     const snap = await rt.store.readServices();
     const found = snap?.credentials.find((c) => c.slug === args.slug) ?? null;
     const existing: ServiceCredential | null = opts?.password ? { ...(found ?? { slug: args.slug, kind: "browser" }), password: opts.password } : found;
+    const accountKnown = opts?.existing ?? Boolean(found?.password);
 
     let result: AcceptInviteResult | null = null;
     if (rt.skyvern && !opts?.skipSkyvern) {
@@ -110,6 +111,7 @@ export class BrowserControl {
           agentName: rt.cfg.agentName,
           email: rt.cfg.email,
           password: existing?.password ?? null,
+          existing: accountKnown,
           onSession: (s) => rt.announceBrowser(run, s),
           onStep: (text, data) => rt.step(run.id, "browser", text, data),
         });
@@ -130,10 +132,10 @@ export class BrowserControl {
       // Истёкшая ссылка своим браузером не лечится. Остальной сбой Skyvern — повтор у себя.
       if (result.status === "failed" && result.barrierKind !== "invite_spent") {
         await rt.step(run.id, "note", "Повторяю вход своим браузером.");
-        result = await this.acceptInviteWithStagehand(run, args, existing);
+        result = await this.acceptInviteWithStagehand(run, args, existing, accountKnown);
       }
     } else {
-      result = await this.acceptInviteWithStagehand(run, args, existing);
+      result = await this.acceptInviteWithStagehand(run, args, existing, accountKnown);
     }
 
     if (result.status !== "accepted") {
@@ -186,6 +188,7 @@ export class BrowserControl {
     run: Run,
     args: { url: string; slug: string; service: string },
     existing: ServiceCredential | null,
+    accountKnown: boolean,
   ): Promise<AcceptInviteResult> {
     const { rt } = this;
     const session = await this.open(run, { purpose: `принять приглашение в ${args.service}`, serviceSlug: args.slug });
@@ -197,14 +200,17 @@ export class BrowserControl {
         agentName: rt.cfg.agentName,
         email: rt.cfg.email,
         password: existing?.password ?? null,
+        existing: accountKnown,
         onStep: (text, data) => rt.step(run.id, "browser", text, data),
       });
     } catch (e) {
+      await session.shot();
       await this.close(session.id);
       throw e;
     }
-    result.liveUrl = null;
-    result.browserSessionId = null;
+    await session.shot();
+    result.browserSessionId = session.id;
+    result.liveUrl = /^https?:\/\//i.test(result.finalUrl) ? result.finalUrl : null;
     result.provider = "local";
     await this.close(session.id);
     return result;
