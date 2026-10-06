@@ -26,6 +26,7 @@ import { connectedFollowupPrompt, humanPage, secretFollowupPrompt, type KnownRec
 import type { AgentRuntime } from "./runtime";
 import type { HandoffContext, ResumeConnect } from "./runtime/handoffs";
 import { finishServiceThink } from "./service-work";
+import { mcpTokenCheck } from "./report-guard";
 import { warn } from "./log";
 
 /**
@@ -409,6 +410,7 @@ async function connectInvite(
         const mcpReady = await mcpIsReady(mcpSpecOf(args.discovery, known), sought.token).catch(() => false);
         // MCP отдал инструменты с этим токеном — токен доказан, даже если REST-вызова не было.
         if (mcpReady && sought.token) sought = { ...sought, proof: "green" };
+        if (!sought.token && known?.mcp) await dropRejectedToken(rt, run, known);
         // После handoff пароль печатал человек: мы дали ему тот же, считаем, что он его и поставил.
         const password = invite.password ?? (resume ? typed : null);
         if (looksLikeServiceApprovalWait(sought.notes)) {
@@ -635,6 +637,23 @@ async function mcpIsReady(spec: { url: string; auth: string } | null, token: str
   if (spec.auth !== "none" && !bearer) return false;
   const names = await mcpToolNames(spec.url, fetch, bearer);
   return (names?.length ?? 0) > 0;
+}
+
+/**
+ * Сохранённый токен MCP, который сервер больше не принимает (выдуман моделью или отозван),
+ * держит сервер в конфиге Hermes с вечным 401 и обещает в подсказке инструменты, которых нет.
+ */
+async function dropRejectedToken(rt: AgentRuntime, run: Run, recipe: ServiceRecipe): Promise<void> {
+  if (!recipe.mcp || recipe.mcp.auth === "none" || recipe.mcp.auth === "oauth") return;
+  const cred = (await rt.store.readServices())?.credentials.find((c) => c.slug === recipe.slug);
+  if (!cred?.token) return;
+  const verdict = await mcpTokenCheck(recipe, cred.token).catch(() => null);
+  if (verdict !== false) return;
+  await rt.services.applyReport(
+    { type: "credential", credential: { slug: recipe.slug, kind: cred.kind, token: null }, runId: run.id },
+    { quiet: true },
+  );
+  await rt.step(run.id, "note", `сохранённый токен MCP ${recipe.name} сервер не принимает — убран`);
 }
 
 async function knownRecipeFor(rt: AgentRuntime, args: ConnectArgs): Promise<ServiceRecipe | null> {

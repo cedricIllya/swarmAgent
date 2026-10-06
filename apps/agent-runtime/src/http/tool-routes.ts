@@ -1,10 +1,11 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { RuntimeReportSchema } from "@swarm/contracts";
+import { RuntimeReportSchema, type RuntimeReport, type ServiceCredential, type ServiceRecipe } from "@swarm/contracts";
 import type { AgentRuntime } from "../runtime";
 import { noteActivity } from "../idle";
 import { redactInternal } from "../redact";
 import { withAliases } from "./lenient";
+import { guardCredentialReport, guardRecipeReport, mcpTokenCheck } from "../report-guard";
 
 /**
  * Hermes (соседний контейнер) → runtime: инструменты скилла swarm-worker без браузера —
@@ -25,8 +26,25 @@ export function toolRoutes(rt: AgentRuntime): Hono {
   app.post("/report", async (c) => {
     noteActivity();
     const body = RuntimeReportSchema.parse(await c.req.json());
-    await rt.services.applyReport(body);
-    return c.json({ ok: true });
+    const snap = await rt.store.readServices();
+    const slug = body.type === "recipe" ? body.recipe.slug : body.credential.slug;
+    const existing = snap?.recipes.find((r) => r.slug === slug) ?? null;
+    const guard =
+      body.type === "recipe"
+        ? guardRecipeReport(existing, body.recipe)
+        : await guardCredentialReport(existing, body.credential, (r, t) => mcpTokenCheck(r, t));
+    if (!guard.ok) {
+      const running = body.runId ? await rt.store.getRun(body.runId) : null;
+      if (running) await rt.step(running.id, "note", `отчёт не принят: ${guard.reason}`);
+      return c.json({ ok: false, error: guard.reason }, 422);
+    }
+    if (guard.note && body.runId) await rt.step(body.runId, "note", guard.note);
+    const accepted: RuntimeReport =
+      body.type === "recipe"
+        ? { ...body, recipe: guard.value as ServiceRecipe }
+        : { ...body, credential: guard.value as ServiceCredential };
+    await rt.services.applyReport(accepted);
+    return c.json({ ok: true, ...(guard.note ? { note: guard.note } : {}) });
   });
 
   // Поиск способа входа в сервис, которого нет в каталоге: реестр MCP, типовые адреса,

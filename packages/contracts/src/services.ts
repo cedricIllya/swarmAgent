@@ -51,8 +51,8 @@ export type ServiceRecipe = z.infer<typeof ServiceRecipeSchema>;
 export const ServiceCredentialSchema = z.object({
   slug: z.string(),
   kind: AccessKind,
-  /** API-ключ или bearer для MCP. */
-  token: z.string().optional(),
+  /** API-ключ или bearer для MCP. null в отчёте — токен отозван, убрать сохранённый. */
+  token: z.string().nullable().optional(),
   oauth: z
     .object({
       accessToken: z.string(),
@@ -78,17 +78,23 @@ export type ServiceCredential = z.infer<typeof ServiceCredentialSchema>;
  * почту, имя и пароль, под которыми агент зарегистрировался.
  */
 export function mergeCredential(prev: ServiceCredential | undefined, next: ServiceCredential): ServiceCredential {
-  if (!prev) return next;
-  return {
+  if (!prev) return dropNullToken(next);
+  return dropNullToken({
     ...prev,
     ...next,
-    token: next.token ?? prev.token,
+    token: next.token === null ? null : (next.token ?? prev.token),
     oauth: next.oauth ?? prev.oauth,
     storageState: next.storageState ?? prev.storageState,
     accountEmail: next.accountEmail ?? prev.accountEmail,
     accountName: next.accountName ?? prev.accountName,
     password: next.password ?? prev.password,
-  };
+  });
+}
+
+function dropNullToken(cred: ServiceCredential): ServiceCredential {
+  if (cred.token !== null) return cred;
+  const { token: _token, ...rest } = cred;
+  return rest;
 }
 
 /**
