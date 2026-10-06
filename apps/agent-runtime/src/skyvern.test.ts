@@ -227,6 +227,7 @@ describe("SkyvernClient", () => {
     expect(await client.browserAddress("pbs_1")).toBe("wss://sessions.skyvern.com/pbs_1");
 
     const start = calls.find((c) => c.url.endsWith("/v1/run/tasks"))!.body as Record<string, unknown>;
+    expect(start.engine).toBe("skyvern-1.0");
     expect(start.totp_identifier).toBe("bot@agents.test");
     expect(start.url).toBe("https://app.acme.io/invite/abc");
     expect(start.browser_session_id).toBe("pbs_1");
@@ -404,6 +405,7 @@ describe("SkyvernClient", () => {
     await vi.advanceTimersByTimeAsync(6_000);
     await pending;
     const start = calls.find((c) => c.url.endsWith("/v1/run/tasks"))!.body as Record<string, unknown>;
+    expect(start.engine).toBe("skyvern-2.0");
     expect(start.browser_session_id).toBe("pbs_8");
     expect(start.totp_identifier).toBe("bot@agents.test");
     expect(String(start.prompt)).toMatch(/не пропускай этот шаг/);

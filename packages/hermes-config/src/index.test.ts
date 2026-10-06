@@ -89,6 +89,49 @@ describe("renderConfigYaml", () => {
     expect(rewritten).toContain('mode: "off"');
   });
 
+  it("не кладёт в Hermes ключ, записанный до проверки, и OAuth без access token", () => {
+    const yaml = renderConfigYaml({
+      agentId: "agt_1",
+      agentName: "Ops",
+      email: "ops@agents.test",
+      model: "m",
+      autonomous: false,
+      skyvern: { enabled: false },
+      services: {
+        generatedAt: "t",
+        recipes: [
+          {
+            slug: "trello",
+            name: "Trello",
+            kind: "mcp",
+            domains: ["trello.com"],
+            mcp: { url: "https://mcp.trello.com/v1", transport: "streamable_http", auth: "bearer", includeTools: [] },
+            notes: "",
+            discoveredBy: null,
+          },
+          {
+            slug: "oauth",
+            name: "Oauth",
+            kind: "mcp",
+            domains: ["oauth.test"],
+            mcp: { url: "https://oauth.test/mcp", transport: "streamable_http", auth: "oauth", includeTools: [] },
+            notes: "",
+            discoveredBy: null,
+          },
+        ],
+        credentials: [
+          { slug: "trello", kind: "browser", token: "trello-api-token-value", password: "pw" },
+          { slug: "oauth", kind: "api", token: "rest-token-value", oauth: { accessToken: "oa_1" } },
+        ],
+      },
+    });
+    const doc = parse(yaml) as {
+      mcp_servers: Record<string, { url?: string; headers?: Record<string, string> } | undefined>;
+    };
+    expect(doc.mcp_servers["trello"]).toBeUndefined();
+    expect(doc.mcp_servers["oauth"]?.headers?.["Authorization"]).toBe("Bearer oa_1");
+  });
+
   it("replaces only mcp_servers and keeps the rest of config.yaml", () => {
     const original = renderConfigYaml({
       agentId: "agt_1",

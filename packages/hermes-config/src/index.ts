@@ -29,7 +29,14 @@ export function renderMcpServers(services: ServicesSnapshot, _skyvernEnabled: bo
     if (recipe.kind !== "mcp" || !recipe.mcp) continue;
     const cred = services.credentials.find((c) => c.slug === recipe.slug);
     const headers: Record<string, string> = {};
-    const token = cred?.token ?? cred?.oauth?.accessToken;
+    // OAuth-MCP принимает только свой access token. Ключ API, записанный до проверки,
+    // лежит на доступе browser и в Hermes не уходит: иначе каждый старт — 401.
+    const token =
+      recipe.mcp.auth === "oauth"
+        ? cred?.oauth?.accessToken
+        : cred && cred.kind !== "browser"
+          ? cred.token
+          : undefined;
     // Сервер с авторизацией, но без токена, отвечает 401 на каждом старте Hermes и тянет
     // повтор по SSE. Пока токена нет, инструментов всё равно не будет — не подключаем.
     if (recipe.mcp.auth !== "none") {

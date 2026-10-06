@@ -205,6 +205,28 @@ async function storedPassword(rt: AgentRuntime, slug: string, inviteUrl: string)
   return cred?.password ?? null;
 }
 
+/**
+ * Токен пишем сразу, способом browser: вызов по документации ещё впереди и может не удаться.
+ * Поздний отчёт без поля token его не сотрёт. В MCP Hermes он попадёт, только когда способ станет api или mcp.
+ */
+async function rememberToken(rt: AgentRuntime, run: Run, slug: string, token: string): Promise<void> {
+  try {
+    const prev = (await rt.store.readServices())?.credentials.find((c) => c.slug === slug);
+    const kind = prev && prev.kind !== "browser" ? prev.kind : "browser";
+    await rt.services.applyReport(
+      {
+        type: "credential",
+        credential: { slug, kind, token, accountEmail: rt.cfg.email, accountName: rt.cfg.agentName },
+        runId: run.id,
+      },
+      { quiet: true },
+    );
+    await rt.step(run.id, "note", "токен записан, проверяю его по документации");
+  } catch (e) {
+    warn("onboarding", "токен не сохранён до проверки", { error: String(e) });
+  }
+}
+
 /** Только пароль, без рецепта и способа входа: подключённым сервис станет после разбора. */
 async function rememberPassword(rt: AgentRuntime, run: Run, slug: string, password: string): Promise<void> {
   try {
@@ -564,7 +586,7 @@ async function seekApiKey(
   rt: AgentRuntime,
   run: Run,
   browserSessionId: string,
-  args: { service: string; discovery: DiscoveryResult | null; url?: string; hint?: string | null },
+  args: { slug: string; service: string; discovery: DiscoveryResult | null; url?: string; hint?: string | null },
   landedUrl: string,
 ): Promise<{ token: string | null; proof: Proof; baseUrl: string | null; authHeader: string | null; docsUrl: string | null; notes: string }> {
   const skyvern = rt.skyvern;
@@ -593,7 +615,7 @@ async function seekApiKey(
       purpose: `найти API-ключ ${args.service}`,
       schema: API_KEY_SCHEMA,
       browserSessionId,
-      maxSteps: i === 0 ? 20 : 8,
+      maxSteps: i === 0 ? 40 : 8,
       expectTotp: true,
       service: args.service,
       onStep: (text, data) => rt.step(run.id, "browser", text, data),
@@ -610,6 +632,7 @@ async function seekApiKey(
     notes = parsed.notes;
     if (parsed.found && parsed.apiKey) {
       token = parsed.apiKey;
+      await rememberToken(rt, run, args.slug, token);
       break;
     }
     if (parsed.rejectReason) feedback = `значение отклонено: ${parsed.rejectReason}`;

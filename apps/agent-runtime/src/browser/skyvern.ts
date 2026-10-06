@@ -532,6 +532,7 @@ export class SkyvernClient {
         prompt,
         purpose: `принять приглашение в ${args.service}`,
         schema: INVITE_OUTPUT_SCHEMA,
+        engine: "skyvern-1.0",
         maxSteps: args.maxSteps ?? 30,
         timeoutMs: args.timeoutMs,
         browserSessionId: opened.browserSessionId,
@@ -760,6 +761,8 @@ export class SkyvernClient {
     prompt: string;
     purpose: string;
     schema: unknown;
+    /** Приглашение — 1.0. Поиск ключа и повторный вход — 2.0. */
+    engine?: "skyvern-1.0" | "skyvern-2.0" | undefined;
     maxSteps: number;
     timeoutMs?: number | undefined;
     browserSessionId?: string | undefined;
@@ -786,6 +789,7 @@ export class SkyvernClient {
     prompt: string;
     purpose: string;
     schema: unknown;
+    engine?: "skyvern-1.0" | "skyvern-2.0" | undefined;
     maxSteps: number;
     timeoutMs?: number | undefined;
     browserSessionId?: string | undefined;
@@ -801,7 +805,7 @@ export class SkyvernClient {
       body: JSON.stringify({
         prompt: args.prompt,
         url: args.url,
-        engine: "skyvern-2.0",
+        engine: args.engine ?? "skyvern-2.0",
         title: args.purpose,
         max_steps: args.maxSteps,
         data_extraction_schema: args.schema,

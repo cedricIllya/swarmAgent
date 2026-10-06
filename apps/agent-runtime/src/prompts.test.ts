@@ -111,4 +111,31 @@ describe("systemPrompt recipe details", () => {
     expect(text).toMatch(/только OAuth/);
     expect(text).not.toMatch(/Инструменты: mcp_trello_\*/);
   });
+
+  it("записанный до проверки токен API не обещает инструменты MCP", () => {
+    const text = systemPrompt({
+      agentName: "Бот",
+      email: "bot@example.com",
+      ownerEmail: null,
+      autonomous: false,
+      runtimePort: 8787,
+      services: {
+        generatedAt: "t",
+        recipes: [
+          {
+            slug: "trello",
+            name: "Trello",
+            kind: "mcp",
+            domains: ["trello.com"],
+            mcp: { url: "https://mcp.trello.com/v1", transport: "streamable_http", auth: "oauth", includeTools: [] },
+            notes: "",
+            discoveredBy: null,
+          },
+        ],
+        credentials: [{ slug: "trello", kind: "browser", token: "trello-api-token-value", password: "pw" }],
+      },
+    });
+    expect(text).toMatch(/Токен API уже записан/);
+    expect(text).not.toMatch(/Инструменты: mcp_trello_\*/);
+  });
 });

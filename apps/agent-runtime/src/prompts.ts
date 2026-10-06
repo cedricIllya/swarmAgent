@@ -199,11 +199,19 @@ function recipeLines(r: PromptRecipe, cred: PromptCredential | undefined): strin
   const head = `- ${r.name} (${r.slug}): способ ${way}${credAccount ? `, аккаунт ${credAccount}` : ""}`;
   const detail: string[] = [head];
   if (r.mcp) {
-    const token = cred?.token ?? cred?.oauth?.accessToken;
+    const token = r.mcp.auth === "oauth" ? cred?.oauth?.accessToken : cred?.kind !== "browser" ? cred?.token : undefined;
     if (r.mcp.auth === "oauth" && !token) {
-      detail.push(`  MCP: ${r.mcp.url} — только OAuth, своего клиента для него нет: инструментов mcp_${r.slug}_* не будет, токен в кабинете не выпускается. Иди через API или браузер.`);
+      detail.push(
+        cred?.token
+          ? `  MCP: ${r.mcp.url} — только OAuth, своего клиента нет: инструментов mcp_${r.slug}_* не будет. Токен API уже записан, ходи через API.`
+          : `  MCP: ${r.mcp.url} — только OAuth, своего клиента для него нет: инструментов mcp_${r.slug}_* не будет, токен в кабинете не выпускается. Иди через API или браузер.`,
+      );
     } else if (r.mcp.auth !== "none" && !token) {
-      detail.push(`  MCP: ${r.mcp.url} (${r.mcp.transport}, auth ${r.mcp.auth}) — токена ещё нет, инструментов mcp_${r.slug}_* не будет, пока не запишешь его через /report.`);
+      detail.push(
+        cred?.token
+          ? `  MCP: ${r.mcp.url} (${r.mcp.transport}, auth ${r.mcp.auth}) — токен записан, вызов по документации его ещё не подтвердил, инструментов mcp_${r.slug}_* пока нет.`
+          : `  MCP: ${r.mcp.url} (${r.mcp.transport}, auth ${r.mcp.auth}) — токена ещё нет, инструментов mcp_${r.slug}_* не будет, пока не запишешь его через /report.`,
+      );
     } else {
       detail.push(`  MCP: ${r.mcp.url} (${r.mcp.transport}, auth ${r.mcp.auth}). Инструменты: mcp_${r.slug}_*`);
     }

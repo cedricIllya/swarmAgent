@@ -447,7 +447,7 @@ function RunItem({
           </div>
         </div>
       )}
-      {summary && (
+      {summary && !followup && !(pendingQuestion && run.summary.startsWith("Ждёт ответа:")) && (
         <p className="small" style={{ margin: "10px 0 0", whiteSpace: "pre-wrap" }}>
           <StepText text={summary} />
         </p>
