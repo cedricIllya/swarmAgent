@@ -258,7 +258,8 @@ function RunItem({
   }
 
   async function loadHistory() {
-    if (!run.threadId) return;
+    // У письма threadId — Message-ID, не чат. Запрос к /chats/<id> даёт 404 и прячет текст задачи.
+    if (run.trigger !== "chat" || !run.threadId) return;
     const res = await fetch(`/api/agents/${agent.id}/chats/${run.threadId}`, { cache: "no-store" });
     if (!res.ok) return;
     const all = (await res.json()) as ChatMessage[];
@@ -308,6 +309,7 @@ function RunItem({
     return true;
   });
   const followup =
+    run.trigger === "chat" &&
     !pendingQuestion &&
     Boolean(run.threadId) &&
     !threadBusy &&
