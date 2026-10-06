@@ -75,6 +75,13 @@ export function LogsCard({
 }) {
   const runs = state?.runs ?? [];
   const approvals = state?.pendingApprovals ?? [];
+  const ranked = runs.map((run) => ({
+    run,
+    tone: runTone(run, runs, approvals, messagesByRun[run.id] ?? []),
+  }));
+  const openRuns = [...ranked.filter((item) => item.tone === "attention"), ...ranked.filter((item) => item.tone === "live")];
+  const settledRuns = ranked.filter((item) => item.tone === "settled");
+  const openNeedsPerson = openRuns.some((item) => item.tone === "attention");
   const [deciding, setDeciding] = useState<string | null>(null);
   const sessionsByRun = new Map<string, BrowserSession[]>();
   for (const s of state?.browserSessions ?? []) {
@@ -110,11 +117,50 @@ export function LogsCard({
     }
   }
 
+  function renderRun(run: Run, tone: RunTone) {
+    return (
+      <Suspense
+        key={run.id}
+        fallback={
+          <div className="list-item">
+            <Skeleton width="52%" height={16} />
+          </div>
+        }
+      >
+        <RunItem
+          agent={agent}
+          run={run}
+          runs={runs}
+          tone={tone}
+          sessions={sessionsByRun.get(run.id) ?? []}
+          liveSteps={stepsByRun[run.id] ?? []}
+          liveMessages={messagesByRun[run.id] ?? []}
+          approvals={approvals.filter((p) => p.runId === run.id)}
+          accesses={accesses}
+          deciding={deciding}
+          onDecide={(id, approved) => void decide(id, approved)}
+          onAnswer={(id, text) => answer(id, text)}
+        />
+      </Suspense>
+    );
+  }
+
   return (
     <section className="card" aria-busy={pending}>
       <div className="card-head">
         <h2>Журнал задач</h2>
-        {pending ? <Skeleton width={64} height={14} /> : <span className="muted small">{runs.length} задач</span>}
+        {pending ? (
+          <Skeleton width={64} height={14} />
+        ) : (
+          <div className="row" style={{ gap: 8 }}>
+            {openRuns.length > 0 && (
+              <span className={`badge ${openNeedsPerson ? "badge-warn" : "badge-accent"}`}>
+                {plural(openRuns.length, "открытая", "открытые", "открытых")}
+              </span>
+            )}
+            <span className="muted small">{plural(runs.length, "задача", "задачи", "задач")}</span>
+          </div>
+        )}
       </div>
       {pending ? (
         <ListSkeleton />
@@ -123,35 +169,32 @@ export function LogsCard({
           Задач ещё не было.
         </p>
       ) : (
-        <div className="list">
-          {runs.map((r) => (
-            <Suspense
-              key={r.id}
-              fallback={
-                <div className="list-item">
-                  <Skeleton width="52%" height={16} />
-                </div>
-              }
-            >
-              <RunItem
-                agent={agent}
-                run={r}
-                runs={runs}
-                sessions={sessionsByRun.get(r.id) ?? []}
-                liveSteps={stepsByRun[r.id] ?? []}
-                liveMessages={messagesByRun[r.id] ?? []}
-                approvals={approvals.filter((p) => p.runId === r.id)}
-                accesses={accesses}
-                deciding={deciding}
-                onDecide={(id, approved) => void decide(id, approved)}
-                onAnswer={(id, text) => answer(id, text)}
-              />
-            </Suspense>
-          ))}
-        </div>
+        <>
+          {openRuns.length > 0 && (
+            <div className="run-section">
+              <div className="run-section-label">
+                <span>Открытые</span>
+                <span>{openRuns.length}</span>
+              </div>
+              <div className="list">{openRuns.map(({ run, tone }) => renderRun(run, tone))}</div>
+            </div>
+          )}
+          {settledRuns.length > 0 &&
+            (openRuns.length > 0 ? (
+              <details className="run-archive">
+                <summary className="run-archive-summary">
+                  <span>Завершённые</span>
+                  <span className="run-archive-count">{settledRuns.length}</span>
+                </summary>
+                <div className="list">{settledRuns.map(({ run, tone }) => renderRun(run, tone))}</div>
+              </details>
+            ) : (
+              <div className="list">{settledRuns.map(({ run, tone }) => renderRun(run, tone))}</div>
+            ))}
+        </>
       )}
 
-      <div className="run-block">
+      <div className="logs-access">
         <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
           <div className="run-block-label" style={{ marginBottom: 0 }}>
             Доступы
@@ -206,6 +249,7 @@ function RunItem({
   agent,
   run,
   runs,
+  tone,
   sessions,
   liveSteps,
   liveMessages,
@@ -218,6 +262,7 @@ function RunItem({
   agent: Agent;
   run: Run;
   runs: Run[];
+  tone: RunTone;
   sessions: BrowserSession[];
   liveSteps: RunStep[];
   liveMessages: ChatMessage[];
@@ -229,7 +274,7 @@ function RunItem({
 }) {
   const [loaded, setLoaded] = useState<RunStep[] | null>(null);
   const [loadedMessages, setLoadedMessages] = useState<ChatMessage[]>([]);
-  const [open, setOpen] = useState(needsAttention(run.status));
+  const [open, setOpen] = useState(tone !== "settled");
   const [stopping, setStopping] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
@@ -309,7 +354,6 @@ function RunItem({
     return true;
   });
   const followup =
-    run.trigger === "chat" &&
     !pendingQuestion &&
     Boolean(run.threadId) &&
     !threadBusy &&
@@ -318,15 +362,17 @@ function RunItem({
       : null;
   const st = pendingQuestion || followup ? { text: "ждёт ответа", cls: "badge-warn" } : STATUS_LABEL[run.status];
 
+  const toneNow: RunTone = pendingQuestion || followup ? "attention" : tone;
+
   useEffect(() => {
-    if (needsAttention(run.status) || followup) {
+    if (toneNow !== "settled") {
       setOpen(true);
       void load();
       void loadHistory();
     }
     // load зависит от run.id, который стабилен для этого элемента.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run.status, run.id, followup?.prompt]);
+  }, [run.status, run.id, followup?.prompt, toneNow]);
   const usedServices = servicesForRun(
     accesses.map((login) => ({ slug: login.slug, name: login.name, kind: login.kind })),
     [run.title, run.summary, ...steps.map((s) => s.text), ...messages.map((m) => m.text), ...sessions.map((s) => s.purpose)],
@@ -345,8 +391,7 @@ function RunItem({
 
   return (
     <details
-      className="list-item"
-      style={{ display: "block" }}
+      className={`list-item run-row run-${toneNow}`}
       open={open}
       onToggle={(e) => {
         const o = (e.target as HTMLDetailsElement).open;
@@ -357,9 +402,9 @@ function RunItem({
         }
       }}
     >
-      <summary className="row" style={{ justifyContent: "space-between" }}>
-        <div>
-          <div>{run.title}</div>
+      <summary className="run-summary">
+        <div className="run-summary-main">
+          <div className="run-title">{run.title}</div>
           <div className="faint small">
             {fmtTime(run.startedAt)} · {TRIGGER_LABEL[run.trigger]}
             {sessions.length ? ` · браузер ×${sessions.length}` : ""}
@@ -367,7 +412,7 @@ function RunItem({
             {usedServices.length ? ` · ${usedServices.map((s) => s.name).join(", ")}` : ""}
           </div>
         </div>
-        <div className="row" style={{ gap: 8, flexShrink: 0 }}>
+        <div className="run-summary-side">
           {canRetry && (
             <button type="button" className="btn btn-ghost btn-sm" disabled={retrying} onClick={(e) => void retry(e)}>
               {retrying ? "…" : "Повторить"}
@@ -378,9 +423,13 @@ function RunItem({
               {stopping ? "…" : "Остановить"}
             </button>
           )}
-          <span className={`badge ${st.cls}`}>{st.text}</span>
+          <span className={`badge ${st.cls}`}>
+            {run.status === "running" && toneNow === "live" && <span className="badge-dot pulse" />}
+            {st.text}
+          </span>
         </div>
       </summary>
+      <div className="run-body">
       {retryError && (
         <p className="small" style={{ margin: "8px 0 0", color: "var(--danger)" }}>
           {retryError}
@@ -393,14 +442,21 @@ function RunItem({
             options={followup.options}
             busy={replying}
             onAnswer={async (text) => {
-              if (!run.threadId) return;
               setReplying(true);
               try {
-                const res = await fetch(`/api/agents/${agent.id}/chat`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ message: text, chatId: run.threadId }),
-                });
+                // У письма threadId — Message-ID, не чат. Ответ остаётся в этой задаче.
+                const res =
+                  run.trigger === "chat" && run.threadId
+                    ? await fetch(`/api/agents/${agent.id}/chat`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ message: text, chatId: run.threadId }),
+                      })
+                    : await fetch(`/api/agents/${agent.id}/runs/${run.id}/answer`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ answer: text }),
+                      });
                 if (!res.ok) {
                   const data = (await res.json().catch(() => null)) as { error?: string } | null;
                   throw new Error(data?.error ?? "Не удалось отправить ответ");
@@ -500,6 +556,7 @@ function RunItem({
           )}
         </div>
       ))}
+      </div>
     </details>
   );
 }
@@ -515,6 +572,32 @@ function sessionPurpose(purpose: string): string {
   return purpose;
 }
 
-function needsAttention(status: Run["status"]): boolean {
-  return status === "running" || status === "queued" || status === "waiting_approval" || status === "escalated";
+type RunTone = "attention" | "live" | "settled";
+
+function runTone(run: Run, runs: Run[], approvals: PendingApproval[], messages: ChatMessage[]): RunTone {
+  if (approvals.some((item) => item.runId === run.id) || run.status === "waiting_approval" || run.status === "escalated") {
+    return "attention";
+  }
+  if (run.status === "running" || run.status === "queued") return "live";
+  if (followupQuestion(run, runs, messages)) return "attention";
+  return "settled";
+}
+
+function followupQuestion(run: Run, runs: Run[], messages: ChatMessage[]): boolean {
+  if (!run.threadId) return false;
+  if (run.status !== "done" && run.status !== "failed" && run.status !== "escalated") return false;
+  const threadBusy = runs.some(
+    (item) =>
+      item.threadId === run.threadId &&
+      (item.status === "running" || item.status === "queued" || item.status === "waiting_approval"),
+  );
+  if (threadBusy) return false;
+  return Boolean(questionInRun(run.summary, messages.filter((message) => message.kind !== "browser")));
+}
+
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  const word = mod10 === 1 && mod100 !== 11 ? one : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? few : many;
+  return `${n} ${word}`;
 }

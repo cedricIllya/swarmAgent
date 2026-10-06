@@ -127,9 +127,9 @@ export class AgentRuntime {
     log("run", "завершена", { id: run.id, status });
   }
 
-  /** Задача ещё отменяема: идёт, в очереди или ждёт человека. */
+  /** Задача ещё отменяема: идёт, в очереди или ждёт человека (одобрение либо «нужен человек»). */
   canCancel(run: Run): boolean {
-    return run.status === "running" || run.status === "queued" || run.status === "waiting_approval";
+    return run.status === "running" || run.status === "queued" || run.status === "waiting_approval" || run.status === "escalated";
   }
 
   async isCanceled(runId: string): Promise<boolean> {
@@ -158,10 +158,10 @@ export class AgentRuntime {
     const keep = approvals.filter((p) => p.runId !== runId);
     const dropped = approvals.filter((p) => p.runId === runId);
     if (dropped.length) {
-      for (const p of dropped) {
-        if (p.kind === "handoff") this.handoffs.drop(p.id);
-      }
       await this.store.saveApprovals(keep);
+      for (const p of dropped) {
+        if (p.kind === "handoff") await this.handoffs.drop(p.id);
+      }
     }
 
     await this.step(runId, "note", "остановлено пользователем");

@@ -73,6 +73,26 @@ describe("finishServiceThink", () => {
     expect(r.status).toBe("failed");
   });
 
+  it("parks a numbered question even when Hermes answered without tools", async () => {
+    const ask = vi.fn(async () => ({ pendingId: "q1" }));
+    const mock = rt({});
+    (mock as unknown as { approvals: { ask: typeof ask } }).approvals = { ask };
+    const text = [
+      "Нужно, чтобы ты сам выбрал:",
+      "1. Если это ты — нажми This was me",
+      "2. Если это не ты — нажми This wasn't me",
+      "Что мне делать с этим уведомлением?",
+    ].join("\n");
+    const r = await finishServiceThink(mock, run, {
+      text,
+      usedFallback: true,
+      startedAt: "2026-01-01T00:00:10.000Z",
+    });
+    expect(ask).toHaveBeenCalled();
+    expect(mock.step).not.toHaveBeenCalled();
+    expect(r.status).toBe("waiting_approval");
+  });
+
   it("accepts a turn with a service step", async () => {
     const startedAt = "2026-01-01T00:00:10.000Z";
     const r = await finishServiceThink(

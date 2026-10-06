@@ -52,6 +52,7 @@ export async function finishServiceThink(
   if (current?.status === "waiting_approval") return { text: first.text, status: "waiting_approval" };
 
   if (first.usedFallback) {
+    if (await holdUserQuestion(rt, run, first.text)) return { text: first.text, status: "waiting_approval" };
     await rt.step(run.id, "error", "Hermes недоступен: ответ без инструментов");
     const text = first.text.trim() || "Инструменты недоступны, работу в сервисе выполнить не удалось.";
     return { text, status: "failed" };
@@ -69,6 +70,7 @@ export async function finishServiceThink(
   if (after?.status === "waiting_approval") return { text: retry.text, status: "waiting_approval" };
 
   if (retry.usedFallback) {
+    if (await holdUserQuestion(rt, run, retry.text)) return { text: retry.text, status: "waiting_approval" };
     await rt.step(run.id, "error", "Hermes недоступен на повторе: ответ без инструментов");
     return { text: retry.text.trim() || first.text, status: "failed" };
   }

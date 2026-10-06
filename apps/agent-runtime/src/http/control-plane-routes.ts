@@ -12,6 +12,7 @@ import {
 import type { AgentRuntime } from "../runtime";
 import { processEmail } from "../tasks/inbox";
 import { handleChat, retryChatRun } from "../tasks/chat";
+import { continueFinishedAnswer, takeFinishedAnswer } from "../tasks/question-reply";
 import { tick } from "../tasks/cron";
 import { streamRuntimeEvents } from "./events-routes";
 import { machineIsIdle, markSleepy, noteActivity } from "../tasks/idle";
@@ -129,6 +130,17 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
     const run = await rt.store.getRun(c.req.param("id"));
     if (!run) return c.json({ error: "not found" }, 404);
     return c.json({ run, steps: await rt.store.listSteps(run.id) });
+  });
+
+  app.post("/runs/:id/answer", async (c) => {
+    noteActivity();
+    const body = z.object({ answer: z.string().min(1).max(8000) }).parse(await c.req.json());
+    const taken = await takeFinishedAnswer(rt, c.req.param("id"), body.answer);
+    if (!taken) return c.json({ error: "not found" }, 404);
+    void continueFinishedAnswer(rt, taken).catch((e) => {
+      warn("approval", "продолжение после ответа упало", { error: String(e) });
+    });
+    return c.json({ runId: taken.run.id, status: "running" }, 202);
   });
 
   app.post("/runs/:id/cancel", async (c) => {
