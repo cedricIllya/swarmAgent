@@ -64,6 +64,19 @@ export function presentSteps(steps: RunStep[]): string[] {
   return out;
 }
 
+/** Заметки расхода: одинаковые фразы после переписывания показываем один раз. */
+export function presentDetails(details: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of details) {
+    const line = presentDetail(raw);
+    if (!line || seen.has(line)) continue;
+    seen.add(line);
+    out.push(line);
+  }
+  return out;
+}
+
 function rewrite(text: string): string | null {
   let m: RegExpMatchArray | null;
 

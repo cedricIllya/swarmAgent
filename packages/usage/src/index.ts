@@ -95,7 +95,57 @@ export function summarizeUsage(records: UsageRecord[]): UsageSummary {
     }))
     .sort((a, b) => b.costUsd - a.costUsd);
 
-  return { totalCostUsd, totalPromptTokens, totalCompletionTokens, tasks: list };
+  return { totalCostUsd, totalPromptTokens, totalCompletionTokens, tasks: mergeSameWork(list) };
+}
+
+/** Одинаковое название — одна и та же работа, повторённая новым прогоном. */
+function workKey(task: UsageByTask): string {
+  const title = task.taskTitle.replace(/\s+/g, " ").trim().toLowerCase();
+  return title || task.taskId;
+}
+
+/**
+ * Плановая проверка и прочие повторы с тем же названием схлопываются в одну строку.
+ * Иначе таблица расходов растёт с каждым прогоном, хотя действие то же.
+ */
+function mergeSameWork(tasks: UsageByTask[]): UsageByTask[] {
+  const grouped = new Map<string, UsageByTask>();
+  for (const task of tasks) {
+    const prev = grouped.get(workKey(task));
+    if (!prev) {
+      grouped.set(workKey(task), {
+        ...task,
+        taskTitle: task.taskTitle.replace(/\s+/g, " ").trim(),
+        actions: task.actions.map((action) => ({ ...action, details: [...action.details] })),
+      });
+      continue;
+    }
+    prev.calls += task.calls;
+    prev.promptTokens += task.promptTokens;
+    prev.completionTokens += task.completionTokens;
+    prev.costUsd += task.costUsd;
+    for (const action of task.actions) {
+      const into = prev.actions.find((item) => item.action === action.action);
+      if (!into) {
+        prev.actions.push({ ...action, details: [...action.details] });
+        continue;
+      }
+      into.calls += action.calls;
+      into.promptTokens += action.promptTokens;
+      into.completionTokens += action.completionTokens;
+      into.costUsd += action.costUsd;
+      for (const detail of action.details) {
+        if (into.details.length >= MAX_DETAILS) break;
+        if (!into.details.includes(detail)) into.details.push(detail);
+      }
+    }
+  }
+  return [...grouped.values()]
+    .map((task) => ({
+      ...task,
+      actions: [...task.actions].sort((a, b) => b.costUsd - a.costUsd),
+    }))
+    .sort((a, b) => b.costUsd - a.costUsd);
 }
 
 export function emptyUsage(): UsageSummary {

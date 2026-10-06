@@ -1,7 +1,7 @@
 import type { RuntimeState, UsageByTask } from "@swarm/contracts";
 import { UsageBodySkeleton } from "../skeleton";
 import { usd } from "./format";
-import { presentDetail } from "./present-steps";
+import { presentDetails } from "./present-steps";
 
 const ACTION_LABEL: Record<string, string> = {
   "hermes.turn": "работа агента",
@@ -71,8 +71,7 @@ export function UsageCard({ state, pending }: { state: RuntimeState | null; pend
 }
 
 function TaskRows({ task }: { task: UsageByTask }) {
-  const notes = (action: UsageByTask["actions"][number]) =>
-    (action.details ?? []).map(presentDetail).filter((line): line is string => Boolean(line));
+  const notes = (action: UsageByTask["actions"][number]) => presentDetails(action.details ?? []);
   const breakdown = task.actions.length > 1 || task.actions.some((a) => notes(a).length > 0);
   return (
     <>

@@ -37,4 +37,37 @@ describe("usage", () => {
     ] as never);
     expect(s.tasks[0]?.actions[0]?.details).toEqual(["вошёл в Linear", "нашёл 3 задачи", "создал задачу X"]);
   });
+
+  it("merges repeated runs that share a title", () => {
+    const row = (taskId: string, taskTitle: string, action: string, costUsd: number, details?: string[]) => ({
+      at: "t",
+      taskId,
+      taskTitle,
+      action,
+      source: "hermes" as const,
+      model: "m",
+      promptTokens: 10,
+      completionTokens: 2,
+      costUsd,
+      ...(details ? { details } : {}),
+    });
+    const s = summarizeUsage([
+      row("run-1", "Плановая проверка сервисов", "hermes.tick", 0.01, ["ищу в сервисе"]),
+      row("run-2", "плановая  проверка сервисов", "hermes.tick", 0.02, ["ищу в сервисе", "нашёл задачу"]),
+      row("run-2", "Плановая проверка сервисов", "stagehand.llm", 0.03),
+      row("run-3", "Другая задача", "hermes.turn", 0.001),
+    ]);
+    expect(s.tasks).toHaveLength(2);
+    expect(s.totalCostUsd).toBeCloseTo(0.061);
+    const check = s.tasks.find((t) => t.taskTitle.toLowerCase() === "плановая проверка сервисов");
+    expect(check?.calls).toBe(3);
+    expect(check?.promptTokens).toBe(30);
+    expect(check?.costUsd).toBeCloseTo(0.06);
+    expect(check?.actions.find((a) => a.action === "hermes.tick")).toMatchObject({
+      calls: 2,
+      costUsd: 0.03,
+      details: ["ищу в сервисе", "нашёл задачу"],
+    });
+    expect(s.tasks.find((t) => t.taskId === "run-3")?.calls).toBe(1);
+  });
 });

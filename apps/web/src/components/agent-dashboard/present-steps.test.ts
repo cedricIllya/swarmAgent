@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RunStep } from "@swarm/contracts";
-import { forPerson, personStatus, presentDetail, presentSteps } from "./present-steps";
+import { forPerson, personStatus, presentDetail, presentDetails, presentSteps } from "./present-steps";
 
 function step(kind: RunStep["kind"], text: string): RunStep {
   return { at: "2026-01-01T00:00:00.000Z", kind, text };
@@ -35,6 +35,18 @@ describe("presentSteps", () => {
   it("не тащит служебные строки в расходы", () => {
     expect(presentDetail("чат: task")).toBeNull();
     expect(presentDetail("поиск в интернете: 3 источник(ов)")).toBe("Ищу в интернете");
+  });
+
+  it("схлопывает одинаковые заметки расхода", () => {
+    expect(
+      presentDetails([
+        "поиск в интернете: linear",
+        "чат: task",
+        "нашёл 3 задачи",
+        "поиск в интернете: ещё раз",
+        "нашёл 3 задачи",
+      ]),
+    ).toEqual(["Ищу в интернете", "Нашёл 3 задачи"]);
   });
 
   it("убирает имена внутренней кухни из ответа и статуса", () => {
