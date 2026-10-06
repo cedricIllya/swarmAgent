@@ -41,7 +41,7 @@ describe("surveySummary", () => {
   it("names the queue instead of the model json", () => {
     expect(surveySummary('{"tasks":[]}', [], [])).toBe("пусто");
     expect(surveySummary("пусто", [], [])).toBe("пусто");
-    expect(surveySummary("{}", ["linear: Починить баг"], [])).toBe("В очередь: linear: Починить баг");
-    expect(surveySummary("{}", [], ["linear: Починить баг"])).toBe("Уже в очереди: linear: Починить баг");
+    expect(surveySummary("{}", ["linear: Починить баг"], [])).toBe("В работе: linear: Починить баг");
+    expect(surveySummary("{}", [], ["linear: Починить баг"])).toBe("Уже в работе: linear: Починить баг");
   });
 });
