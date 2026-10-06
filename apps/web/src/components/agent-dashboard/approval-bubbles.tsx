@@ -75,11 +75,15 @@ export function QuestionCard({
   options,
   busy,
   onAnswer,
+  title = "Нужен ответ",
+  placeholder,
 }: {
   prompt: string;
   options: string[];
   busy: boolean;
   onAnswer: (text: string) => void | Promise<void>;
+  title?: string;
+  placeholder?: string;
 }) {
   const [picked, setPicked] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -105,7 +109,7 @@ export function QuestionCard({
   return (
     <div className="list-item list-item-warn question-row">
       <div className="small" style={{ color: "var(--warn)", fontWeight: 500 }}>
-        Нужен ответ
+        {title}
       </div>
       <div style={{ whiteSpace: "pre-wrap" }}>
         <StepText text={prompt} />
@@ -137,7 +141,7 @@ export function QuestionCard({
           className="textarea"
           value={text}
           disabled={busy}
-          placeholder={options.length ? "Вставьте ключ или напишите свой вариант" : "Напишите ответ"}
+          placeholder={placeholder ?? (options.length ? "Вставьте ключ или напишите свой вариант" : "Напишите ответ")}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {

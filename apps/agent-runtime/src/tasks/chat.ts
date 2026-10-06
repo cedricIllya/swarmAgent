@@ -141,14 +141,16 @@ export async function handleChat(
   return { run, chatId };
 }
 
-/** Повтор упавшей задачи чата: тот же текст, новая задача, без второго сообщения человека. */
+const RETRYABLE: ReadonlySet<Run["status"]> = new Set(["failed", "canceled", "escalated"]);
+
+/** Повтор упавшей или остановившейся на человеке задачи чата: тот же текст, новая задача, без второго сообщения человека. */
 export async function retryChatRun(
   rt: AgentRuntime,
   args: { chatId: string; runId: string; author: string },
 ): Promise<{ run: Run; chatId: string } | { error: "not_found" | "busy" }> {
   const chat = await rt.store.chats.get(args.chatId);
   const prior = await rt.store.getRun(args.runId);
-  if (!chat || !prior || prior.trigger !== "chat" || prior.threadId !== args.chatId || (prior.status !== "failed" && prior.status !== "canceled")) {
+  if (!chat || !prior || prior.trigger !== "chat" || prior.threadId !== args.chatId || !RETRYABLE.has(prior.status)) {
     return { error: "not_found" };
   }
   const running = (await rt.store.listRuns(200)).some(

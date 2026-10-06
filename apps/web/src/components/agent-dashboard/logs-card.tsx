@@ -274,10 +274,10 @@ function RunItem({
 }) {
   const [loaded, setLoaded] = useState<RunStep[] | null>(null);
   const [loadedMessages, setLoadedMessages] = useState<ChatMessage[]>([]);
-  const [open, setOpen] = useState(tone !== "settled");
+  const [open, setOpen] = useState(tone === "attention");
   const [stopping, setStopping] = useState(false);
   const [retrying, setRetrying] = useState(false);
-  const [retryError, setRetryError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [replying, setReplying] = useState(false);
 
   async function load() {
@@ -316,8 +316,13 @@ function RunItem({
     e.stopPropagation();
     if (stopping) return;
     setStopping(true);
+    setActionError(null);
     try {
-      await fetch(`/api/agents/${agent.id}/runs/${run.id}/cancel`, { method: "POST" });
+      const res = await fetch(`/api/agents/${agent.id}/runs/${run.id}/cancel`, { method: "POST" });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        setActionError(data?.error ?? "Не удалось остановить");
+      }
     } finally {
       setStopping(false);
     }
@@ -328,7 +333,7 @@ function RunItem({
     e.stopPropagation();
     if (!run.threadId || retrying) return;
     setRetrying(true);
-    setRetryError(null);
+    setActionError(null);
     const res = await fetch(`/api/agents/${agent.id}/chats/${run.threadId}/retry`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -337,7 +342,24 @@ function RunItem({
     setRetrying(false);
     if (!res.ok) {
       const data = (await res.json().catch(() => null)) as { error?: string } | null;
-      setRetryError(data?.error ?? "Не удалось повторить");
+      setActionError(data?.error ?? "Не удалось повторить");
+    }
+  }
+
+  async function answerRun(text: string) {
+    setReplying(true);
+    try {
+      const res = await fetch(`/api/agents/${agent.id}/runs/${run.id}/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answer: text }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error ?? "Не удалось отправить ответ");
+      }
+    } finally {
+      setReplying(false);
     }
   }
 
@@ -365,7 +387,7 @@ function RunItem({
   const toneNow: RunTone = pendingQuestion || followup ? "attention" : tone;
 
   useEffect(() => {
-    if (toneNow !== "settled") {
+    if (toneNow === "attention") {
       setOpen(true);
       void load();
       void loadHistory();
@@ -379,21 +401,30 @@ function RunItem({
   );
   const summary = forPerson(run.summary);
   const shownSteps = presentSteps(steps);
+  const local = run.id.startsWith("local_");
   const canStop =
-    !run.id.startsWith("local_") &&
-    (run.status === "running" || run.status === "queued" || run.status === "waiting_approval");
+    !local &&
+    (run.status === "running" || run.status === "queued" || run.status === "waiting_approval" || run.status === "escalated");
   const canRetry =
     agent.status === "running" &&
     run.trigger === "chat" &&
     Boolean(run.threadId) &&
-    (run.status === "failed" || run.status === "canceled") &&
+    (run.status === "failed" || run.status === "canceled" || run.status === "escalated") &&
+    approvals.length === 0 &&
     !threadBusy;
+  // «Нужен человек» без карточки с кнопками: человек пишет, что сделал, и агент продолжает эту же задачу.
+  const escalation =
+    run.status === "escalated" && !local && agent.status === "running" && approvals.length === 0 && !followup && !threadBusy
+      ? summary || "Задача остановилась: нужен человек."
+      : null;
 
   return (
     <details
       className={`list-item run-row run-${toneNow}`}
       open={open}
       onToggle={(e) => {
+        e.stopPropagation();
+        if (e.target !== e.currentTarget) return;
         const o = (e.target as HTMLDetailsElement).open;
         setOpen(o);
         if (o) {
@@ -430,9 +461,9 @@ function RunItem({
         </div>
       </summary>
       <div className="run-body">
-      {retryError && (
+      {actionError && (
         <p className="small" style={{ margin: "8px 0 0", color: "var(--danger)" }}>
-          {retryError}
+          {actionError}
         </p>
       )}
       {followup && (
@@ -442,29 +473,38 @@ function RunItem({
             options={followup.options}
             busy={replying}
             onAnswer={async (text) => {
-              setReplying(true);
-              try {
-                // У письма threadId — Message-ID, не чат. Ответ остаётся в этой задаче.
-                const res =
-                  run.trigger === "chat" && run.threadId
-                    ? await fetch(`/api/agents/${agent.id}/chat`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ message: text, chatId: run.threadId }),
-                      })
-                    : await fetch(`/api/agents/${agent.id}/runs/${run.id}/answer`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ answer: text }),
-                      });
-                if (!res.ok) {
-                  const data = (await res.json().catch(() => null)) as { error?: string } | null;
-                  throw new Error(data?.error ?? "Не удалось отправить ответ");
+              // У письма threadId — Message-ID, не чат. Ответ остаётся в этой задаче.
+              if (run.trigger === "chat" && run.threadId) {
+                setReplying(true);
+                try {
+                  const res = await fetch(`/api/agents/${agent.id}/chat`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ message: text, chatId: run.threadId }),
+                  });
+                  if (!res.ok) {
+                    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+                    throw new Error(data?.error ?? "Не удалось отправить ответ");
+                  }
+                } finally {
+                  setReplying(false);
                 }
-              } finally {
-                setReplying(false);
+                return;
               }
+              await answerRun(text);
             }}
+          />
+        </div>
+      )}
+      {escalation && (
+        <div className="list" style={{ marginTop: 10 }}>
+          <QuestionCard
+            title="Нужен человек"
+            prompt={escalation}
+            options={[]}
+            busy={replying}
+            placeholder="Напишите, что сделали или как поступить — агент продолжит. Или остановите задачу."
+            onAnswer={answerRun}
           />
         </div>
       )}
@@ -516,7 +556,7 @@ function RunItem({
           })}
         </div>
       )}
-      {summary && !followup && !(pendingQuestion && run.summary.startsWith("Ждёт ответа:")) && (
+      {summary && !followup && !escalation && !(pendingQuestion && run.summary.startsWith("Ждёт ответа:")) && (
         <p className="small" style={{ margin: "10px 0 0", whiteSpace: "pre-wrap" }}>
           <StepText text={summary} />
         </p>

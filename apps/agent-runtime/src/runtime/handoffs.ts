@@ -60,10 +60,19 @@ export class Handoffs {
     for (const [id, ctx] of Object.entries(all)) this.contexts.set(id, ctx);
   }
 
-  /** Снять контекст без продолжения (остановка задачи). */
-  drop(handoffId: string): void {
-    if (!this.contexts.delete(handoffId)) return;
-    void this.persist().catch((e) => warn("handoff", "не удалось записать контексты", { error: String(e) }));
+  /** Снять контекст без продолжения (остановка задачи). Припаркованный браузер закрывается: ждать его больше некому. */
+  async drop(handoffId: string): Promise<void> {
+    const ctx = this.contexts.get(handoffId);
+    if (!ctx) return;
+    this.contexts.delete(handoffId);
+    await this.persist().catch((e) => warn("handoff", "не удалось записать контексты", { error: String(e) }));
+    await this.closeBrowser(ctx).catch((e) => warn("handoff", "браузер не закрылся при остановке", { error: String(e) }));
+  }
+
+  private async closeBrowser(ctx: HandoffContext | null): Promise<void> {
+    if (!ctx?.browserSessionId) return;
+    if (ctx.provider === "skyvern") await this.rt.skyvern?.closeBrowserSession(ctx.browserSessionId);
+    if (isOwnBrowser(ctx.provider)) await this.rt.browser.close(ctx.browserSessionId);
   }
 
   private async persist(): Promise<void> {
@@ -158,8 +167,7 @@ export class Handoffs {
     const service = ctx?.service ?? original?.title ?? "сервис";
 
     if (!done) {
-      if (ctx?.provider === "skyvern" && ctx.browserSessionId) await rt.skyvern?.closeBrowserSession(ctx.browserSessionId);
-      if (isOwnBrowser(ctx?.provider) && ctx?.browserSessionId) await rt.browser.close(ctx.browserSessionId);
+      await this.closeBrowser(ctx);
       const run = await rt.createRun("approval", `Отменено: ${service}`, original?.threadId ?? null);
       await rt.step(run.id, "note", "человек отменил вход, браузер закрыт");
       await rt.finishRun(run, "failed", "Вход отменён человеком, браузер закрыт.");

@@ -482,6 +482,17 @@ export function questionContinuationPrompt(question: string, answer: string): st
   ].join("\n");
 }
 
+/** Задача остановилась на человеке без вопроса с вариантами; владелец написал, что сделал или как поступить. */
+export function escalationContinuationPrompt(reason: string, answer: string): string {
+  return [
+    "Задача остановилась: нужен был человек. Владелец ответил в журнале задачи.",
+    `На чём остановился: «${reason}»`,
+    `Владелец пишет: «${answer}»`,
+    "Продолжай задачу с учётом этого: если человек доделал шаг — проверь и иди дальше, если дал указание — выполни его. Если в ответе ключ или токен — проверь его и запиши через /report. Секрет в текст человеку не копируй.",
+    "Если снова нужен выбор или данные владельца — POST /ask и останови ход. В итоговом тексте вопрос не задавай.",
+  ].join("\n");
+}
+
 export function approvalContinuationPrompt(description: string, approved: boolean): string {
   return approved
     ? `Человек одобрил: «${description}». Выполни ровно это изменение и отчитайся.`

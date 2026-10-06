@@ -24,7 +24,7 @@ function run(status: Run["status"], summary = ATLASSIAN): Run {
   };
 }
 
-function rt(current: Run | null): { mock: AgentRuntime; chats: string[] } {
+function rt(current: Run | null, approvals: Array<{ runId: string }> = []): { mock: AgentRuntime; chats: string[] } {
   let saved: Run | null = current;
   const chats: string[] = [];
   const mock = {
@@ -33,6 +33,7 @@ function rt(current: Run | null): { mock: AgentRuntime; chats: string[] } {
       saveRun: async (next: Run) => {
         saved = next;
       },
+      listApprovals: async () => approvals,
     },
     chatIdForRun: async () => "chat_system",
     addChat: vi.fn(async (msg: { text: string }) => {
@@ -72,5 +73,21 @@ describe("takeFinishedAnswer", () => {
   it("refuses a summary that is not a question", async () => {
     const { mock } = rt(run("failed", "Это информационное письмо, задачи нет."));
     expect(await takeFinishedAnswer(mock, "run_mail", "ок")).toBeNull();
+  });
+
+  it("continues an escalated task from the owner's note even without a numbered question", async () => {
+    const reason = "Не прошёл проверку на странице, нужен человек. Браузер уже закрыт, взять управление некуда.";
+    const { mock, chats } = rt(run("escalated", reason));
+    const taken = await takeFinishedAnswer(mock, "run_mail", "Капчу прошёл, аккаунт активен");
+    expect(taken?.kind).toBe("escalation");
+    expect(taken?.question).toBe(reason);
+    expect(taken?.run.status).toBe("running");
+    expect(chats).toEqual(["Капчу прошёл, аккаунт активен"]);
+    await continueFinishedAnswer(mock, taken!);
+  });
+
+  it("leaves an escalated task with a pending handoff card to its buttons", async () => {
+    const { mock } = rt(run("escalated", "Нужна помощь со входом."), [{ runId: "run_mail" }]);
+    expect(await takeFinishedAnswer(mock, "run_mail", "готово")).toBeNull();
   });
 });
