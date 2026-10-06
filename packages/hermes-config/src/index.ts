@@ -195,8 +195,6 @@ export function renderAllFiles(args: {
   config: HermesConfigInput;
   env: HermesEnvInput;
   skillTemplate: string;
-  /** Рецепты сервисов, которые кладём в skills/<slug>/SKILL.md вместе со swarm-worker. */
-  serviceSkills?: Array<{ slug: string; content: string }>;
 }): RenderedFile[] {
   return [
     { path: "config.yaml", content: renderConfigYaml(args.config), mode: SHARED_FILE_MODE },
@@ -215,13 +213,5 @@ export function renderAllFiles(args: {
       content: JSON.stringify(args.config.services, null, 2),
       mode: SHARED_FILE_MODE,
     },
-    ...(args.serviceSkills ?? []).map((skill) => ({
-      path: `skills/${skill.slug}/SKILL.md`,
-      content: renderWorkerSkill(skill.content, {
-        agentName: args.config.agentName,
-        email: args.config.email,
-      }),
-      mode: SHARED_FILE_MODE,
-    })),
   ];
 }

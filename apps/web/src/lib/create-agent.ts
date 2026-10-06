@@ -63,23 +63,14 @@ function flyClient(): FlyClient {
   return new FlyClient({ apiToken: token, org: env.fly.org, region: env.fly.region });
 }
 
-/** Шаблоны скиллов. `SKILL_TEMPLATE_DIR` задаётся в контейнере; в разработке — корень репозитория. */
-async function skillTemplates(): Promise<{ worker: string; serviceSkills: Array<{ slug: string; content: string }> }> {
+/** Общий скилл агента. `SKILL_TEMPLATE_DIR` задаётся в контейнере; в разработке — корень репозитория. */
+async function workerSkillTemplate(): Promise<string> {
   const dir = process.env.SKILL_TEMPLATE_DIR ?? path.resolve(process.cwd(), "../../agent-template");
-  const read = async (rel: string) => {
-    try {
-      return await readFile(/*turbopackIgnore: true*/ path.join(dir, rel), "utf8");
-    } catch {
-      throw new Error(`agent-template/${rel} не найден в ${dir}`);
-    }
-  };
-  return {
-    worker: await read("swarm-worker/SKILL.md"),
-    serviceSkills: [
-      { slug: "gensite", content: await read("gensite/SKILL.md") },
-      { slug: "pneumatic", content: await read("pneumatic/SKILL.md") },
-    ],
-  };
+  try {
+    return await readFile(/*turbopackIgnore: true*/ path.join(dir, "swarm-worker/SKILL.md"), "utf8");
+  } catch {
+    throw new Error(`agent-template/swarm-worker/SKILL.md не найден в ${dir}`);
+  }
 }
 
 /** Env и файлы машины для текущего состояния агента. Используется при создании и смене модели. */
@@ -90,7 +81,6 @@ async function machineConfigFor(agent: AgentRow, runtimeToken: string, ownerEmai
   const services = await buildSnapshot(db(), agent.id);
   const email = `${agent.localPart}@${agent.domain}`;
 
-  const skills = await skillTemplates();
   const files = renderAllFiles({
     config: {
       agentId: agent.id,
@@ -106,8 +96,7 @@ async function machineConfigFor(agent: AgentRow, runtimeToken: string, ownerEmai
       runtimeToken,
       skyvernApiKey: env.skyvernApiKey,
     },
-    skillTemplate: skills.worker,
-    serviceSkills: skills.serviceSkills,
+    skillTemplate: await workerSkillTemplate(),
   });
 
   const machineEnv: Record<string, string> = {
