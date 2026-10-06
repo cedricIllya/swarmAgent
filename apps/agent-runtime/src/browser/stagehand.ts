@@ -12,6 +12,7 @@ import { log, warn } from "../log";
 import { toExtractSchema } from "./schema";
 import { shotFile } from "./shots";
 import { acquireProfile } from "./profile-lock";
+import { maskVariables } from "./secrets";
 import type { BrowserStorageState } from "./session-transfer";
 
 type LLMContentBlock = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -353,12 +354,14 @@ export class ManagedBrowserSession {
     await settlePage(await this.page(), { network: false, budgetMs: SETTLE_MS / 2 }).catch(() => undefined);
   }
 
-  async act(instruction: string): Promise<{ success: boolean; message: string }> {
+  /** `variables` — значения для `%name%` в инструкции: Stagehand вводит их, модели не показывает. */
+  async act(instruction: string, variables?: Record<string, string>): Promise<{ success: boolean; message: string }> {
     await this.settled();
     try {
-      const r = (await withTimeout("act", STEP_TIMEOUT_MS, this.sh().act(instruction))) as { success?: boolean; message?: string };
-      const out = { success: r.success ?? true, message: r.message ?? "" };
-      await this.action({ type: "act", instruction, ...out });
+      const pending = variables && Object.keys(variables).length ? this.sh().act(instruction, { variables }) : this.sh().act(instruction);
+      const r = (await withTimeout("act", STEP_TIMEOUT_MS, pending)) as { success?: boolean; message?: string };
+      const out = { success: r.success ?? true, message: maskVariables(r.message ?? "", variables ?? {}) };
+      await this.action({ type: "act", instruction, ...out, ...(variables ? { variables: Object.keys(variables) } : {}) });
       return out;
     } finally {
       await this.settled();

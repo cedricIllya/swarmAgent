@@ -26,7 +26,7 @@ function invitePrompt(ctx: OnboardingContext, slug: string | null): string {
     const cookies =
       (inv.provider === "local" || inv.cookiesInProfile) && slug
         ? `Cookies сохранены: /browser/open с serviceSlug "${slug}" продолжит уже вошедшим.`
-        : `Cookies не сохранялись: для входа в браузере используй пароль из credentials${slug ? ` (slug "${slug}")` : ""} — /skyvern/login или /browser/open и форма входа.`;
+        : `Cookies не сохранялись: /browser/open${slug ? ` с serviceSlug "${slug}"` : ""}, форму входа заполни через /browser/act с %email% и %password% — runtime введёт сохранённые значения сам.`;
     return [
       `Шаг 0 выполнен: приглашение принято в браузере, аккаунт ${inv.accountEmail} зарегистрирован${inv.password ? ", пароль сохранён в доступе и виден владельцу в журнале задачи" : ""}.`,
       cookies,
@@ -92,9 +92,9 @@ export function secretFollowupPrompt(
     lines.push(
       need.cookiesInProfile
         ? `Открой свой браузер: POST /browser/open с runId, purpose, serviceSlug "${need.slug}" и url "${need.appUrl}" — cookies сохранены, ты уже внутри.`
-        : `Открой свой браузер: POST /browser/open с runId, purpose, serviceSlug "${need.slug}" и url "${need.appUrl}". Если сервис просит войти — почта ${agentEmail ?? "агента"} и пароль из credentials (slug "${need.slug}") через /browser/act.`,
-      `Дальше /browser/observe и /browser/act (поле instruction): настройки аккаунта → раздел API или MCP → выпустить ${what}. Значение бери только через POST /browser/read (sessionId): он отдаёт текст страницы и поля символ в символ, список tokens — кандидаты. /browser/extract длинные токены сокращает — для секрета он не годится. Сессию закрой через /browser/close.`,
-      `Запиши секрет: POST /report {"type":"credential","credential":{"slug":"${need.slug}","kind":"${kind}","token":"<значение>","accountEmail":"${agentEmail ?? ""}"}}.${kind === "mcp" ? ` Инструменты mcp_${need.slug}_* появятся сами.` : " Затем проверь ключ вызовом API."}`,
+        : `Открой свой браузер: POST /browser/open с runId, purpose, serviceSlug "${need.slug}" и url "${need.appUrl}". Если сервис просит войти — /browser/act с instruction вроде «введи %email% в поле почты, %password% в поле пароля и нажми Войти»: runtime подставит сохранённые почту ${agentEmail ?? "агента"} и пароль сам.`,
+      `Дальше /browser/observe и /browser/act (поле instruction): настройки аккаунта → раздел API или MCP → выпустить ${what}.`,
+      `Когда ${what} виден на странице — POST /browser/save-token {"sessionId":"…"}: runtime сам возьмёт значение со страницы, проверит его${kind === "mcp" ? " на MCP" : ""} и сохранит в доступ рядом с паролем. Само значение не копируй и не пиши в /report. Сессию закрой через /browser/close.${kind === "mcp" ? ` Инструменты mcp_${need.slug}_* появятся сами.` : " Затем проверь ключ вызовом API."}`,
     );
   } else {
     lines.push(
@@ -224,6 +224,18 @@ function recipeLines(r: PromptRecipe, cred: PromptCredential | undefined): strin
   if (r.browser) {
     detail.push(`  Браузер: приложение ${r.browser.appUrl}, вход ${r.browser.loginUrl}`);
   }
+  if (cred) {
+    const stored = [
+      cred.accountEmail && cred.password ? "почта и пароль" : null,
+      cred.token || cred.oauth?.accessToken ? "токен" : null,
+      cred.storageState ? "cookies в профиле браузера" : null,
+    ].filter(Boolean);
+    if (stored.length) {
+      detail.push(
+        `  Доступ сохранён: ${stored.join(", ")}. Вход в браузере — %email% и %password% в /browser/act, новый токен со страницы — POST /browser/save-token.`,
+      );
+    }
+  }
   if (r.notes) detail.push(`  Заметки: ${r.notes}`);
   return detail;
 }
@@ -252,7 +264,8 @@ export function systemPrompt(ctx: PromptContext): string {
     "Подключение к сервису после регистрации — всегда лестница: 1) MCP, 2) API, 3) браузер. Браузер — только если первых двух нет.",
     "Задачу выполняй в самом сервисе тем же способом. Письмо-уведомление только сообщает о ней: ответ на такое письмо работой не считается.",
     "После каждого действия в сервисе (MCP, curl к API, шаг браузера) сразу пиши в журнал POST /runs/<runId>/step с kind mcp|api|browser. Без записи задача не считается выполненной.",
-    "Работа внутри сервиса без MCP и API — только свой браузер через runtime: POST /browser/open с serviceSlug. После входа Skyvern cookies уже в этом профиле, открывай его и продолжай сессию. /skyvern/login для такого сервиса не вызывай: runtime его отклонит. Браузер Hermes (browser_exec) не открывай — профиля сервиса у него нет. Если страница всё же показывает форму входа, в этой же сессии введи пароль из credentials через /browser/act. «Забыли пароль» и сброс не открывай. Коды из писем runtime передаст сам. Ключи и токены со страницы читай через /browser/read (точный текст и поля), не через extract. Skyvern — только первое принятие приглашения.",
+    "Работа внутри сервиса без MCP и API — только свой браузер через runtime: POST /browser/open с serviceSlug. После входа Skyvern cookies уже в этом профиле, открывай его и продолжай сессию. /skyvern/login для такого сервиса не вызывай: runtime его отклонит. Браузер Hermes (browser_exec) не открывай — профиля сервиса у него нет. Если страница всё же показывает форму входа, в этой же сессии вызови /browser/act с %email% и %password% в instruction — runtime введёт сохранённые значения сам. «Забыли пароль» и сброс не открывай. Коды из писем runtime передаст сам. Skyvern — только первое принятие приглашения.",
+    "Доступ к сервису — одна запись: почта, пароль, токен и cookies браузера. Значения ты не видишь и у владельца не спрашиваешь. Вход — %email% и %password% в /browser/act. Токен истёк или отозван — выпусти новый в кабинете сервиса и вызови POST /browser/save-token с sessionId: runtime возьмёт его со страницы, проверит и сохранит в ту же запись.",
     "Если в заметках сервиса есть «Как работать» — это карта интерфейса: где назначенные тебе задачи, какие действия обычные и чего не трогать. Иди по ней, не исследуй сервис с нуля.",
     "Всегда следуй скиллу swarm-worker. Он описывает локальные эндпоинты runtime:",
     `http://127.0.0.1:${ctx.runtimePort} с заголовком Authorization: Bearer $SWARM_RUNTIME_TOKEN.`,

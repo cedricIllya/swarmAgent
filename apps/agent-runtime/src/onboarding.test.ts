@@ -105,7 +105,8 @@ describe("runConnectFollowup", () => {
     expect(prompt).toContain("Настройки → MCP");
     expect(prompt).toContain("https://gensite.ru/docs/mcp");
     expect(prompt).toContain("не ищи его в интернете");
-    expect(prompt).toContain('"slug":"gensite","kind":"mcp"');
+    expect(prompt).toContain("POST /browser/save-token");
+    expect(prompt).not.toContain('"token":"<значение>"');
     expect(looksLikeServiceApprovalWait(prompt)).toBe(false);
   });
 

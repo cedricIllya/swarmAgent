@@ -6,6 +6,7 @@ import { noteActivity } from "../idle";
 import { redactInternal } from "../redact";
 import { withAliases } from "./lenient";
 import { guardCredentialReport, guardRecipeReport, mcpTokenCheck } from "../report-guard";
+import { storedLoginAsked } from "../browser/secrets";
 
 /**
  * Hermes (соседний контейнер) → runtime: инструменты скилла swarm-worker без браузера —
@@ -43,6 +44,12 @@ export function toolRoutes(rt: AgentRuntime): Hono {
         options: z.array(z.string()).max(6).default([]),
       })
       .parse(raw);
+    const stored = storedLoginAsked(body.question, await rt.store.readServices());
+    if (stored) {
+      const error = `Пароль ${stored} уже сохранён в доступе — владельца не спрашивай. Открой POST /browser/open с serviceSlug "${stored}" (cookies уже там). Если просит войти — /browser/act с %email% и %password%: runtime введёт их сам. Токен со страницы сохраняй через POST /browser/save-token.`;
+      await rt.step(body.runId, "note", `вопрос о входе в ${stored} не задан: пароль уже в доступе`);
+      return c.json({ pending: false, error }, 409);
+    }
     const r = await rt.approvals.ask(body.runId, body.question, body.options);
     return c.json({ pending: true, questionId: r.pendingId });
   });

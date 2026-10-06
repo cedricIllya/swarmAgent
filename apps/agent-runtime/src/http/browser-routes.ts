@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { savedBrowserSlug } from "../browser/local-session";
+import { credentialVariables, referencedVariables } from "../browser/secrets";
+import { saveTokenFromPage } from "../browser/save-token";
 import type { AgentRuntime } from "../runtime";
 import { noteActivity } from "../idle";
 import { INSTRUCTION_ALIASES, SESSION_ALIASES, skyvernPurpose, withAliases } from "./lenient";
@@ -47,12 +49,39 @@ export function browserRoutes(rt: AgentRuntime): Hono {
     return c.json({ ok: true, url: await s.currentUrl() });
   });
 
+  // %email%, %password%, %name% в инструкции — значения из доступа сервиса этой сессии.
+  // Модель секрет не видит: Stagehand вводит его сам.
   app.post("/browser/act", async (c) => {
     noteActivity();
     const body = Session.extend({ instruction: z.string() }).parse(withAliases(await c.req.json(), INSTRUCTION_ALIASES));
     const s = rt.browser.sessions.get(body.sessionId);
     if (!s) return c.json({ error: "session not found" }, 404);
-    return c.json({ ...(await s.act(body.instruction)), url: await s.currentUrl() });
+    const used = referencedVariables(body.instruction);
+    let variables: Record<string, string> | undefined;
+    if (used.length) {
+      if (!s.serviceSlug) {
+        return c.json({ error: "%email% и %password% работают только в сессии, открытой с serviceSlug сервиса" }, 400);
+      }
+      const cred = (await rt.store.readServices())?.credentials.find((x) => x.slug === s.serviceSlug);
+      const known = credentialVariables(cred);
+      const missing = used.filter((v) => !known[v]);
+      if (missing.length) {
+        return c.json({ error: `в доступе ${s.serviceSlug} нет: ${missing.map((v) => `%${v}%`).join(", ")}` }, 409);
+      }
+      variables = Object.fromEntries(used.map((v) => [v, known[v]!]));
+    }
+    return c.json({ ...(await s.act(body.instruction, variables)), url: await s.currentUrl() });
+  });
+
+  // Токен со страницы — сразу в доступ сервиса, рядом с почтой и паролем. Модели значение не отдаётся.
+  app.post("/browser/save-token", async (c) => {
+    noteActivity();
+    const body = Session.parse(withAliases(await c.req.json(), SESSION_ALIASES));
+    const s = rt.browser.sessions.get(body.sessionId);
+    if (!s) return c.json({ error: "session not found" }, 404);
+    if (!s.serviceSlug) return c.json({ error: "токен сохраняется только из сессии, открытой с serviceSlug сервиса" }, 400);
+    const r = await saveTokenFromPage(rt, s);
+    return c.json(r.body, r.status);
   });
 
   app.post("/browser/extract", async (c) => {

@@ -106,10 +106,11 @@ Skyvern — только онбординг: приглашение (`/invite/ac
 
 | Метод | Путь | Зачем |
 | --- | --- | --- |
-| POST | `/browser/open` `/goto` `/act` `/extract` `/observe` `/wait-code` `/close` | Свой браузер, шаги решает Stagehand. |
+| POST | `/browser/open` `/goto` `/act` `/extract` `/observe` `/read` `/wait-code` `/close` | Свой браузер, шаги решает Stagehand. `%email%`, `%password%`, `%name%` в инструкции `/act` runtime берёт из доступа сервиса сессии (`serviceSlug`) и передаёт Stagehand как переменные: модель и журнал видят только имена. |
+| POST | `/browser/save-token` | `sessionId` сессии с `serviceSlug`. Runtime сам берёт токен со страницы, у MCP-рецепта проверяет каждую строку `initialize` и пишет принятую в тот же доступ, где почта, пароль и cookies. Значение модели не отдаётся. |
 | POST | `/skyvern/login` | Первый вход, если профиля ещё нет. Если cookies уже в своём браузере — 409, задачу делать через `/browser/open`. |
 | POST | `/approval` | Спросить человека перед изменением. |
-| POST | `/ask` | Вопрос владельцу, без которого задачу не продолжить: `runId`, `question`, необязательные `options`. Задача ждёт кнопки и поле в журнале. |
+| POST | `/ask` | Вопрос владельцу, без которого задачу не продолжить: `runId`, `question`, необязательные `options`. Задача ждёт кнопки и поле в журнале. Вопрос о входе в сервис, для которого пароль уже в доступе, отклоняется с 409 и подсказкой про `%password%`. |
 | POST | `/report` | Новый рецепт или свой секрет. Runtime пересылает это на control plane, обновляет `services.json`, переписывает `mcp_servers` в `config.yaml` (Hermes подхватывает файл сам) и пишет шаг «подключён сервис». |
 | POST | `/invite/accept` | Принять приглашение и зарегистрироваться под почтой агента в браузере (Skyvern, иначе свой Chromium): `runId`, `url`, `slug`, `service`. Отдаёт `status` (`accepted`, `needs_human`, `failed`), `provider`, `accountEmail`, `passwordSaved`, `finalUrl`, `notes`. |
 | POST | `/discover` | Поиск способа входа в сервис вне каталога: `runId`, `service`, `domain`, `links`. Отдаёт известный рецепт или результат поиска с черновиком рецепта. |
