@@ -21,7 +21,7 @@
 
 | Метод | Путь | |
 | --- | --- | --- |
-| GET, POST | `/api/agents` | Список. Создание: `{ name, model, localPart? }`. |
+| GET, POST | `/api/agents` | Список. Создание: `{ firstName, lastName, model }`. Адрес собирается из логина владельца, имени и фамилии. |
 | GET | `/api/agents/:id` | Карточка и снимок runtime. Опрос не будит спящую машину: в ответе `asleep: true`. `?wake=1` будит. Если машина молчит, в ответе `runtimeError`, страница всё равно открывается. |
 | PATCH | `/api/agents/:id` | `autonomous`, `model`. Смена модели переписывает `config.yaml` и обновляет машину. |
 | DELETE | `/api/agents/:id` | Гасит Fly-приложение и удаляет запись. Адрес снова свободен. |

@@ -10,7 +10,6 @@ export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string;
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [model, setModel] = useState(DEFAULT_MODEL);
-  const [localPart, setLocalPart] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -21,7 +20,7 @@ export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string;
     const res = await fetch("/api/agents", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ firstName: firstName.trim(), lastName: lastName.trim(), model, ...(localPart ? { localPart } : {}) }),
+      body: JSON.stringify({ firstName: firstName.trim(), lastName: lastName.trim(), model }),
     });
     const json = (await res.json()) as { agent?: Agent; error?: string };
     setBusy(false);
@@ -64,16 +63,6 @@ export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string;
       <p className="faint small" style={{ margin: "-6px 0 14px" }}>
         Адрес соберётся из вашего логина, имени и фамилии: Владимир Ленин → {ownerLogin}.vladimir.lenin@…
       </p>
-      <div className="field">
-        <label className="label">Адрес вручную (необязательно)</label>
-        <input
-          className="input mono"
-          value={localPart}
-          onChange={(e) => setLocalPart(e.target.value)}
-          pattern="[A-Za-z0-9._\-]+"
-          placeholder="только буквы, цифры, точки, дефисы, подчёркивания"
-        />
-      </div>
       <div className="field">
         <label className="label">Модель (OpenRouter)</label>
         <ModelSelect value={model} onChange={setModel} disabled={busy} />

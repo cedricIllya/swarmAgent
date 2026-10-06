@@ -42,10 +42,6 @@ export const CreateAgentInputSchema = z.object({
   firstName: z.string().trim().min(1).max(40),
   lastName: z.string().trim().min(1).max(40),
   model: z.string().min(1),
-  localPart: z
-    .string()
-    .regex(/^[A-Za-z0-9._-]+$/, "Только буквы, цифры, точки, дефисы, подчёркивания")
-    .optional(),
   domain: z.string().optional(),
 });
 
