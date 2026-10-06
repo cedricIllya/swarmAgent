@@ -331,7 +331,6 @@ function RunItem({
     accesses.map((login) => ({ slug: login.slug, name: login.name, kind: login.kind })),
     [run.title, run.summary, ...steps.map((s) => s.text), ...messages.map((m) => m.text), ...sessions.map((s) => s.purpose)],
   );
-  const ownAccess = accesses.filter((login) => usedServices.some((s) => s.slug === login.slug));
   const summary = forPerson(run.summary);
   const shownSteps = presentSteps(steps);
   const canStop =
@@ -459,16 +458,6 @@ function RunItem({
               </div>
             );
           })}
-        </div>
-      )}
-      {ownAccess.length > 0 && (
-        <div className="run-block">
-          <div className="run-block-label">Доступ этой задачи</div>
-          <div className="list">
-            {ownAccess.map((login) => (
-              <AccessRow key={login.slug} login={login} />
-            ))}
-          </div>
         </div>
       )}
       {summary && !followup && !(pendingQuestion && run.summary.startsWith("Ждёт ответа:")) && (
