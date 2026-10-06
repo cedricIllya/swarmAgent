@@ -23,6 +23,30 @@ export function toolRoutes(rt: AgentRuntime): Hono {
     return c.json({ approved: r.approved, pendingId: r.pending?.id ?? null });
   });
 
+  app.post("/ask", async (c) => {
+    noteActivity();
+    const raw = withAliases(await c.req.json(), {
+      runId: ["run_id", "run"],
+      question: ["text", "prompt", "message", "description"],
+      options: ["choices", "buttons"],
+    });
+    if (typeof raw.options === "string") {
+      raw.options = raw.options
+        .split(/\n+/)
+        .map((line) => line.replace(/^\s*\d+[.)]\s*/, "").trim())
+        .filter(Boolean);
+    }
+    const body = z
+      .object({
+        runId: z.string(),
+        question: z.string().min(1),
+        options: z.array(z.string()).max(6).default([]),
+      })
+      .parse(raw);
+    const r = await rt.approvals.ask(body.runId, body.question, body.options);
+    return c.json({ pending: true, questionId: r.pendingId });
+  });
+
   app.post("/report", async (c) => {
     noteActivity();
     const body = RuntimeReportSchema.parse(await c.req.json());

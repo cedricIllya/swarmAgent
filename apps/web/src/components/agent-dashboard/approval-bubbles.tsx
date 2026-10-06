@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import type { ChatMessage, PendingApproval } from "@swarm/contracts";
 import { fmtTime } from "./format";
+import { StepText } from "./secret-value";
 
 interface Labels {
   title: string;
@@ -61,16 +63,126 @@ export function ApprovalBubble({
   );
 }
 
+function composeAnswer(option: string | null, text: string): string {
+  const extra = text.trim();
+  if (option && extra) return `${option}\n${extra}`;
+  return (option ?? extra).trim();
+}
+
+/** Вопрос модели в журнале задачи: кнопки вариантов и поле для своего ответа или ключа. */
+export function QuestionCard({
+  prompt,
+  options,
+  busy,
+  onAnswer,
+}: {
+  prompt: string;
+  options: string[];
+  busy: boolean;
+  onAnswer: (text: string) => void | Promise<void>;
+}) {
+  const [picked, setPicked] = useState<string | null>(null);
+  const [text, setText] = useState("");
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const answer = composeAnswer(picked, text);
+
+  if (sent) {
+    return <p className="faint small" style={{ margin: "10px 0 0" }}>Ответ отправлен, задача продолжается.</p>;
+  }
+
+  async function submit() {
+    if (!answer || busy) return;
+    setError(null);
+    try {
+      await onAnswer(answer);
+      setSent(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось отправить ответ");
+    }
+  }
+
+  return (
+    <div className="list-item list-item-warn question-row">
+      <div className="small" style={{ color: "var(--warn)", fontWeight: 500 }}>
+        Нужен ответ
+      </div>
+      <div style={{ whiteSpace: "pre-wrap" }}>
+        <StepText text={prompt} />
+      </div>
+      <form
+        className="question-box"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        {options.length > 0 && (
+          <div className="question-options">
+            {options.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={`btn btn-sm${picked === option ? " is-selected" : ""}`}
+                aria-pressed={picked === option}
+                disabled={busy}
+                onClick={() => setPicked((cur) => (cur === option ? null : option))}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        )}
+        <textarea
+          className="textarea"
+          value={text}
+          disabled={busy}
+          placeholder={options.length ? "Вставьте ключ или напишите свой вариант" : "Напишите ответ"}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              void submit();
+            }
+          }}
+        />
+        <div className="row">
+          <button className="btn btn-sm btn-primary" type="submit" disabled={busy || !answer}>
+            {busy ? "…" : "Ответить"}
+          </button>
+        </div>
+        {error && (
+          <p className="small" style={{ margin: 0, color: "var(--danger)" }}>
+            {error}
+          </p>
+        )}
+      </form>
+    </div>
+  );
+}
+
 /** Ожидание, у которого нет своей карточки в ленте: показывается над чатом. */
 export function ApprovalRow({
   approval,
   busy = false,
   onDecide,
+  onAnswer,
 }: {
   approval: PendingApproval;
   busy?: boolean;
   onDecide: (approved: boolean) => void;
+  onAnswer?: (text: string) => void | Promise<void>;
 }) {
+  if (approval.kind === "question") {
+    return (
+      <QuestionCard
+        prompt={approval.description}
+        options={approval.options ?? []}
+        busy={busy}
+        onAnswer={onAnswer ?? (() => undefined)}
+      />
+    );
+  }
   const handoff = approval.kind === "handoff";
   const labels = approval.serviceWait ? SERVICE_WAIT : handoff ? HANDOFF : APPROVAL;
   return (

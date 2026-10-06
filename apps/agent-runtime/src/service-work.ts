@@ -1,4 +1,4 @@
-import type { Run, RunStep } from "@swarm/contracts";
+import { parseUserQuestion, type Run, type RunStep } from "@swarm/contracts";
 import type { AgentRuntime, ThinkResult } from "./runtime";
 
 /** Шаги, которые значат: агент реально трогал сервис (не только текст модели). */
@@ -57,6 +57,8 @@ export async function finishServiceThink(
     return { text, status: "failed" };
   }
 
+  if (await holdUserQuestion(rt, run, first.text)) return { text: first.text, status: "waiting_approval" };
+
   const steps = await rt.store.listSteps(run.id);
   if (turnHasServiceAction(steps, first.startedAt) || (allowIdle && isIdleServiceReply(first.text))) {
     return { text: first.text, status: "done" };
@@ -71,6 +73,8 @@ export async function finishServiceThink(
     return { text: retry.text.trim() || first.text, status: "failed" };
   }
 
+  if (await holdUserQuestion(rt, run, retry.text)) return { text: retry.text, status: "waiting_approval" };
+
   const steps2 = await rt.store.listSteps(run.id);
   if (turnHasServiceAction(steps2, retry.startedAt) || isIdleServiceReply(retry.text)) {
     return { text: retry.text, status: "done" };
@@ -78,4 +82,12 @@ export async function finishServiceThink(
 
   await rt.step(run.id, "error", "нет следов работы в сервисе");
   return { text: retry.text.trim() || first.text, status: "failed" };
+}
+
+/** Итог с нумерованным вопросом не закрывает задачу: в журнале остаются кнопки и поле. */
+async function holdUserQuestion(rt: AgentRuntime, run: Run, text: string): Promise<boolean> {
+  const question = parseUserQuestion(text);
+  if (!question) return false;
+  await rt.approvals.ask(run.id, question.prompt, question.options);
+  return true;
 }

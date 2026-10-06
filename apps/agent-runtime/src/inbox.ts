@@ -175,6 +175,17 @@ async function handleThreadReply(
   const verdict = classifyReply(email.replyText);
   log("inbox", "ответ в ветке", { threadId, verdict, approvalId });
 
+  if (approvalId) {
+    const pending = (await rt.store.listApprovals()).find((p) => p.id === approvalId);
+    if (pending?.kind === "question") {
+      const answer = email.replyText.trim();
+      if (!answer) return;
+      const run = await rt.approvals.resolve(approvalId, true, { answer });
+      if (run) await replyInThread(rt, email, run.id, run.summary);
+      return;
+    }
+  }
+
   if (approvalId && (verdict === "approve" || verdict === "reject")) {
     const run = await rt.approvals.resolve(approvalId, verdict === "approve");
     if (run) await replyInThread(rt, email, run.id, run.summary);

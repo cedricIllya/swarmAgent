@@ -135,8 +135,8 @@ export class RuntimeClient {
     return this.call("POST", "/google-token", body);
   }
 
-  resolveApproval(id: string, approved: boolean): Promise<{ runId: string }> {
-    return this.call("POST", `/approvals/${id}`, { approved });
+  resolveApproval(id: string, decision: { approved: boolean } | { answer: string }): Promise<{ runId: string }> {
+    return this.call("POST", `/approvals/${id}`, decision);
   }
 
   run(id: string): Promise<{ run: unknown; steps: unknown[] }> {

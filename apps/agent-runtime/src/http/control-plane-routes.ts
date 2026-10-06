@@ -100,8 +100,12 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
 
   app.post("/approvals/:id", async (c) => {
     noteActivity();
-    const { approved } = z.object({ approved: z.boolean() }).parse(await c.req.json());
-    const run = await rt.approvals.resolve(c.req.param("id"), approved);
+    const body = z
+      .object({ approved: z.boolean().optional(), answer: z.string().max(8000).optional() })
+      .parse(await c.req.json());
+    const answer = body.answer?.trim() ?? "";
+    if (!answer && typeof body.approved !== "boolean") return c.json({ error: "bad input" }, 400);
+    const run = await rt.approvals.resolve(c.req.param("id"), body.approved ?? true, answer ? { answer } : undefined);
     return run ? c.json({ runId: run.id, status: run.status }) : c.json({ error: "not found" }, 404);
   });
 

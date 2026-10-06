@@ -851,6 +851,35 @@ code {
   gap: 8px;
   margin-top: 10px;
 }
+.question-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+.question-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin-top: 10px;
+}
+.question-options {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.question-options .btn {
+  justify-content: flex-start;
+  text-align: left;
+  white-space: normal;
+  border-radius: 16px;
+  line-height: 1.35;
+}
+.question-options .btn.is-selected {
+  background: var(--accent-soft);
+  border-color: rgba(122, 78, 8, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(122, 78, 8, 0.35);
+}
 
 .switch {
   position: relative;

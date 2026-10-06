@@ -96,6 +96,30 @@ describe("finishServiceThink", () => {
     expect(r).toEqual({ text: "задач нет", status: "done" });
   });
 
+  it("pauses for a numbered question instead of retrying", async () => {
+    const ask = vi.fn(async () => ({ pendingId: "q1" }));
+    const mock = rt({});
+    (mock as unknown as { approvals: { ask: typeof ask } }).approvals = { ask };
+    const text = [
+      "Какой способ удобнее:",
+      "1. Если у вас есть API ключ и токен Trello — передайте их",
+      "2. Или я могу открыть Trello в браузере и выполнить задачу там",
+      "На каком способе мы работаем?",
+    ].join("\n");
+    const r = await finishServiceThink(mock, run, {
+      text,
+      usedFallback: false,
+      startedAt: "2026-01-01T00:00:10.000Z",
+    });
+    expect(ask).toHaveBeenCalledWith(
+      "run_1",
+      expect.stringContaining("На каком способе"),
+      expect.arrayContaining([expect.stringContaining("API ключ")]),
+    );
+    expect(mock.think).not.toHaveBeenCalled();
+    expect(r.status).toBe("waiting_approval");
+  });
+
   it("fails when the retry still has no service action", async () => {
     const r = await finishServiceThink(
       rt({

@@ -7,6 +7,7 @@ const ACTION_LABEL: Record<string, string> = {
   "hermes.turn": "работа агента",
   "hermes.tick": "обход сервисов",
   "hermes.approval": "после решения человека",
+  "hermes.question": "после ответа человека",
   "stagehand.llm": "браузер",
   "classify.email": "разбор письма",
   "classify.email.in-browser": "разбор письма во время браузера",

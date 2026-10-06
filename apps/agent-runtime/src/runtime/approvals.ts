@@ -1,5 +1,5 @@
 import type { PendingApproval, Run } from "@swarm/contracts";
-import { approvalContinuationPrompt } from "../prompts";
+import { approvalContinuationPrompt, questionContinuationPrompt } from "../prompts";
 import { redactInternal } from "../redact";
 import { finishServiceThink } from "../service-work";
 import { warn } from "../log";
@@ -64,11 +64,83 @@ export class Approvals {
     return { approved: false, pending };
   }
 
-  async resolve(approvalId: string, approved: boolean, opts?: { announce?: boolean }): Promise<Run | null> {
+  /**
+   * Вопрос владельцу: кнопки вариантов и поле ответа в журнале задачи.
+   * Автономный режим это не пропускает — без данных человека ход невозможен.
+   * Повторный вызов в той же задаче не плодит вторую карточку.
+   */
+  async ask(runId: string, question: string, options: string[]): Promise<{ pendingId: string }> {
+    const { rt } = this;
+    const safe = redactInternal(question).slice(0, 2000);
+    const choices = [...new Set(options.map((o) => redactInternal(o).replace(/\s+/g, " ").trim()).filter((o) => o.length >= 2))].slice(0, 6);
+    const run = await rt.store.getRun(runId);
+    if (!run) throw new Error("run не найден");
+
+    const list = await rt.store.listApprovals();
+    const existing = list.find((p) => p.runId === runId && p.kind === "question");
+    if (existing) return { pendingId: existing.id };
+
+    const chatId = await rt.chatIdForRun(run);
+    const pending: PendingApproval = {
+      id: newId("qst"),
+      runId,
+      createdAt: new Date().toISOString(),
+      description: safe,
+      emailMessageId: null,
+      chatId,
+      kind: "question",
+      options: choices,
+    };
+
+    if (rt.cfg.ownerEmail && rt.controlPlane.enabled) {
+      try {
+        const lines = [
+          `${rt.cfg.agentName} спрашивает:`,
+          "",
+          safe,
+          "",
+          ...choices.map((o, i) => `${i + 1}. ${o}`),
+          "",
+          "Ответьте в журнале задачи: там кнопки и поле. Ответ на это письмо станет ответом на вопрос, а не новой задачей.",
+        ];
+        const { messageId } = await rt.controlPlane.sendEmail({
+          to: rt.cfg.ownerEmail,
+          subject: `Нужен ответ: ${run.title}`,
+          text: lines.filter((l) => l !== undefined).join("\n"),
+          ...(run.threadId ? { inReplyTo: run.threadId, references: [run.threadId] } : {}),
+        });
+        pending.emailMessageId = messageId;
+        await rt.store.rememberSent(messageId, { runId, to: rt.cfg.ownerEmail, approvalId: pending.id });
+        await rt.step(runId, "email", "письмо с вопросом владельцу", { messageId });
+      } catch (e) {
+        warn("approval", "не удалось отправить письмо", { error: String(e) });
+      }
+    }
+
+    await rt.addChat({
+      role: "agent",
+      kind: "approval",
+      approvalId: pending.id,
+      text: safe,
+      runId,
+      chatId,
+      ...(choices.length ? { options: choices } : {}),
+    });
+    list.push(pending);
+    await rt.store.saveApprovals(list);
+    await rt.step(runId, "note", "жду ответ в журнале задачи");
+    await rt.finishRun(run, "waiting_approval", `Ждёт ответа: ${safe}`);
+    return { pendingId: pending.id };
+  }
+
+  async resolve(approvalId: string, approved: boolean, opts?: { announce?: boolean; answer?: string }): Promise<Run | null> {
     const { rt } = this;
     const list = await rt.store.listApprovals();
     const pending = list.find((p) => p.id === approvalId);
     if (!pending) return null;
+    const question = pending.kind === "question";
+    const answer = opts?.answer?.trim() ?? "";
+    if (question && !answer) return null;
     await rt.store.saveApprovals(list.filter((p) => p.id !== approvalId));
     const run = await rt.store.getRun(pending.runId);
     if (!run) return null;
@@ -80,8 +152,8 @@ export class Approvals {
         kind: "approval",
         approvalId,
         handoff,
-        decision: approved ? "approved" : "rejected",
-        text: handoff ? (approved ? "Я доделал" : "Отменить") : approved ? "Да" : "Нет",
+        ...(question ? {} : { decision: approved ? ("approved" as const) : ("rejected" as const) }),
+        text: question ? answer : handoff ? (approved ? "Я доделал" : "Отменить") : approved ? "Да" : "Нет",
         runId: run.id,
         chatId,
       });
@@ -90,15 +162,22 @@ export class Approvals {
     if (await rt.isCanceled(run.id)) return run;
     run.status = "running";
     await rt.store.saveRun(run);
-    await rt.step(run.id, "note", approved ? "одобрено человеком" : "отклонено человеком");
-    const turn = await rt.think(run, approvalContinuationPrompt(pending.description, approved), "hermes.approval");
-    // Отказ — делать в сервисе нечего; одобрение — нужна реальная работа.
-    const { text, status } = approved
-      ? await finishServiceThink(rt, run, turn, { allowIdle: false })
-      : { text: turn.text, status: "done" as const };
+    await rt.step(run.id, "note", question ? "ответ человека получен" : approved ? "одобрено человеком" : "отклонено человеком");
+    const turn = await rt.think(
+      run,
+      question ? questionContinuationPrompt(pending.description, answer) : approvalContinuationPrompt(pending.description, approved),
+      question ? "hermes.question" : "hermes.approval",
+    );
+    // Отказ — делать в сервисе нечего; одобрение и ответ на вопрос — нужна реальная работа.
+    const { text, status } =
+      question || approved
+        ? await finishServiceThink(rt, run, turn, { allowIdle: false })
+        : { text: turn.text, status: "done" as const };
     if (await rt.isCanceled(run.id)) return run;
-    if (status !== "waiting_approval") await rt.finishRun(run, status, text);
-    await rt.addChat({ role: "agent", text, runId: run.id, chatId });
+    if (status !== "waiting_approval") {
+      await rt.finishRun(run, status, text);
+      await rt.addChat({ role: "agent", text, runId: run.id, chatId });
+    }
     return run;
   }
 

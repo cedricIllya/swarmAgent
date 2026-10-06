@@ -94,8 +94,8 @@ export const ChatMessageSchema = z.object({
   chatId: z.string(),
   /**
    * `browser` — карточка сессии браузера: живой экран, пока открыта, потом видео.
-   * `approval` — от агента: вопрос с кнопками «Да»/«Нет», пока id есть в `pendingApprovals`;
-   * от пользователя: нажатое решение. Нет — обычный текст.
+   * `approval` — от агента: вопрос с кнопками, пока id есть в `pendingApprovals`;
+   * от пользователя: нажатое решение или текст ответа. Нет — обычный текст.
    */
   kind: z.enum(["text", "browser", "approval"]).optional(),
   /** Для `kind: "browser"` — id сессии из `browserSessions`. */
@@ -106,6 +106,8 @@ export const ChatMessageSchema = z.object({
   decision: z.enum(["approved", "rejected"]).optional(),
   /** Для `kind: "approval"`: агент застрял в браузере и просит человека доделать, а не одобрить. */
   handoff: z.boolean().optional(),
+  /** Варианты ответа, если это вопрос с кнопками, а не «Да»/«Нет». */
+  options: z.array(z.string()).optional(),
   /** Заявка ждёт одобрения в сервисе: кнопки без живого браузера. */
   serviceWait: z.boolean().optional(),
   /** Живой экран браузера, где человек может взять управление. */
@@ -122,8 +124,10 @@ export const PendingApprovalSchema = z.object({
   emailMessageId: z.string().nullable(),
   /** Чат, в котором спрашиваем. У старых вопросов может не быть. */
   chatId: z.string().nullable(),
-  /** `handoff` — человек доделывает вход в браузере; «да» значит «я доделал». */
-  kind: z.enum(["approval", "handoff"]).optional(),
+  /** `handoff` — человек доделывает вход в браузере; «да» значит «я доделал». `question` — выбор или текст. */
+  kind: z.enum(["approval", "handoff", "question"]).optional(),
+  /** Кнопки вопроса. Пусто — только поле ответа. */
+  options: z.array(z.string()).optional(),
   liveUrl: z.string().nullable().optional(),
   /** Заявка ждёт одобрения администратора сервиса, браузер уже закрыт. */
   serviceWait: z.boolean().optional(),

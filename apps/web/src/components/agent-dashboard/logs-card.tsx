@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { Suspense, useEffect, useState, type MouseEvent } from "react";
-import type { Agent, BrowserSession, ChatMessage, PendingApproval, Run, RunStep, RuntimeState } from "@swarm/contracts";
-import { ApprovalRow } from "./approval-bubbles";
+import type { Agent, BrowserSession, ChatMessage, PendingApproval, Run, RunStep, RuntimeState, UserQuestion } from "@swarm/contracts";
+import { parseUserQuestion } from "@swarm/contracts";
+import { ApprovalRow, QuestionCard } from "./approval-bubbles";
 import { SessionShots } from "./browser-bubble";
 import { fmtTime } from "./format";
 import { SecretValue, StepText } from "./secret-value";
@@ -94,6 +95,20 @@ export function LogsCard({
     }
   }
 
+  async function answer(id: string, text: string) {
+    setDeciding(id);
+    try {
+      const res = await fetch(`/api/agents/${agent.id}/approvals/${id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answer: text }),
+      });
+      if (!res.ok) throw new Error("Не удалось отправить ответ");
+    } finally {
+      setDeciding(null);
+    }
+  }
+
   return (
     <section className="card" aria-busy={pending}>
       <div className="card-head">
@@ -128,6 +143,7 @@ export function LogsCard({
                 accesses={accesses}
                 deciding={deciding}
                 onDecide={(id, approved) => void decide(id, approved)}
+                onAnswer={(id, text) => answer(id, text)}
               />
             </Suspense>
           ))}
@@ -195,6 +211,7 @@ function RunItem({
   accesses,
   deciding,
   onDecide,
+  onAnswer,
 }: {
   agent: Agent;
   run: Run;
@@ -206,6 +223,7 @@ function RunItem({
   accesses: AgentAccess[];
   deciding: string | null;
   onDecide: (id: string, approved: boolean) => void;
+  onAnswer: (id: string, text: string) => Promise<void>;
 }) {
   const [loaded, setLoaded] = useState<RunStep[] | null>(null);
   const [loadedMessages, setLoadedMessages] = useState<ChatMessage[]>([]);
@@ -213,6 +231,7 @@ function RunItem({
   const [stopping, setStopping] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [replying, setReplying] = useState(false);
 
   async function load() {
     if (run.id.startsWith("local_")) return;
@@ -258,17 +277,10 @@ function RunItem({
     }
   }
 
-  useEffect(() => {
-    if (needsAttention(run.status)) {
-      setOpen(true);
-      void load();
-      void loadHistory();
-    }
-    // load зависит от run.id, который стабилен для этого элемента.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run.status, run.id]);
-
-  const st = STATUS_LABEL[run.status];
+  const pendingQuestion = approvals.some((p) => p.kind === "question");
+  const threadBusy = runs.some(
+    (r) => r.threadId === run.threadId && (r.status === "running" || r.status === "queued" || r.status === "waiting_approval"),
+  );
   const steps = mergeSteps(loaded, liveSteps);
   const messages = mergeMessages(loadedMessages, liveMessages);
   const pendingIds = new Set(approvals.map((p) => p.id));
@@ -277,6 +289,24 @@ function RunItem({
     if (m.kind === "approval" && m.role === "agent" && m.approvalId && pendingIds.has(m.approvalId)) return false;
     return true;
   });
+  const followup =
+    !pendingQuestion &&
+    Boolean(run.threadId) &&
+    !threadBusy &&
+    (run.status === "done" || run.status === "failed" || run.status === "escalated")
+      ? questionInRun(run.summary, history)
+      : null;
+  const st = pendingQuestion || followup ? { text: "ждёт ответа", cls: "badge-warn" } : STATUS_LABEL[run.status];
+
+  useEffect(() => {
+    if (needsAttention(run.status) || followup) {
+      setOpen(true);
+      void load();
+      void loadHistory();
+    }
+    // load зависит от run.id, который стабилен для этого элемента.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run.status, run.id, followup?.prompt]);
   const usedServices = servicesForRun(
     accesses.map((login) => ({ slug: login.slug, name: login.name, kind: login.kind })),
     [run.title, run.summary, ...steps.map((s) => s.text), ...messages.map((m) => m.text), ...sessions.map((s) => s.purpose)],
@@ -287,9 +317,6 @@ function RunItem({
   const canStop =
     !run.id.startsWith("local_") &&
     (run.status === "running" || run.status === "queued" || run.status === "waiting_approval");
-  const threadBusy = runs.some(
-    (r) => r.threadId === run.threadId && (r.status === "running" || r.status === "queued" || r.status === "waiting_approval"),
-  );
   const canRetry =
     agent.status === "running" &&
     run.trigger === "chat" &&
@@ -317,7 +344,7 @@ function RunItem({
           <div className="faint small">
             {fmtTime(run.startedAt)} · {TRIGGER_LABEL[run.trigger]}
             {sessions.length ? ` · браузер ×${sessions.length}` : ""}
-            {approvals.length ? " · ждёт человека" : ""}
+            {approvals.length ? (pendingQuestion ? " · ждёт ответа" : " · ждёт человека") : followup ? " · ждёт ответа" : ""}
             {usedServices.length ? ` · ${usedServices.map((s) => s.name).join(", ")}` : ""}
           </div>
         </div>
@@ -340,10 +367,42 @@ function RunItem({
           {retryError}
         </p>
       )}
+      {followup && (
+        <div className="list" style={{ marginTop: 10 }}>
+          <QuestionCard
+            prompt={followup.prompt}
+            options={followup.options}
+            busy={replying}
+            onAnswer={async (text) => {
+              if (!run.threadId) return;
+              setReplying(true);
+              try {
+                const res = await fetch(`/api/agents/${agent.id}/chat`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ message: text, chatId: run.threadId }),
+                });
+                if (!res.ok) {
+                  const data = (await res.json().catch(() => null)) as { error?: string } | null;
+                  throw new Error(data?.error ?? "Не удалось отправить ответ");
+                }
+              } finally {
+                setReplying(false);
+              }
+            }}
+          />
+        </div>
+      )}
       {approvals.length > 0 && (
         <div className="list" style={{ marginTop: 10 }}>
           {approvals.map((p) => (
-            <ApprovalRow key={p.id} approval={p} busy={deciding === p.id} onDecide={(approved) => onDecide(p.id, approved)} />
+            <ApprovalRow
+              key={p.id}
+              approval={p}
+              busy={deciding === p.id}
+              onDecide={(approved) => onDecide(p.id, approved)}
+              onAnswer={(text) => onAnswer(p.id, text)}
+            />
           ))}
         </div>
       )}
@@ -430,6 +489,11 @@ function RunItem({
       ))}
     </details>
   );
+}
+
+function questionInRun(summary: string, messages: ChatMessage[]): UserQuestion | null {
+  const agent = [...messages].reverse().find((m) => m.role === "agent" && (!m.kind || m.kind === "text"));
+  return parseUserQuestion(agent?.text ?? "") ?? parseUserQuestion(summary);
 }
 
 function sessionPurpose(purpose: string): string {

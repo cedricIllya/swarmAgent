@@ -75,7 +75,7 @@ Stagehand думает моделью агента. Свой вызов моде
 
 `POST /browser/wait-code` ждёт, пока почтовая дверь передаст код или ссылку. Пока ожидание висит, `busyInBrowser` истинен и чужая почта откладывается.
 
-Skyvern — только онбординг: приглашение (`/invite/accept`), `signup` и `login` (`POST /skyvern/login`). Он обходит капчи. Каждая задача запускается с `totp_identifier` = почта агента, и коды из писем runtime передаёт в неё сам. Данные формы (`credentials`) попадают в текст инструкции. Ролик по `recording_url` скачивается в `browser-sessions/<id>/video.mp4`. После успешного входа runtime по CDP снимает cookies/localStorage сессии и засевает их в `browser-profiles/<slug>/`, чтобы задачи внутри сервиса шли в своём Chromium уже вошедшими. Если Skyvern не настроен или не довёл вход, тот же цикл идёт в своём Chromium. Задачи внутри сервиса Skyvern не выполняет.
+Skyvern — только онбординг: приглашение (`/invite/accept`). Он обходит капчи. Каждая задача запускается с `totp_identifier` = почта агента, и коды из писем runtime передаёт в неё сам. Данные формы (`credentials`) попадают в текст инструкции. Ролик по `recording_url` скачивается в `browser-sessions/<id>/video.mp4`. После успешного входа runtime по CDP снимает cookies/localStorage сессии и засевает их в `browser-profiles/<slug>/`. Задачи внутри сервиса идут в своём Chromium с этим профилем. `POST /skyvern/login` для сервиса, у которого профиль уже есть, отвечает 409: повторный вход открыл бы пустой браузер Skyvern. Если Skyvern не настроен или не довёл вход, тот же цикл идёт в своём Chromium.
 
 ## Эндпоинты
 
@@ -96,7 +96,7 @@ Skyvern — только онбординг: приглашение (`/invite/ac
 | POST | `/settings` | `autonomous`, `model`. |
 | POST | `/services` | Свежий `services.json` (mode `0644`, его читает контейнер Hermes) и перезапись `mcp_servers` в `config.yaml`. |
 | POST | `/google-token` | Записать `google_token.json`. |
-| POST | `/approvals/:id` | «Да» или «нет» с карточки. |
+| POST | `/approvals/:id` | «Да» или «нет» с карточки, либо `{ answer }` на вопрос модели. |
 | POST | `/tick` | Тот же тик, что по расписанию. |
 | GET | `/runs/:id` | Задача и шаги. |
 | GET | `/browser-sessions/:id/actions` | Журнал сессии. |
@@ -107,8 +107,9 @@ Skyvern — только онбординг: приглашение (`/invite/ac
 | Метод | Путь | Зачем |
 | --- | --- | --- |
 | POST | `/browser/open` `/goto` `/act` `/extract` `/observe` `/wait-code` `/close` | Свой браузер, шаги решает Stagehand. |
-| POST | `/skyvern/login` | Регистрация или вход. |
+| POST | `/skyvern/login` | Первый вход, если профиля ещё нет. Если cookies уже в своём браузере — 409, задачу делать через `/browser/open`. |
 | POST | `/approval` | Спросить человека перед изменением. |
+| POST | `/ask` | Вопрос владельцу, без которого задачу не продолжить: `runId`, `question`, необязательные `options`. Задача ждёт кнопки и поле в журнале. |
 | POST | `/report` | Новый рецепт или свой секрет. Runtime пересылает это на control plane, обновляет `services.json`, переписывает `mcp_servers` в `config.yaml` (Hermes подхватывает файл сам) и пишет шаг «подключён сервис». |
 | POST | `/invite/accept` | Принять приглашение и зарегистрироваться под почтой агента в браузере (Skyvern, иначе свой Chromium): `runId`, `url`, `slug`, `service`. Отдаёт `status` (`accepted`, `needs_human`, `failed`), `provider`, `accountEmail`, `passwordSaved`, `finalUrl`, `notes`. |
 | POST | `/discover` | Поиск способа входа в сервис вне каталога: `runId`, `service`, `domain`, `links`. Отдаёт известный рецепт или результат поиска с черновиком рецепта. |

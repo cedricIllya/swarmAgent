@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { savedBrowserSlug } from "../browser/local-session";
 import type { AgentRuntime } from "../runtime";
 import { noteActivity } from "../idle";
 import { INSTRUCTION_ALIASES, SESSION_ALIASES, skyvernPurpose, withAliases } from "./lenient";
@@ -119,6 +120,16 @@ export function browserRoutes(rt: AgentRuntime): Hono {
       .parse({ ...raw, purpose: skyvernPurpose(raw.purpose, raw.url) });
     const run = await rt.store.getRun(body.runId);
     if (!run) return c.json({ error: "run not found" }, 404);
+    const saved = savedBrowserSlug(await rt.store.readServices(), body.url);
+    if (saved) {
+      await rt.step(run.id, "note", `Skyvern не открываю: сессия ${saved} уже в своём браузере`);
+      return c.json(
+        {
+          error: `Сессия «${saved}» уже в своём браузере. Задачу выполняй через POST /browser/open с serviceSlug "${saved}". Новый вход через Skyvern не нужен.`,
+        },
+        409,
+      );
+    }
     await rt.step(run.id, "browser", `skyvern ${body.purpose}: ${body.url}`);
     const r = await rt.skyvern.runLoginOrSignup({ ...body, onSession: (s) => rt.announceBrowser(run, s) });
     await rt.step(run.id, "browser", `skyvern ${body.purpose}: ${r.status}`, { sessionId: r.session.id });

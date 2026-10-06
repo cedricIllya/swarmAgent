@@ -407,6 +407,7 @@ describe("SkyvernClient", () => {
     expect(start.browser_session_id).toBe("pbs_8");
     expect(start.totp_identifier).toBe("bot@agents.test");
     expect(String(start.prompt)).toMatch(/не пропускай этот шаг/);
+    expect(String(start.prompt)).toMatch(/forgot\/reset password/);
     expect(client.mailboxCaptured).toBe(false);
     vi.useRealTimers();
   });

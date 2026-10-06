@@ -64,9 +64,10 @@ version: 1
 2. **API.** MCP нет — ищи публичный REST/GraphQL API и способ получить ключ. Ключ лежит в
    `credentials[].token`. Запросы делай через `curl` в терминале. Нашёл способ — сообщи рецепт.
 3. **Браузер.** Ни MCP, ни API — работай в своём браузере через runtime (раздел 2). Открывай сессию с
-   тем же `serviceSlug`. Cookies уже в профиле (свой браузер на шаге 0 или перенос из Skyvern).
-   Если сессия не вошла — войди по паролю из `credentials[].password` через `/browser/act`,
-   коды из писем runtime передаст сам.
+   тем же `serviceSlug`. После того как Skyvern вошёл в продукт, cookies уже в этом профиле:
+   задачу делай оттуда, новый вход через Skyvern не начинай. Браузер Hermes (`browser_exec`)
+   не открывай. Если страница всё же просит войти — пароль из `credentials[].password` вводи
+   в этой же сессии через `/browser/act`. «Забыли пароль» не нажимай. Коды из писем runtime передаст сам.
 
 Не понижай ступень: если MCP есть, браузер не открывай.
 
@@ -105,20 +106,12 @@ curl -s -X POST http://127.0.0.1:8787/web/search -H "Authorization: Bearer $SWAR
 
 ## 2. Браузер через runtime
 
-Вход по приглашению — `/invite/accept` (раздел 1, шаг 0). Повторный вход в уже известный аккаунт
-(пароль в `credentials[].password`) можно поручить Skyvern:
+Вход по приглашению — `/invite/accept` (раздел 1, шаг 0). Skyvern на этом шаге входит в продукт,
+runtime переносит cookies в профиль `serviceSlug` и закрывает его браузер.
 
-```bash
-curl -s -X POST http://127.0.0.1:8787/skyvern/login \
-  -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" -H "Content-Type: application/json" \
-  -d '{"runId":"<runId>","url":"https://app.example.com/login","purpose":"login",
-       "prompt":"Войди по электронной почте и паролю из данных ниже.",
-       "credentials":{"email":"{{AGENT_EMAIL}}","password":"<из credentials>"}}'
-# → {"status":"completed","output":{"logged_in":true,...},"sessionId":"skyvern-...","hasVideo":true}
-```
-
-Пока идёт задача Skyvern, коды и ссылки для входа из писем runtime передаёт в неё сам — ждать
-`/browser/wait-code` не нужно. Skyvern — только регистрация и вход; действия внутри сервиса он не делает.
+Дальше задачу выполняй только своим Chromium с этим профилем. `POST /skyvern/login` для сервиса,
+у которого сессия уже сохранена, runtime отклонит: новый пустой браузер Skyvern не видит cookies
+и начинает вход заново. Браузер Hermes (`browser_exec`) тоже не используй.
 
 Действия внутри сервиса (свой Chromium, Stagehand решает шаги):
 
@@ -164,6 +157,18 @@ curl -s -X POST http://127.0.0.1:8787/approval -H "Authorization: Bearer $SWARM_
 ход. В чате у владельца появляются кнопки «Да» и «Нет»; письмо, если ушло, тоже принимает
 «да» или «нет». После решения тебя позовут снова.
 В автономном режиме runtime сразу отвечает `approved: true`.
+
+Вопрос владельцу — не одобрение. Если без его ответа задачу не продолжить (какой способ,
+ключ, токен, выбор из вариантов) — спроси и останови ход. Автономный режим это не отменяет.
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/ask -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" \
+  -H "Content-Type: application/json" -d '{"runId":"<runId>","question":"На каком способе работаем?","options":["Передам API-ключ и токен","Открой сервис в браузере"]}'
+```
+
+Ответ `{"pending":true,"questionId":"..."}` значит: карточка уже в журнале задачи, с кнопками
+вариантов и полем, куда владелец может вставить ключ. Сразу закончи ход. Не задавай этот вопрос
+в итоговом тексте и не выдумывай ответ. Когда владелец ответит, тебя позовут снова.
 
 ## 4. Отчёты в каталог
 

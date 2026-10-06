@@ -605,7 +605,14 @@ export class SkyvernClient {
       const creds = Object.entries(args.credentials)
         .map(([k, v]) => `${k}: ${v}`)
         .join("\n");
-      const prompt = [args.prompt, creds ? `\nДанные для формы:\n${creds}` : "", "", TOTP_WAIT, "Google, Microsoft и SSO не выбирай."].join("\n");
+      const prompt = [
+        args.prompt,
+        creds ? `\nДанные для формы:\n${creds}` : "",
+        "",
+        TOTP_WAIT,
+        "Google, Microsoft и SSO не выбирай.",
+        "Никогда не меняй пароль и не ходи по «forgot/reset password», даже если продукт предлагает и даже если такое письмо пришло.",
+      ].join("\n");
       const r = await this.runTask({
         runId: args.runId,
         url: args.url,
