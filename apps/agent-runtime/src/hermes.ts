@@ -32,7 +32,15 @@ export function hermesSessionCostUsd(session: {
 export function stripToolMarkup(text: string): string {
   const closed = /<(function_calls|tool_call|invoke)\b[^>]*>[\s\S]*?<\/\1>/g;
   const open = /<(function_calls|tool_call|invoke)\b[^>]*>[\s\S]*$/;
-  return text.replace(closed, "").replace(open, "").replace(/\n{3,}/g, "\n\n").trim();
+  // Модель пересказывает свои HTTP-вызовы к runtime блоками ```json { "runId": … } ``` —
+  // человеку это внутренняя кухня, а не ответ.
+  const requestBlock = /(?:^|\n)[ \t]*(?:POST|GET)?[ \t]*```(?:json|bash|http)?\s*(?:POST|GET)?\s*\{[\s\S]*?\}\s*```/g;
+  return text
+    .replace(closed, "")
+    .replace(open, "")
+    .replace(requestBlock, (block) => (/"(runId|sessionId|instruction|serviceSlug|purpose|kind)"\s*:/.test(block) ? "\n" : block))
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function positive(v: unknown): number {

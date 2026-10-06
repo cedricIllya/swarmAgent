@@ -39,6 +39,22 @@ describe("stripToolMarkup", () => {
     expect(stripToolMarkup("Начинаю. <function_calls><invoke name=\"a\">")).toBe("Начинаю.");
     expect(stripToolMarkup("пусто")).toBe("пусто");
   });
+
+  it("убирает пересказ запросов к runtime, обычный код оставляет", () => {
+    const text = [
+      "Открываю браузер.",
+      '```json\n{ "runId": "run_1", "serviceSlug": "gensite", "url": "https://gensite.ru/" }\n```',
+      "Ищу настройки.",
+      'POST ```\n{ "sessionId": "brw_1", "instruction": "нажми Настройки" }\n```',
+      "Пример конфига для вас:",
+      '```json\n{ "mcpServers": { "gensite": { "url": "https://gensite.ru/api/mcp" } } }\n```',
+    ].join("\n");
+    const out = stripToolMarkup(text);
+    expect(out).not.toContain("run_1");
+    expect(out).not.toContain("brw_1");
+    expect(out).toContain("mcpServers");
+    expect(out).toContain("Ищу настройки.");
+  });
 });
 
 describe("HermesClient cost", () => {
