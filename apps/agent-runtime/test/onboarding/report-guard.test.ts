@@ -52,6 +52,24 @@ describe("guardRecipeReport", () => {
     });
     expect(r.ok).toBe(true);
   });
+
+  it("мессенджер записывает каналом связи и снимает с него задачи", () => {
+    const r = guardRecipeReport(null, {
+      slug: "slack",
+      name: "Slack",
+      kind: "api",
+      domains: ["slack.com"],
+      notes: "Как работать: смотри упоминания.",
+      discoveredBy: null,
+      watchesTasks: true,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.channel).toBe("messenger");
+    expect(r.value.watchesTasks).toBe(false);
+    expect(r.value.notes).toContain("Канал связи:");
+    expect(r.value.notes).not.toContain("Как работать:");
+  });
 });
 
 describe("guardCredentialReport", () => {

@@ -27,6 +27,7 @@ describe("mergeAccess", () => {
         accountName: "Бот",
         password: "secret",
         watchesTasks: true,
+        channel: null,
       },
     ]);
   });
@@ -56,5 +57,6 @@ describe("taskWatchLabel", () => {
     expect(taskWatchLabel(false).text).toBe("без задач");
     expect(taskWatchLabel(null).text).toBe("не ясно");
     expect(taskWatchLabel(undefined).text).toBe("не ясно");
+    expect(taskWatchLabel(false, "messenger").text).toBe("канал");
   });
 });

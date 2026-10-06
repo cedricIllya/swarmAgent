@@ -76,7 +76,7 @@ async function classifyChat(rt: AgentRuntime, message: string, links: string[]):
  */
 export async function handleChat(
   rt: AgentRuntime,
-  args: { chatId?: string | undefined; message: string; author: string },
+  args: { chatId?: string | undefined; message: string; author: string; fromMessenger?: boolean | undefined },
 ): Promise<{ run: Run; chatId: string } | null> {
   if (args.chatId) {
     const pending = (await rt.store.listApprovals())
@@ -85,7 +85,15 @@ export async function handleChat(
     if (pending?.kind === "question") {
       const run = await rt.store.getRun(pending.runId);
       if (!run) return null;
-      await rt.addChat({ role: "user", text: args.message, runId: run.id, chatId: args.chatId, kind: "approval", approvalId: pending.id });
+      await rt.addChat({
+        role: "user",
+        text: args.message,
+        runId: run.id,
+        chatId: args.chatId,
+        kind: "approval",
+        approvalId: pending.id,
+        ...(args.fromMessenger ? { author: args.author } : {}),
+      });
       void rt.approvals.resolve(pending.id, true, { announce: false, answer: args.message }).catch((e) => {
         warn("chat", "ответ на вопрос не разобрался", { error: String(e) });
       });
@@ -96,7 +104,13 @@ export async function handleChat(
       if (pending) {
         const run = await rt.store.getRun(pending.runId);
         if (!run) return null;
-        await rt.addChat({ role: "user", text: args.message, runId: run.id, chatId: args.chatId });
+        await rt.addChat({
+          role: "user",
+          text: args.message,
+          runId: run.id,
+          chatId: args.chatId,
+          ...(args.fromMessenger ? { author: args.author } : {}),
+        });
         void rt.approvals.resolve(pending.id, verdict === "approve", { announce: false }).catch((e) => {
           warn("chat", "одобрение не разобралось", { error: String(e) });
         });
@@ -116,8 +130,14 @@ export async function handleChat(
   }
 
   const run = await rt.createRun("chat", runTitle("task", null, args.message), chatId);
-  await rt.addChat({ role: "user", text: args.message, runId: run.id, chatId });
-  enqueueChatWork(rt, { run, chatId, message: args.message, author: args.author, renameChat });
+  await rt.addChat({
+    role: "user",
+    text: args.message,
+    runId: run.id,
+    chatId,
+    ...(args.fromMessenger ? { author: args.author } : {}),
+  });
+  enqueueChatWork(rt, { run, chatId, message: args.message, author: args.author, renameChat, fromMessenger: args.fromMessenger === true });
   return { run, chatId };
 }
 
@@ -151,7 +171,7 @@ export async function retryChatRun(
  */
 function enqueueChatWork(
   rt: AgentRuntime,
-  task: { run: Run; chatId: string; message: string; author: string; renameChat: boolean },
+  task: { run: Run; chatId: string; message: string; author: string; renameChat: boolean; fromMessenger?: boolean },
 ): void {
   void (async () => {
     try {
@@ -170,6 +190,7 @@ function enqueueChatWork(
         links,
         classification,
         recipe: recipe ? { slug: recipe.slug, name: recipe.name, kind: recipe.kind } : null,
+        fromMessenger: task.fromMessenger === true,
       });
     } catch (e) {
       if (await rt.isCanceled(task.run.id)) return;
@@ -210,6 +231,7 @@ function startChatTask(
     links: string[];
     classification: ChatClassification;
     recipe: { slug: string; name: string; kind: string } | null;
+    fromMessenger?: boolean;
   },
 ): void {
   const { run, chatId, classification, links } = task;
@@ -248,6 +270,7 @@ function startChatTask(
         kind: classification.kind,
         links,
         recipe: task.recipe,
+        fromMessenger: task.fromMessenger === true,
       });
       const turn = await rt.think(run, prompt);
       const { text, status } = await finishServiceThink(rt, run, turn, {

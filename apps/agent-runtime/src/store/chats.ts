@@ -11,8 +11,19 @@ export interface ChatMeta {
   createdAt: string;
   updatedAt: string;
   lastMessage: string | null;
-  /** Служебный чат почты и крона. Не уезжает в API. */
-  kind?: "mail";
+  /** Служебный чат почты и крона. `channel` — диалог в мессенджере, его видно в журнале. */
+  kind?: "mail" | "channel";
+  /** Куда отправить ответ агента. В список чатов не попадает. */
+  channel?: ChannelLink;
+}
+
+/** Диалог мессенджера, привязанный к одному чату карточки. */
+export interface ChannelLink {
+  adapter: "slack";
+  slug: string;
+  threadKey: string;
+  channel: string;
+  threadTs?: string;
 }
 
 function newChatId(): string {
@@ -57,7 +68,7 @@ export class ChatStore {
     return out;
   }
 
-  async create(title: string, kind?: "mail"): Promise<ChatMeta> {
+  async create(title: string, kind?: "mail" | "channel"): Promise<ChatMeta> {
     const now = new Date().toISOString();
     const meta: ChatMeta = {
       id: newChatId(),
@@ -75,6 +86,19 @@ export class ChatStore {
 
   async get(id: string): Promise<ChatMeta | null> {
     return this.readMeta(id);
+  }
+
+  async findByThread(threadKey: string): Promise<string | null> {
+    const found = (await this.listMetas()).find((meta) => meta.channel?.threadKey === threadKey);
+    return found?.id ?? null;
+  }
+
+  async bind(id: string, channel: ChannelLink): Promise<void> {
+    const meta = await this.readMeta(id);
+    if (!meta) return;
+    meta.channel = channel;
+    meta.kind = "channel";
+    await this.writeMeta(meta);
   }
 
   async rename(id: string, title: string): Promise<ChatMeta | null> {

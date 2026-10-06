@@ -1,4 +1,4 @@
-import type { InboundEmail, ServicesSnapshot } from "@swarm/contracts";
+import { isMessengerRecipe, type InboundEmail, type ServicesSnapshot } from "@swarm/contracts";
 import type { DiscoveryResult } from "../discovery";
 import type { OnboardingContext, SecretNeed } from "../onboarding";
 
@@ -236,8 +236,10 @@ function recipeLines(r: PromptRecipe, cred: PromptCredential | undefined): strin
       );
     }
   }
-  if (r.watchesTasks === true) detail.push("  Задачи: смотреть назначенную работу.");
-  if (r.watchesTasks === false) detail.push("  Задачи: не смотреть. Открывай только по прямой просьбе.");
+  if (isMessengerRecipe(r)) {
+    detail.push("  Канал связи, как почта и чат. Люди пишут сюда, ответ уходит в тот же диалог. Назначенные задачи не искать.");
+  } else if (r.watchesTasks === true) detail.push("  Задачи: смотреть назначенную работу.");
+  else if (r.watchesTasks === false) detail.push("  Задачи: не смотреть. Открывай только по прямой просьбе.");
   if (r.notes) detail.push(`  Заметки: ${r.notes}`);
   return detail;
 }
@@ -270,6 +272,7 @@ export function systemPrompt(ctx: PromptContext): string {
     "Доступ к сервису — одна запись: почта, пароль, токен и cookies браузера. Значения ты не видишь и у владельца не спрашиваешь. Вход — %email% и %password% в /browser/act. Токен истёк или отозван — выпусти новый в кабинете сервиса и вызови POST /browser/save-token с sessionId: runtime возьмёт его со страницы, проверит и сохранит в ту же запись.",
     "Если в заметках сервиса есть «Как работать» — это карта интерфейса: где назначенные тебе задачи, какие действия обычные и чего не трогать. Иди по ней, не исследуй сервис с нуля.",
     "Пометка «Задачи: не смотреть» значит, что назначенной работы в сервисе нет. В плановую проверку он не входит. Открывай его только когда человек или письмо прямо просит работу там.",
+    "Пометка «Канал связи» — мессенджер. Это тот же разговор, что почта и чат: сообщение приходит само, ответ в тот же диалог отправляет runtime. Повторно в этот диалог не пиши. Написать туда по просьбе из другого канала можно: MCP, иначе API, иначе браузер.",
     "Всегда следуй скиллу swarm-worker. Он описывает локальные эндпоинты runtime:",
     `http://127.0.0.1:${ctx.runtimePort} с заголовком Authorization: Bearer $SWARM_RUNTIME_TOKEN.`,
     "",
@@ -385,7 +388,11 @@ export function chatTaskPrompt(args: {
   links: string[];
   recipe: KnownRecipeRef | null;
   onboarding?: OnboardingContext | undefined;
+  fromMessenger?: boolean | undefined;
 }): string {
+  const messenger = args.fromMessenger
+    ? "Это сообщение из мессенджера, тот же канал, что почта и чат. Runtime сам отправит ответ в тот же диалог — второй раз туда не пиши."
+    : "";
   const head = `Сообщение из чата от ${args.author}:\n\n${args.message}`;
   const links = args.links.length ? `\n\nСсылки:\n${args.links.map((l) => `- ${l}`).join("\n")}` : "";
   const known = args.recipe
@@ -399,7 +406,8 @@ export function chatTaskPrompt(args: {
       "Это приглашение в сервис. Порядок: 0) принять приглашение и зарегистрироваться под своей почтой, 1) найти способ подключения, 2) подключиться по лестнице MCP → API → браузер, сообщить рецепт и доступ через /report, 3) если у сервиса пометка «Задачи: смотреть» — посмотри назначенные задачи и выполни их. Пометка «не смотреть» значит остановиться.",
       onboardingPrompt(args.onboarding ?? { ...EMPTY_ONBOARDING, recipe: args.recipe }),
       "Ответ человеку — только его сервис и публичный интернет, без устройства Swarm. Секрет в ответ не копируй.",
-    ].join("\n");
+      messenger,
+    ].filter(Boolean).join("\n");
   }
   if (args.kind === "credential") {
     return [
@@ -408,15 +416,23 @@ export function chatTaskPrompt(args: {
       "",
       "Это ключ или токен доступа. Проверь его запросом к сервису. Если подходит — запиши через /report (type=credential) и коротко скажи, что сервис подключён. Секрет в ответ не копируй.",
       "Ответ человеку — только его сервис, без устройства Swarm.",
-    ].join("\n");
+      messenger,
+    ].filter(Boolean).join("\n");
   }
-  return `${head}\n\nЕсли задача про сервис — выполни её там: MCP, иначе API, иначе браузер. Ответь коротко, что сделано. Ответ — только про сервисы этого клиента или публичный интернет, без устройства Swarm.`;
+  return [
+    head,
+    "",
+    "Если задача про сервис — выполни её там: MCP, иначе API, иначе браузер. Ответь коротко, что сделано. Ответ — только про сервисы этого клиента или публичный интернет, без устройства Swarm.",
+    messenger,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** Подключённые сервисы, в которых есть назначенная работа. Остальные тик не открывает. */
 export function taskServices(services: ServicesSnapshot): ServicesSnapshot["recipes"] {
   const connected = new Set(services.credentials.map((c) => c.slug));
-  return services.recipes.filter((r) => r.watchesTasks === true && connected.has(r.slug));
+  return services.recipes.filter((r) => r.watchesTasks === true && connected.has(r.slug) && !isMessengerRecipe(r));
 }
 
 export function tickPrompt(services: ServicesSnapshot): string {

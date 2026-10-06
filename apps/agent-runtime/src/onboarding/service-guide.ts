@@ -1,4 +1,4 @@
-import type { Run, RuntimeReport, ServiceRecipe, ServicesSnapshot } from "@swarm/contracts";
+import { messengerPatch, type Run, type RuntimeReport, type ServiceRecipe, type ServicesSnapshot } from "@swarm/contracts";
 import { hostOf, isNoiseDomain, rootDomain, sameBrand } from "./domains";
 import { fetchPage, type FetchedPage } from "../discovery/pages";
 import { warn } from "../core/log";
@@ -303,7 +303,18 @@ export async function ensureWorkGuides(host: WorkGuideHost, run: Run): Promise<v
   if (!snap) return;
   for (const recipe of snap.recipes) {
     const cred = snap.credentials.find((c) => c.slug === recipe.slug);
-    if (!cred || !shouldLearn(recipe, cred.kind)) continue;
+    if (!cred) continue;
+    const asChannel = messengerPatch(recipe);
+    if (asChannel.channel === "messenger") {
+      if (asChannel.notes !== recipe.notes || asChannel.watchesTasks !== recipe.watchesTasks || asChannel.channel !== recipe.channel) {
+        await host.services.applyReport({ type: "recipe", recipe: asChannel, runId: run.id }, { quiet: true });
+        recipe.notes = asChannel.notes;
+        recipe.watchesTasks = false;
+        recipe.channel = "messenger";
+      }
+      continue;
+    }
+    if (!shouldLearn(recipe, cred.kind)) continue;
     const pending = inflight.get(recipe.slug);
     if (pending) {
       await pending;

@@ -5,6 +5,7 @@ import { classificationPending, ensureWorkGuides } from "../onboarding/service-g
 import type { AgentRuntime } from "../runtime";
 import { parseFoundTasks, selectNewTasks, surveySummary, taskRunTitle, type FoundTask } from "./found-tasks";
 import { finishServiceThink } from "./service-work";
+import { listenMessengers } from "../channels/listen";
 import { log, warn } from "../core/log";
 
 export const CHECK_TITLE = "Плановая проверка сервисов";
@@ -34,7 +35,8 @@ let running = false;
 
 /**
  * Тик раз в 15 минут. Новая почта сюда не поллится — она приходит вебхуком.
- * Здесь: отложенные письма (если браузер освободился) и просмотр сервисов,
+ * Мессенджер читается здесь: новое сообщение становится задачей, как чат.
+ * Дальше — отложенные письма (если браузер освободился) и просмотр сервисов,
  * где есть назначенная работа. Найденная задача сразу идёт отдельным прогоном,
  * проверка в это время смотрит дальше. Оплата, ключи и прочие сервисы без входящих не открываются.
  */
@@ -53,6 +55,12 @@ export async function tick(rt: AgentRuntime): Promise<{ deferred: number; checke
           warn("cron", "отложенное письмо упало", { error: String(err) });
         }
       }
+    }
+
+    try {
+      await listenMessengers(rt);
+    } catch (e) {
+      warn("cron", "мессенджеры не прочитаны", { error: String(e) });
     }
 
     const services = await rt.store.readServices();

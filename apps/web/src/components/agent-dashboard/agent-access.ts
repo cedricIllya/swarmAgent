@@ -9,6 +9,8 @@ export interface AgentAccess {
   password: string | null;
   /** Есть ли назначенная работа. null — ещё не выяснили. */
   watchesTasks: boolean | null;
+  /** `messenger` — канал связи, как почта и чат. */
+  channel?: "messenger" | null;
 }
 
 export interface LiveAccess {
@@ -18,6 +20,7 @@ export interface LiveAccess {
   accountEmail?: string | null | undefined;
   accountName?: string | null | undefined;
   watchesTasks?: boolean | null | undefined;
+  channel?: "messenger" | null | undefined;
 }
 
 export function accessKindLabel(kind: AccessKind): string {
@@ -26,8 +29,14 @@ export function accessKindLabel(kind: AccessKind): string {
   return "браузер";
 }
 
-/** Подпись тега: где агент смотрит задачи, а где нет. */
-export function taskWatchLabel(watchesTasks: boolean | null | undefined): { text: string; title: string; ok: boolean } {
+/** Подпись тега: где агент смотрит задачи, где канал связи, а где нет. */
+export function taskWatchLabel(
+  watchesTasks: boolean | null | undefined,
+  channel?: "messenger" | null,
+): { text: string; title: string; ok: boolean } {
+  if (channel === "messenger") {
+    return { text: "канал", title: "Сюда можно писать агенту, как на почту или в задачу. Ответ уходит в тот же диалог", ok: true };
+  }
   if (watchesTasks === true) {
     return { text: "задачи", title: "Агент проверяет здесь назначенные задачи", ok: true };
   }
@@ -56,6 +65,7 @@ export function mergeAccess(live: LiveAccess[], saved: AgentAccess[]): AgentAcce
       accountName: known?.accountName ?? service.accountName ?? null,
       password: known?.password ?? null,
       watchesTasks: knownWatch(service.watchesTasks, known?.watchesTasks),
+      channel: service.channel === "messenger" || known?.channel === "messenger" ? "messenger" : null,
     });
   }
   for (const item of saved) if (!rows.has(item.slug)) rows.set(item.slug, item);

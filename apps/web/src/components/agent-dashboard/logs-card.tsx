@@ -185,7 +185,7 @@ function AccessRow({ login }: { login: AgentAccess }) {
         <div className="row" style={{ gap: 8 }}>
           <span>{login.name}</span>
           <span className="badge">{accessKindLabel(login.kind)}</span>
-          <TaskWatchTag watchesTasks={login.watchesTasks} />
+          <TaskWatchTag watchesTasks={login.watchesTasks} channel={login.channel} />
         </div>
         {(login.accountName || login.accountEmail) && (
           <div className="small" style={{ marginTop: 4 }}>
@@ -416,7 +416,10 @@ function RunItem({
               <span key={s.slug} className="service-chip">
                 {s.name}
                 <span className="badge">{accessKindLabel(s.kind)}</span>
-                <TaskWatchTag watchesTasks={accesses.find((login) => login.slug === s.slug)?.watchesTasks} />
+                <TaskWatchTag
+                  watchesTasks={accesses.find((login) => login.slug === s.slug)?.watchesTasks}
+                  channel={accesses.find((login) => login.slug === s.slug)?.channel}
+                />
               </span>
             ))}
           </div>
@@ -430,7 +433,7 @@ function RunItem({
             if (!text) return null;
             return (
               <div key={`${m.at}-${i}`} className="history-line">
-                <span className="history-role">{m.role === "user" ? "Вы" : "Агент"}</span>
+                <span className="history-role">{m.role === "user" ? m.author || "Вы" : "Агент"}</span>
                 <div>
                   <StepText text={text} />
                 </div>

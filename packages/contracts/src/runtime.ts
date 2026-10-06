@@ -82,8 +82,8 @@ export const ChatThreadSchema = z.object({
   lastMessage: z.string().nullable(),
   /** В этом чате сейчас идёт задача. */
   busy: z.boolean(),
-  /** `mail` — чат почты и расписания. */
-  kind: z.enum(["mail"]).optional(),
+  /** `mail` — чат почты и расписания. `channel` — диалог в мессенджере. */
+  kind: z.enum(["mail", "channel"]).optional(),
 });
 
 export const ChatMessageSchema = z.object({
@@ -92,6 +92,8 @@ export const ChatMessageSchema = z.object({
   text: z.string(),
   runId: z.string().nullable(),
   chatId: z.string(),
+  /** Кто написал, если это не владелец в карточке. В журнале показывается вместо «Вы». */
+  author: z.string().optional(),
   /**
    * `browser` — карточка сессии браузера: живой экран, пока открыта, потом видео.
    * `approval` — от агента: вопрос с кнопками, пока id есть в `pendingApprovals`;
@@ -145,6 +147,8 @@ const ConnectedServiceSchema = z.object({
   hasPassword: z.boolean().optional(),
   /** Есть ли назначенная работа. null — ещё не выяснили. */
   watchesTasks: z.boolean().nullable().optional(),
+  /** `messenger` — канал связи, как почта и чат. */
+  channel: z.enum(["messenger"]).nullable().optional(),
 });
 
 export const RuntimeStateSchema = z.object({

@@ -180,6 +180,8 @@ export const serviceRecipes = pgTable("service_recipes", {
   notes: text("notes").notNull().default(""),
   /** true — в сервисе есть назначенная работа; false — смотреть задачи не нужно; null — ещё не выяснили. */
   watchesTasks: boolean("watches_tasks"),
+  /** `messenger` — канал связи. Плановую проверку задач не включает, машину для чтения сообщений будит. */
+  channel: text("channel").$type<"messenger" | null>(),
   discoveredByAgentId: text("discovered_by_agent_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

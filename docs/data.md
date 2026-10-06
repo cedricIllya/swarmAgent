@@ -12,7 +12,7 @@
 | `user`, `session`, `account`, `verification` | better-auth. В сессии есть `active_tenant_id`. |
 | `memberships` | Кто в каком тенанте и с какой ролью: `owner`, `admin`, `member`. Пара тенант+пользователь уникальна. |
 | `agents` | Имя, модель, локальная часть и домен адреса, статус, флаг автономности, id приложения и машины Fly, зашифрованный runtime-токен, зашифрованный Google refresh token. `usage_cost_usd`, `usage_prompt_tokens`, `usage_completion_tokens`, `usage_at` — итоги `usage.jsonl` на момент последнего отчёта машины (перед сном или когда главная читала `/state`); пусто — машина ещё не отчитывалась. Пара `local_part` + `domain` уникальна. |
-| `service_recipes` | Способ входа в сервис. Без `tenant_id` и без секретов. Один на весь продукт. `watches_tasks`: есть ли назначенная работа для плановой проверки. |
+| `service_recipes` | Способ входа в сервис. Без `tenant_id` и без секретов. Один на весь продукт. `watches_tasks`: есть ли назначенная работа для плановой проверки. `channel`: `messenger`, если это канал связи, как почта. |
 | `service_credentials` | Секрет агента для рецепта. Принадлежит агенту, который вошёл (`agent_id`), соседи по тенанту его не получают; `tenant_id` — для учёта и каскада. Тело — зашифрованный JSON: токен, cookies, почта, имя и пароль регистрации. Поздний отчёт не затирает уже сохранённый вход. Пара агент+slug уникальна. |
 
 При регистрации пользователю создаётся личный тенант, он становится `owner`.
@@ -44,6 +44,7 @@ Volume Fly, 3 GB, смонтирован в `/opt/data` обоим контей�
 | `runs/<id>/run.json`, `steps.jsonl` | Задача и шаги |
 | `chats/<id>/` | Отдельный чат: `chat.json` и `messages.jsonl`. Старый `chat.jsonl` при старте переносится в чат «Общий». |
 | `sent.json` | Message-ID писем агента → задача и approval |
+| `channel-inbox.json` | Курсоры мессенджеров: какие сообщения уже прочитаны |
 | `approvals.json` | Вопросы, на которые ещё нет «да» или «нет» |
 | `browser-sessions/<id>/` | `session.json`, `actions.jsonl`, `video.mp4` |
 | `browser-profiles/<slug>/` | Профиль Chromium сервиса: cookies живут между сессиями своего браузера |

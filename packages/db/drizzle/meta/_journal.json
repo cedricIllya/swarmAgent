@@ -50,6 +50,13 @@
       "when": 1791388800000,
       "tag": "0006_agent_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791475200000,
+      "tag": "0007_recipe_channel",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,258 @@
+import type { ChatMessage, ServiceCredential, ServiceRecipe } from "@swarm/contracts";
+import { messengerAdapter, messengerPatch } from "@swarm/contracts";
+import { readJson, writeJson } from "../store/files";
+import type { ChannelLink } from "../store/chats";
+import { handleChat } from "../tasks/chat";
+import type { AgentRuntime } from "../runtime";
+import { redactInternal } from "../core/redact";
+import { warn } from "../core/log";
+import {
+  hearSlack,
+  slackConversations,
+  slackDisplayName,
+  slackHistory,
+  slackIdentity,
+  slackPost,
+  type HeardSlack,
+} from "./slack";
+
+interface ChannelState {
+  seen: string[];
+  /** Ключ `slug:channel` → ts Slack, с которого читать дальше. */
+  cursors: Record<string, string>;
+  names: Record<string, string>;
+}
+
+const EMPTY: ChannelState = { seen: [], cursors: {}, names: {} };
+const FIRST_WINDOW_SEC = 20 * 60;
+const MAX_SEEN = 400;
+const MAX_PER_TICK = 20;
+
+let writing = Promise.resolve();
+
+/** Чтение и запись курсоров по очереди, чтобы ответ и опрос не затирали друг друга. */
+function exclusive<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writing.then(fn, fn);
+  writing = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+function stateFile(rt: AgentRuntime): string | null {
+  if (typeof rt.store?.dir !== "function") return null;
+  return rt.store.dir("channel-inbox.json");
+}
+
+async function readState(rt: AgentRuntime): Promise<ChannelState> {
+  const file = stateFile(rt);
+  if (!file) return { ...EMPTY, cursors: {}, names: {} };
+  const raw = await readJson<ChannelState | null>(file, null);
+  return {
+    seen: Array.isArray(raw?.seen) ? raw.seen : [],
+    cursors: raw?.cursors && typeof raw.cursors === "object" ? raw.cursors : {},
+    names: raw?.names && typeof raw.names === "object" ? raw.names : {},
+  };
+}
+
+async function writeState(rt: AgentRuntime, state: ChannelState): Promise<void> {
+  const file = stateFile(rt);
+  if (!file) return;
+  state.seen = state.seen.slice(-MAX_SEEN);
+  await exclusive(() => writeJson(file, state));
+}
+
+function tokenOf(cred: ServiceCredential | undefined): string | null {
+  if (!cred) return null;
+  const token = cred.token || cred.oauth?.accessToken;
+  return token?.trim() || null;
+}
+
+function slackNow(offsetSec = 0): string {
+  return (Date.now() / 1000 - offsetSec).toFixed(6);
+}
+
+function textForMessenger(message: ChatMessage): string | null {
+  if (message.role !== "agent" || message.kind === "browser") return null;
+  const text = message.text.trim();
+  if (!text) return null;
+  if (message.kind === "approval") {
+    if (message.options?.length) {
+      const lines = message.options.map((option, i) => `${i + 1}. ${option}`);
+      return `${text}\n\n${lines.join("\n")}\n\nОтветьте в этом диалоге текстом или номером.`;
+    }
+    return `${text}\n\nОтветьте в этом диалоге: «да» или «нет».`;
+  }
+  return text;
+}
+
+async function stamp(rt: AgentRuntime, recipe: ServiceRecipe): Promise<void> {
+  if (!rt.services?.applyReport) return;
+  const next = messengerPatch(recipe);
+  if (next.channel === recipe.channel && next.watchesTasks === recipe.watchesTasks && next.notes === recipe.notes) return;
+  try {
+    await rt.services.applyReport({ type: "recipe", recipe: next }, { quiet: true });
+  } catch (e) {
+    warn("channel", "не записал канал", { slug: recipe.slug, error: String(e) });
+  }
+}
+
+async function authorName(token: string, state: ChannelState, userId: string, fetchImpl: typeof fetch): Promise<string> {
+  const known = state.names[userId];
+  if (known) return known;
+  const name = await slackDisplayName(token, userId, fetchImpl);
+  state.names[userId] = name;
+  return name;
+}
+
+async function openThread(rt: AgentRuntime, link: ChannelLink, title: string): Promise<string> {
+  const existingId = await rt.store.chats.findByThread(link.threadKey);
+  if (existingId) return existingId;
+  const chat = await rt.store.chats.create(title, "channel");
+  await rt.store.chats.bind(chat.id, link);
+  return chat.id;
+}
+
+async function ingest(rt: AgentRuntime, slug: string, author: string, heard: HeardSlack): Promise<void> {
+  const link: ChannelLink = {
+    adapter: "slack",
+    slug,
+    threadKey: heard.threadKey,
+    channel: heard.channel,
+    ...(heard.threadTs ? { threadTs: heard.threadTs } : {}),
+  };
+  const chatId = await openThread(rt, link, `Slack · ${author}`.slice(0, 80));
+  await handleChat(rt, { chatId, message: heard.text, author, fromMessenger: true });
+}
+
+async function pullSlack(rt: AgentRuntime, recipe: ServiceRecipe, token: string): Promise<number> {
+  const fetchImpl = globalThis.fetch;
+  const identity = await slackIdentity(token, fetchImpl);
+  if (!identity) {
+    warn("channel", "токен Slack не принимает auth.test, сообщения не читаются", { slug: recipe.slug });
+    return 0;
+  }
+  const state = await readState(rt);
+  const seen = new Set(state.seen);
+  let heard = 0;
+  let conversations;
+  try {
+    conversations = await slackConversations(token, fetchImpl);
+  } catch (e) {
+    warn("channel", "список разговоров Slack не прочитан", { slug: recipe.slug, error: String(e) });
+    return 0;
+  }
+  for (const conversation of conversations) {
+    if (heard >= MAX_PER_TICK) break;
+    const cursorKey = `${recipe.slug}:${conversation.id}`;
+    const oldest = state.cursors[cursorKey] ?? slackNow(FIRST_WINDOW_SEC);
+    let messages;
+    try {
+      messages = await slackHistory(token, conversation.id, oldest, fetchImpl);
+    } catch (e) {
+      warn("channel", "история Slack не прочитана", { channel: conversation.id, error: String(e) });
+      continue;
+    }
+    const fresh = hearSlack({
+      teamId: identity.teamId,
+      selfId: identity.userId,
+      channelId: conversation.id,
+      im: conversation.im,
+      messages,
+    })
+      .filter((item) => !seen.has(item.externalId))
+      .sort((a, b) => a.externalId.localeCompare(b.externalId));
+    let advanced = oldest;
+    let stopped = false;
+    for (const item of fresh) {
+      if (heard >= MAX_PER_TICK) {
+        stopped = true;
+        break;
+      }
+      seen.add(item.externalId);
+      state.seen.push(item.externalId);
+      heard += 1;
+      const ts = item.externalId.slice(item.externalId.indexOf(":") + 1);
+      if (ts > advanced) advanced = ts;
+      try {
+        const name = await authorName(token, state, item.authorId, fetchImpl);
+        await ingest(rt, recipe.slug, name, item);
+      } catch (e) {
+        warn("channel", "сообщение Slack не принято", { id: item.externalId, error: String(e) });
+      }
+    }
+    if (!stopped) {
+      for (const message of messages) {
+        if (message.ts && message.ts > advanced) advanced = message.ts;
+      }
+      if (messages.length === 0 && !state.cursors[cursorKey]) advanced = slackNow();
+    }
+    state.cursors[cursorKey] = advanced;
+  }
+  await writeState(rt, state);
+  return heard;
+}
+
+/**
+ * Подключённые мессенджеры. Slack с рабочим токеном читается сам.
+ * Новое сообщение становится задачей в том же чате, ответ уходит обратно.
+ */
+export async function listenMessengers(rt: AgentRuntime): Promise<number> {
+  if (typeof rt.store?.readServices !== "function") return 0;
+  const services = await rt.store.readServices();
+  if (!services || typeof rt.store.dir !== "function" || typeof rt.store.chats?.create !== "function") return 0;
+  let heard = 0;
+  for (const recipe of services.recipes) {
+    const cred = services.credentials.find((item) => item.slug === recipe.slug);
+    if (!cred || messengerPatch(recipe).channel !== "messenger") continue;
+    await stamp(rt, recipe);
+    if (messengerAdapter(recipe) !== "slack") continue;
+    const token = tokenOf(cred);
+    if (!token) continue;
+    try {
+      heard += await pullSlack(rt, recipe, token);
+    } catch (e) {
+      warn("channel", "Slack не прочитан", { slug: recipe.slug, error: String(e) });
+    }
+  }
+  return heard;
+}
+
+/** Ответ агента в диалоге мессенджера уходит в тот же тред. */
+export async function deliverChannelReply(rt: AgentRuntime, link: ChannelLink, message: ChatMessage): Promise<void> {
+  const text = textForMessenger(message);
+  if (!text || link.adapter !== "slack") return;
+  const services = await rt.store.readServices();
+  const cred = services?.credentials.find((item) => item.slug === link.slug);
+  const token = tokenOf(cred);
+  if (!token) {
+    warn("channel", "нет токена, чтобы ответить в Slack", { slug: link.slug });
+    return;
+  }
+  try {
+    const ts = await slackPost(
+      token,
+      { channel: link.channel, text: redactInternal(text), threadTs: link.threadTs },
+      globalThis.fetch,
+    );
+    await exclusive(async () => {
+      const state = await readState(rt);
+      if (ts) {
+        const id = `${link.channel}:${ts}`;
+        if (!state.seen.includes(id)) state.seen.push(id);
+        const cursorKey = `${link.slug}:${link.channel}`;
+        if (!state.cursors[cursorKey] || ts > state.cursors[cursorKey]) state.cursors[cursorKey] = ts;
+      }
+      const file = stateFile(rt);
+      if (file) {
+        state.seen = state.seen.slice(-MAX_SEEN);
+        await writeJson(file, state);
+      }
+    });
+    if (message.runId) await rt.step(message.runId, "note", "ответ отправлен в Slack");
+  } catch (e) {
+    warn("channel", "ответ в Slack не ушёл", { error: String(e) });
+    if (message.runId) await rt.step(message.runId, "note", `ответ в Slack не ушёл: ${String(e)}`);
+  }
+}

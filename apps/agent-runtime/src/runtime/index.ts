@@ -19,6 +19,7 @@ import { Handoffs } from "./handoffs";
 import { newId } from "./ids";
 import { Research } from "./research";
 import { ServiceCatalog } from "./services";
+import { deliverChannelReply } from "../channels/listen";
 
 /** Результат одного хода Hermes: текст + метаданные для проверки работы в сервисе. */
 export interface ThinkResult {
@@ -229,7 +230,12 @@ export class AgentRuntime {
 
   async addChat(msg: Omit<ChatMessage, "at" | "chatId"> & { chatId?: string | null }): Promise<void> {
     const chatId = msg.chatId || (await this.store.chats.ensureSystem()).id;
-    await this.store.chats.addMessage(chatId, { at: new Date().toISOString(), ...msg, chatId });
+    const message: ChatMessage = { at: new Date().toISOString(), ...msg, chatId };
+    await this.store.chats.addMessage(chatId, message);
+    if (message.role !== "agent") return;
+    const chat = await this.store.chats.get(chatId);
+    if (!chat?.channel) return;
+    await deliverChannelReply(this, chat.channel, message);
   }
 
   /** Чат, в котором владелец видит ход задачи: её собственный или «Почта и расписание». */

@@ -1,4 +1,4 @@
-import type { ServiceCredential, ServiceRecipe } from "@swarm/contracts";
+import { messengerPatch, type ServiceCredential, type ServiceRecipe } from "@swarm/contracts";
 import { hostOf, sameBrand } from "./domains";
 import { mcpToolNames } from "../discovery";
 
@@ -32,7 +32,7 @@ export function guardRecipeReport(existing: ServiceRecipe | null, incoming: Serv
       reason: `адреса ${foreign.join(", ")} не принадлежат ${domains.join(", ")}: это другой сайт, в рецепт ${incoming.slug} он не пойдёт`,
     };
   }
-  if (!existing) return { ok: true, value: incoming, note: null };
+  if (!existing) return { ok: true, value: messengerPatch(incoming), note: null };
 
   const browser = incoming.browser ?? existing.browser;
   const merged: ServiceRecipe = {
@@ -53,7 +53,7 @@ export function guardRecipeReport(existing: ServiceRecipe | null, incoming: Serv
   ].filter(Boolean);
   return {
     ok: true,
-    value: merged,
+    value: messengerPatch(merged),
     note: dropped.length ? `рецепт ${existing.slug} уже в каталоге: поля ${dropped.join(", ")} оставлены прежними` : null,
   };
 }

@@ -176,7 +176,7 @@ describe("tick only opens services that have assigned work", () => {
     expect(text).not.toContain("Stripe");
     expect(text).toMatch(/не открывай/);
     expect(text).toMatch(/Не выполняй/);
-    expect(text).toContain('"tasks"');
+    expect(text).toContain("/tasks/found");
     expect(text).not.toMatch(/Выполни найденное/);
     const shown = systemPrompt({
       agentName: "Бот",
@@ -188,5 +188,35 @@ describe("tick only opens services that have assigned work", () => {
     });
     expect(shown).toContain("Задачи: смотреть назначенную работу.");
     expect(shown).toContain("Задачи: не смотреть.");
+  });
+
+  it("не ищет задачи в мессенджере и называет его каналом связи", () => {
+    const withSlack = {
+      ...services,
+      recipes: [
+        ...services.recipes,
+        {
+          slug: "slack",
+          name: "Slack",
+          kind: "api" as const,
+          domains: ["slack.com"],
+          notes: "",
+          discoveredBy: null,
+          watchesTasks: true as const,
+        },
+      ],
+      credentials: [...services.credentials, { slug: "slack", kind: "api" as const, token: "xoxb" }],
+    };
+    expect(taskServices(withSlack).map((recipe) => recipe.slug)).toEqual(["linear"]);
+    const shown = systemPrompt({
+      agentName: "Бот",
+      email: "bot@example.com",
+      ownerEmail: null,
+      autonomous: true,
+      runtimePort: 8787,
+      services: withSlack,
+    });
+    expect(shown).toContain("Канал связи, как почта и чат.");
+    expect(shown).not.toMatch(/Slack[\s\S]*Задачи: смотреть/);
   });
 });

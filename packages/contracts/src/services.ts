@@ -44,12 +44,65 @@ export const ServiceRecipeSchema = z.object({
    * true — задачи, карточки, тикеты, упоминания.
    * false — оплата, ключи, хостинг и прочее: открывать только по прямой просьбе.
    * Нет значения — ещё не выяснили, в плановую проверку не берём.
+   * У мессенджера всегда false: это канал связи, а не доска задач.
    */
   watchesTasks: z.boolean().nullable().optional(),
+  /**
+   * `messenger` — сюда пишут люди, как на почту и в чат карточки.
+   * Ответ уходит в тот же диалог. Плановая проверка задачи здесь не ищет.
+   */
+  channel: z.enum(["messenger"]).nullable().optional(),
   discoveredBy: z.string().nullable().default(null),
 });
 
 export type ServiceRecipe = z.infer<typeof ServiceRecipeSchema>;
+
+/** Домены и короткие имена, по которым сервис — мессенджер, даже до записи `channel`. */
+export const MESSENGER_DOMAINS = ["slack.com", "telegram.org", "t.me", "discord.com", "discordapp.com", "whatsapp.com"] as const;
+export const MESSENGER_SLUGS = ["slack", "telegram", "discord", "whatsapp"] as const;
+
+export const MESSENGER_NOTE =
+  "Канал связи: как почта и чат. Люди пишут сюда агенту, ответ уходит в тот же диалог. Назначенные задачи не искать.";
+
+const WORK_GUIDE_MARK = "Как работать:";
+
+function hostOfDomain(domain: string): string {
+  return domain.toLowerCase().replace(/^https?:\/\//, "").split("/")[0]?.split(":")[0] ?? "";
+}
+
+/** Slack, Telegram и другие переписки. Не доска задач. */
+export function isMessengerRecipe(recipe: {
+  slug?: string | undefined;
+  channel?: "messenger" | null | undefined;
+  domains?: string[] | undefined;
+}): boolean {
+  if (recipe.channel === "messenger") return true;
+  if (recipe.slug && (MESSENGER_SLUGS as readonly string[]).includes(recipe.slug)) return true;
+  return (recipe.domains ?? []).some((domain) => {
+    const host = hostOfDomain(domain);
+    return MESSENGER_DOMAINS.some((root) => host === root || host.endsWith(`.${root}`));
+  });
+}
+
+/** Slack умеем читать и отвечать сами. Остальные мессенджеры пока только помечены как канал. */
+export function messengerAdapter(recipe: { slug?: string | undefined; domains?: string[] | undefined }): "slack" | null {
+  if (recipe.slug === "slack") return "slack";
+  const hosts = (recipe.domains ?? []).map(hostOfDomain);
+  if (hosts.some((host) => host === "slack.com" || host.endsWith(".slack.com"))) return "slack";
+  return null;
+}
+
+/**
+ * Мессенджер — канал связи. Снимает карту «как работать с задачами»
+ * и больше не отдаёт его в плановую проверку.
+ */
+export function messengerPatch<T extends ServiceRecipe>(recipe: T): T {
+  if (!isMessengerRecipe(recipe)) return recipe;
+  const at = recipe.notes.indexOf(WORK_GUIDE_MARK);
+  const base = (at < 0 ? recipe.notes : recipe.notes.slice(0, at)).trim();
+  const notes = base.includes("Канал связи:") ? base : `${base} ${MESSENGER_NOTE}`.trim();
+  return { ...recipe, channel: "messenger", watchesTasks: false, notes: notes.slice(0, 1200) };
+}
 
 /** Повторный отчёт без этого поля не стирает уже решённую классификацию. */
 export function keepWatchesTasks(
@@ -58,6 +111,15 @@ export function keepWatchesTasks(
 ): boolean | null {
   if (typeof next === "boolean") return next;
   return typeof prev === "boolean" ? prev : null;
+}
+
+/** Мессенджер, однажды узнанный, повторным отчётом не снимается. */
+export function keepChannel(
+  prev: "messenger" | null | undefined,
+  next: "messenger" | null | undefined,
+): "messenger" | null {
+  if (next === "messenger" || prev === "messenger") return "messenger";
+  return null;
 }
 
 function hostOnDomains(url: string, domains: string[]): boolean {

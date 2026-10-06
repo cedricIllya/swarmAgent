@@ -1,6 +1,11 @@
 import {
+  isMessengerRecipe,
+  keepChannel,
   keepWatchesTasks,
   mergeCredential,
+  MESSENGER_DOMAINS,
+  MESSENGER_SLUGS,
+  messengerPatch,
   ServiceCredentialSchema,
   ServiceRecipeSchema,
   withoutForeignEndpoints,
@@ -9,7 +14,7 @@ import {
   type ServicesSnapshot,
 } from "@swarm/contracts";
 import { decryptJson, encryptJson } from "@swarm/crypto";
-import { and, desc, eq, isNull, newId, or, schema, type Db } from "@swarm/db";
+import { and, desc, eq, inArray, isNull, newId, or, schema, sql, type Db } from "@swarm/db";
 
 type RecipeRow = typeof schema.serviceRecipes.$inferSelect;
 
@@ -25,6 +30,7 @@ function rowToRecipe(row: RecipeRow): ServiceRecipe {
       browser: row.browser ?? undefined,
       notes: row.notes,
       watchesTasks: row.watchesTasks,
+      channel: row.channel,
       discoveredBy: row.discoveredByAgentId,
     }),
   );
@@ -46,9 +52,10 @@ export async function getRecipe(db: Db, slug: string): Promise<ServiceRecipe | n
  * не понижает способ входа: mcp не затирается на browser.
  */
 export async function upsertRecipe(db: Db, recipe: ServiceRecipe, discoveredByAgentId: string | null): Promise<void> {
-  const parsed = ServiceRecipeSchema.parse(recipe);
+  const parsed = messengerPatch(ServiceRecipeSchema.parse(recipe));
   const existing = await getRecipe(db, parsed.slug);
-  const watchesTasks = keepWatchesTasks(existing?.watchesTasks, parsed.watchesTasks);
+  const watchesTasks = parsed.channel === "messenger" ? false : keepWatchesTasks(existing?.watchesTasks, parsed.watchesTasks);
+  const channel = keepChannel(existing?.channel, parsed.channel);
   const rank = { mcp: 3, api: 2, browser: 1 } as const;
   if (existing && rank[existing.kind] > rank[parsed.kind]) {
     await db
@@ -58,8 +65,14 @@ export async function upsertRecipe(db: Db, recipe: ServiceRecipe, discoveredByAg
         mcp: parsed.mcp ?? existing.mcp ?? null,
         api: parsed.api ?? existing.api ?? null,
         browser: parsed.browser ?? existing.browser ?? null,
-        notes: existing.notes ? `${existing.notes}\n${parsed.notes}`.trim() : parsed.notes,
+        notes:
+          channel === "messenger"
+            ? messengerPatch({ ...existing, notes: [existing.notes, parsed.notes].filter(Boolean).join(" ") }).notes
+            : existing.notes
+              ? `${existing.notes}\n${parsed.notes}`.trim()
+              : parsed.notes,
         watchesTasks,
+        channel,
         updatedAt: new Date(),
       })
       .where(eq(schema.serviceRecipes.slug, parsed.slug));
@@ -77,6 +90,7 @@ export async function upsertRecipe(db: Db, recipe: ServiceRecipe, discoveredByAg
       browser: parsed.browser ?? null,
       notes: parsed.notes,
       watchesTasks,
+      channel,
       discoveredByAgentId,
     })
     .onConflictDoUpdate({
@@ -90,6 +104,7 @@ export async function upsertRecipe(db: Db, recipe: ServiceRecipe, discoveredByAg
         browser: parsed.browser ?? null,
         notes: parsed.notes,
         watchesTasks,
+        channel,
         updatedAt: new Date(),
       },
     });
@@ -165,6 +180,8 @@ export interface TenantConnection {
   domains: string[];
   /** Есть ли назначенная работа. null — ещё не выяснили. */
   watchesTasks: boolean | null;
+  /** `messenger` — канал связи, как почта и чат. */
+  channel: "messenger" | null;
   agents: TenantConnectionAgent[];
 }
 
@@ -180,6 +197,7 @@ export async function listTenantConnections(db: Db, tenantId: string): Promise<T
       recipeKind: schema.serviceRecipes.kind,
       domains: schema.serviceRecipes.domains,
       watchesTasks: schema.serviceRecipes.watchesTasks,
+      channel: schema.serviceRecipes.channel,
       credentialKind: schema.serviceCredentials.kind,
       accountEmail: schema.serviceCredentials.accountEmail,
       updatedAt: schema.serviceCredentials.updatedAt,
@@ -204,6 +222,7 @@ export async function listTenantConnections(db: Db, tenantId: string): Promise<T
         kind: row.recipeKind,
         domains: row.domains,
         watchesTasks: row.watchesTasks,
+        channel: isMessengerRecipe({ slug: row.slug, domains: row.domains, channel: row.channel }) ? "messenger" : null,
         agents: [],
       };
       bySlug.set(row.slug, entry);
@@ -224,13 +243,25 @@ export async function listTenantConnections(db: Db, tenantId: string): Promise<T
  * Агенты, которых имеет смысл будить на плановый тик:
  * есть доступ в сервис, где задачи смотрят или ещё не классифицировали.
  * Сервис с `watchesTasks = false` машину не поднимает.
+ * Мессенджер поднимает: раз в 15 минут runtime читает новые сообщения.
  */
 export async function agentIdsWithCredentials(db: Db): Promise<Set<string>> {
+  const domainIsMessenger = or(
+    ...MESSENGER_DOMAINS.map((domain) => sql`${schema.serviceRecipes.domains}::text ilike ${"%" + domain + "%"}`),
+  );
   const rows = await db
     .selectDistinct({ agentId: schema.serviceCredentials.agentId })
     .from(schema.serviceCredentials)
     .innerJoin(schema.serviceRecipes, eq(schema.serviceRecipes.slug, schema.serviceCredentials.slug))
-    .where(or(isNull(schema.serviceRecipes.watchesTasks), eq(schema.serviceRecipes.watchesTasks, true)));
+    .where(
+      or(
+        isNull(schema.serviceRecipes.watchesTasks),
+        eq(schema.serviceRecipes.watchesTasks, true),
+        eq(schema.serviceRecipes.channel, "messenger"),
+        inArray(schema.serviceRecipes.slug, [...MESSENGER_SLUGS]),
+        domainIsMessenger,
+      ),
+    );
   return new Set(rows.map((r) => r.agentId));
 }
 

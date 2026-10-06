@@ -1,6 +1,6 @@
 import path from "node:path";
 import { rm } from "node:fs/promises";
-import { keepWatchesTasks, mergeCredential, type RuntimeReport, type ServicesSnapshot, type RuntimeState } from "@swarm/contracts";
+import { isMessengerRecipe, keepChannel, keepWatchesTasks, mergeCredential, messengerPatch, type RuntimeReport, type ServicesSnapshot, type RuntimeState } from "@swarm/contracts";
 import { serviceProfileDir } from "../browser/stagehand";
 import { emitRuntime } from "../core/events";
 import { matchRecipe } from "../onboarding/domains";
@@ -41,6 +41,7 @@ export class ServiceCatalog {
           accountName: cred?.accountName ?? null,
           hasPassword: Boolean(cred?.password),
           watchesTasks: r.watchesTasks ?? null,
+          channel: isMessengerRecipe(r) ? "messenger" : null,
         };
       });
   }
@@ -98,13 +99,17 @@ export class ServiceCatalog {
         : input.type === "recipe"
           ? {
               ...input,
-              recipe: {
+              recipe: messengerPatch({
                 ...input.recipe,
+                channel: keepChannel(
+                  snapBefore?.recipes.find((r) => r.slug === input.recipe.slug)?.channel,
+                  input.recipe.channel,
+                ),
                 watchesTasks: keepWatchesTasks(
                   snapBefore?.recipes.find((r) => r.slug === input.recipe.slug)?.watchesTasks,
                   input.recipe.watchesTasks,
                 ),
-              },
+              }),
             }
           : input;
     await rt.controlPlane.report(body);

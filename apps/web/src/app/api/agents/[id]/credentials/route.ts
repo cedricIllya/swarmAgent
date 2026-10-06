@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAgent } from "@swarm/agents";
+import { isMessengerRecipe } from "@swarm/contracts";
 import { listCredentials, listRecipes } from "@swarm/connections";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
@@ -25,6 +26,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         accountName: c.accountName ?? null,
         password: c.password ?? null,
         watchesTasks: recipe?.watchesTasks ?? null,
+        channel: recipe && isMessengerRecipe(recipe) ? "messenger" : null,
       };
     }),
   );

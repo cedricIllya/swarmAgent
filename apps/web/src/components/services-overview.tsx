@@ -137,7 +137,7 @@ function ServiceRow({ connection }: { connection: TenantConnection }) {
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           <strong>{connection.name}</strong>
           <span className="badge">{accessKindLabel(connection.kind)}</span>
-          <TaskWatchTag watchesTasks={connection.watchesTasks} />
+          <TaskWatchTag watchesTasks={connection.watchesTasks} channel={connection.channel} />
         </div>
         {connection.domains.length > 0 && <div className="faint small">{connection.domains.join(", ")}</div>}
       </div>

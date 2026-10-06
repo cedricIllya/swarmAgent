@@ -51,7 +51,7 @@ export function EmailCard({
                 </div>
                 <div className="row" style={{ gap: 8, flex: "none" }}>
                   <span className="badge">{accessKindLabel(service.kind)}</span>
-                  <TaskWatchTag watchesTasks={service.watchesTasks} />
+                  <TaskWatchTag watchesTasks={service.watchesTasks} channel={service.channel} />
                   <DisconnectServiceButton
                     agentId={agent.id}
                     slug={service.slug}
