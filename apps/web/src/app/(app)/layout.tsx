@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { requireViewer } from "@/lib/session";
 import { SignOutButton } from "@/components/sign-out-button";
 import { MainNav } from "@/components/main-nav";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const viewer = await requireViewer();
@@ -16,6 +17,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           </Link>
           <MainNav />
           <div className="topbar-right">
+            <ThemeToggle />
             <span className="viewer">
               <span className="viewer-tenant">{viewer.tenant.name}</span>
               <span className="viewer-email">{viewer.user.email}</span>

@@ -1,6 +1,7 @@
 import type { Viewer } from "@/lib/session";
 import type { DeletionPreview } from "@/lib/delete-account";
 import { DeleteAccountForm } from "./delete-account-form";
+import { ThemePreference } from "./theme-toggle";
 
 function plural(n: number, one: string, few: string, many: string): string {
   const mod10 = n % 10;
@@ -45,6 +46,8 @@ export function AccountSettings({ viewer, preview }: { viewer: Viewer; preview: 
           </div>
         </dl>
       </section>
+
+      <ThemePreference />
 
       <section className="card card-danger">
         <div className="card-head">
