@@ -1,12 +1,15 @@
+const RAN = new Set(["started", "stopping", "stopped", "suspending", "suspended"]);
+const BOOTING = new Set(["created", "starting"]);
+
 /**
  * Что делать с застрявшим агентом по состоянию его машины.
- * `started` — агент работает. `created`/`starting` — первый старт ещё идёт.
- * Уснувшая машина у агента в `provisioning` когда-то стартовала, значит он рабочий;
- * у `failed` она ни о чём не говорит — ошибку оставляем человеку.
+ * Когда у агента уже есть машина, provision мог сорваться только на ожидании её старта,
+ * поэтому машина, которая хоть раз стартовала (в том числе уже уснувшая), — рабочий агент.
+ * `created`/`starting` — первый старт ещё идёт. Нет машины или `failed`/`destroyed` — ошибку оставляем человеку.
  */
-export function provisionVerdict(agentStatus: string, machineState: string | null): "running" | "booting" | "leave" {
-  if (machineState === "started") return "running";
-  if (machineState === "created" || machineState === "starting") return "booting";
-  if (agentStatus === "provisioning" && (machineState === "stopped" || machineState === "suspended")) return "running";
+export function provisionVerdict(machineState: string | null): "running" | "booting" | "leave" {
+  if (machineState === null) return "leave";
+  if (RAN.has(machineState)) return "running";
+  if (BOOTING.has(machineState)) return "booting";
   return "leave";
 }

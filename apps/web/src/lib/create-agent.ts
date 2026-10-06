@@ -183,8 +183,8 @@ async function markRunning(agentId: string, appName: string): Promise<void> {
 
 /**
  * Агенты, чья машина уже создана, но статус застрял: ожидание первого старта вышло, или
- * control plane перезапустили посреди provision и промис пропал. Машина стартовала — агент
- * работает; всё ещё поднимается — так и пишем; машины нет — ошибка остаётся.
+ * control plane перезапустили посреди provision и промис пропал. Машина стартовала (пусть и
+ * уже уснула) — агент работает; всё ещё поднимается — так и пишем; машины нет — ошибка остаётся.
  */
 export async function reconcileProvisioning(): Promise<{ recovered: number; booting: number }> {
   const database = db();
@@ -200,7 +200,7 @@ export async function reconcileProvisioning(): Promise<{ recovered: number; boot
   for (const agent of stuck) {
     try {
       const machine = await fly.getMachine(agent.flyAppName!, agent.flyMachineId!);
-      const verdict = provisionVerdict(agent.status, machine?.state ?? null);
+      const verdict = provisionVerdict(machine?.state ?? null);
       if (verdict === "running") {
         await markRunning(agent.id, agent.flyAppName!);
         recovered += 1;
