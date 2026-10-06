@@ -113,15 +113,15 @@ export function rankDocLinks(links: string[], domain: string | null, pageHost: s
   return ranked.map((item) => item.url);
 }
 
-/** Страница, с которой читать документацию: названная поиском, иначе лучшая цитата. */
+/** Страница, с которой читать документацию: названная поиском, иначе лучшая цитата того же сервиса. */
 export function pickDocsSeed(domain: string | null, apiDocsUrl: string | null, citationUrls: string[]): string | null {
   const named = httpsUrl(apiDocsUrl);
   if (named && !isNoiseDomain(hostOf(named)) && (!domain || sameBrand(hostOf(named), domain))) return named;
   const ranked = citationUrls
     .map((url) => httpsUrl(url))
     .filter((url): url is string => url !== null && !isNoiseDomain(hostOf(url)))
-    .filter((url) => !domain || sameBrand(hostOf(url), domain) || scoreDocUrl(url) >= 30);
-  ranked.sort((a, b) => scoreDocUrl(b) - scoreDocUrl(a) || Number(Boolean(domain && sameBrand(hostOf(b), domain))) - Number(Boolean(domain && sameBrand(hostOf(a), domain))));
+    .filter((url) => !domain || sameBrand(hostOf(url), domain));
+  ranked.sort((a, b) => scoreDocUrl(b) - scoreDocUrl(a));
   return ranked[0] ?? null;
 }
 

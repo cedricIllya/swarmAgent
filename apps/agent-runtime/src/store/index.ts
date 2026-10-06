@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, appendFile, writeFile, stat, unlink, chmod } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import type { BrowserSession, InboundEmail, PendingApproval, Run, RunStep, ServicesSnapshot, UsageRecord } from "@swarm/contracts";
+import { withoutForeignEndpoints, type BrowserSession, type InboundEmail, type PendingApproval, type Run, type RunStep, type ServicesSnapshot, type UsageRecord } from "@swarm/contracts";
 import { parseUsageJsonl, summarizeUsage } from "@swarm/usage";
 import { shotFile } from "../browser/shots";
 import { emitRuntime } from "../events";
@@ -189,7 +189,9 @@ export class Store {
   }
 
   async readServices(): Promise<ServicesSnapshot | null> {
-    return readJson<ServicesSnapshot | null>(this.dir("services.json"), null);
+    const snap = await readJson<ServicesSnapshot | null>(this.dir("services.json"), null);
+    if (!snap) return null;
+    return { ...snap, recipes: snap.recipes.map((recipe) => withoutForeignEndpoints(recipe)) };
   }
 
   async writeGoogleToken(token: Record<string, unknown>): Promise<void> {

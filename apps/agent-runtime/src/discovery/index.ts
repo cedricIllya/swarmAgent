@@ -2,7 +2,7 @@ import { isConcreteReadUrl } from "../connect";
 import { hostOf, isNoiseDomain, pickServiceDomain, slugFor } from "../domains";
 import { httpsUrl } from "./http";
 import { probeMcp, verifyCandidates, wellKnownMcpUrls } from "./mcp-probe";
-import { EMPTY_FINDINGS, askModel, extractPrompt, mergeFindings, searchCovers, searchPrompt } from "./model";
+import { EMPTY_FINDINGS, askModel, extractPrompt, mergeFindings, searchCovers, searchPrompt, type ModelFindings } from "./model";
 import { excerpt, fallbackDocsUrls, fetchPage, pickDocsSeed, selectDocPages } from "./pages";
 import { belongsTo, composeRecipe } from "./recipe";
 import { searchRegistry } from "./registry";
@@ -27,6 +27,46 @@ export * from "./types";
 function rememberDoc(docs: DocFinding[], url: string, title: string, text: string): void {
   if (docs.some((doc) => doc.url === url)) return;
   docs.push({ url, title, excerpt: excerpt(text) });
+}
+
+/** Адрес из поиска годится, только если он этого сервиса. Чужой MCP вроде GitVerse для Gensite — нет. */
+function onService(url: string | null, domain: string | null): string | null {
+  if (!url) return null;
+  if (!domain) return url;
+  return belongsTo(url, domain) ? url : null;
+}
+
+function keepServiceFindings(findings: ModelFindings, domain: string | null): ModelFindings {
+  if (!domain) return findings;
+  const mcpUrl = onService(findings.mcpUrl, domain);
+  const apiBaseUrl = onService(findings.apiBaseUrl, domain);
+  const apiDocsUrl = onService(findings.apiDocsUrl, domain);
+  const keyPageUrl = onService(findings.keyPageUrl, domain);
+  const loginUrl = onService(findings.loginUrl, domain);
+  const appUrl = onService(findings.appUrl, domain);
+  const readEndpoints = findings.readEndpoints.filter((url) => belongsTo(url, domain));
+  const keptUrl = Boolean(mcpUrl || apiBaseUrl || apiDocsUrl || keyPageUrl || loginUrl || appUrl || readEndpoints.length);
+  const droppedForeign = Boolean(
+    (findings.mcpUrl && !mcpUrl) ||
+      (findings.apiBaseUrl && !apiBaseUrl) ||
+      (findings.apiDocsUrl && !apiDocsUrl) ||
+      (findings.keyPageUrl && !keyPageUrl) ||
+      (findings.loginUrl && !loginUrl) ||
+      (findings.appUrl && !appUrl) ||
+      findings.readEndpoints.some((url) => !belongsTo(url, domain)),
+  );
+  return {
+    ...findings,
+    mcpUrl,
+    apiBaseUrl,
+    apiDocsUrl,
+    keyPageUrl,
+    loginUrl,
+    appUrl,
+    readEndpoints,
+    howToGetKey: droppedForeign && !keptUrl ? null : findings.howToGetKey,
+    notes: droppedForeign && !keptUrl ? "" : findings.notes,
+  };
 }
 
 /**
@@ -66,9 +106,10 @@ export async function discoverService(input: DiscoveryInput, deps: DiscoveryDeps
   } else if (deps.openRouter) {
     const searched = await askModel(deps, "discover.search", searchPrompt(service, domain), { maxResults: 5 });
     if (searched) {
-      findings = searched.findings;
+      findings = keepServiceFindings(searched.findings, domain);
       for (const citation of searched.citations) {
         if (isNoiseDomain(hostOf(citation.url)) || docs.some((doc) => doc.url === citation.url)) continue;
+        if (domain && !belongsTo(citation.url, domain)) continue;
         docs.push({ url: citation.url, title: citation.title, excerpt: excerpt(citation.content) });
       }
       await step(`поиск в интернете: ${searched.citations.length} источник(ов)`);
@@ -92,7 +133,7 @@ export async function discoverService(input: DiscoveryInput, deps: DiscoveryDeps
         if (!docs.some((doc) => doc.url === seed)) rememberDoc(docs, seed, "", "");
         if (pages.length) {
           const extracted = await askModel(deps, "discover.extract", extractPrompt(service, domain, findings, pages), null);
-          if (extracted) findings = mergeFindings(findings, extracted.findings);
+          if (extracted) findings = keepServiceFindings(mergeFindings(findings, extracted.findings), domain);
           await step(`прочитана документация: ${pages.map((page) => page.title || page.finalUrl).join("; ")}`.slice(0, 300));
         }
       }

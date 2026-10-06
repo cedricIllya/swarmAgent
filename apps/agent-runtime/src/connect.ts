@@ -208,6 +208,18 @@ export function proofUrls(readEndpoints: string[], baseUrl: string | null): stri
 }
 
 /**
+ * Проверка ключа идёт только по хосту сервиса. Найденный MCP `gensite.ru`
+ * не доказывается запросом на `gitverse.ru`, даже если поиск так написал.
+ */
+export function proofUrlsForService(readEndpoints: string[], baseUrl: string | null, serviceUrls: string[]): string[] {
+  const onService = (url: string) => credentialHostAllowed(url, serviceUrls);
+  return proofUrls(
+    readEndpoints.filter(onService),
+    baseUrl && onService(baseUrl) ? baseUrl : null,
+  );
+}
+
+/**
  * Ключ доказан, если запрос с ним вернул 2xx.
  * Таймаут, 5xx и 429 — не опровержение.
  */

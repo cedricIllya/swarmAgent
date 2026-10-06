@@ -9,6 +9,7 @@ import {
   mailTouchesHost,
   parseAuthScheme,
   proofUrls,
+  proofUrlsForService,
   proveApiKey,
   recipeAuth,
   serviceApprovalGranted,
@@ -69,6 +70,18 @@ describe("parseAuthScheme", () => {
     expect(parseAuthScheme("не заголовок")).toBeNull();
     expect(recipeAuth("Authorization: Bearer api_key")).toEqual({ auth: "bearer", authHeader: "Authorization" });
     expect(recipeAuth("X-Api-Key")).toEqual({ auth: "header", authHeader: "X-Api-Key" });
+  });
+});
+
+describe("proofUrlsForService", () => {
+  it("does not prove a gensite MCP token against gitverse", () => {
+    const service = ["https://gensite.ru/dashboard", "https://gensite.ru/api/mcp", "gensite.ru"];
+    expect(
+      proofUrlsForService(["https://gitverse.ru/api/v1/repos"], "https://gitverse.ru/api", service),
+    ).toEqual([]);
+    expect(
+      proofUrlsForService(["https://gensite.ru/api/v1/me"], "https://gitverse.ru/api", service),
+    ).toEqual(["https://gensite.ru/api/v1/me"]);
   });
 });
 

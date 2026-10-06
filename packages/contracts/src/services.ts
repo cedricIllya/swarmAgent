@@ -44,6 +44,43 @@ export const ServiceRecipeSchema = z.object({
 
 export type ServiceRecipe = z.infer<typeof ServiceRecipeSchema>;
 
+function hostOnDomains(url: string, domains: string[]): boolean {
+  let host = "";
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return domains.some((domain) => {
+    const root = domain.toLowerCase();
+    return host === root || host.endsWith(`.${root}`);
+  });
+}
+
+/**
+ * API, браузер и MCP рецепта остаются, только если их хост — домен этого сервиса.
+ * Страница другого продукта (GitVerse для Gensite) в каталог не попадает.
+ * Заметки после такой чистки сохраняют только фразы со ссылкой на свой домен.
+ */
+export function withoutForeignEndpoints(recipe: ServiceRecipe): ServiceRecipe {
+  if (!recipe.domains.length) return recipe;
+  const ok = (url: string | undefined) => !url || hostOnDomains(url, recipe.domains);
+  const mcp = recipe.mcp && ok(recipe.mcp.url) ? recipe.mcp : undefined;
+  const api = recipe.api && ok(recipe.api.baseUrl) && ok(recipe.api.docsUrl) ? recipe.api : undefined;
+  const browser = recipe.browser && ok(recipe.browser.loginUrl) && ok(recipe.browser.appUrl) ? recipe.browser : undefined;
+  const dropped = mcp !== recipe.mcp || api !== recipe.api || browser !== recipe.browser;
+  const notes = dropped
+    ? recipe.notes
+        .split(/(?<=\.)\s+/)
+        .filter((sentence) => {
+          const urls = [...sentence.matchAll(/https?:\/\/[^\s)]+/g)].map((match) => match[0].replace(/[.,;]+$/, ""));
+          return urls.length > 0 && urls.every((url) => hostOnDomains(url, recipe.domains));
+        })
+        .join(" ")
+    : recipe.notes;
+  return { ...recipe, mcp, api, browser, notes };
+}
+
 /**
  * Секрет агента для сервиса из каталога. Принадлежит тому агенту, который вошёл,
  * и уходит только на его машину уже расшифрованным.

@@ -1,3 +1,4 @@
+import { withoutForeignEndpoints } from "@swarm/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
   composeRecipe,
@@ -5,6 +6,7 @@ import {
   htmlToText,
   interpretMcpResponse,
   matchRegistryServers,
+  pickDocsSeed,
   probeMcp,
   rankDocLinks,
   registryNameDomain,
@@ -203,6 +205,50 @@ describe("discoverService", () => {
     expect(urls).not.toContain("https://developer.acme.io/");
   });
 
+  it("does not treat another product's MCP docs as this service", async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("https://registry.test/")) return res(JSON.stringify({ servers: [] }), 200, { "Content-Type": "application/json" });
+      if (url === "https://gensite.ru/api/mcp" && init?.method === "POST") {
+        return res('{"error":"unauthorized"}', 401, { "Content-Type": "application/json", "WWW-Authenticate": "Bearer" });
+      }
+      return res("no", 404, { "Content-Type": "text/html" });
+    }) as unknown as typeof fetch & { mock: { calls: unknown[][] } };
+    const chat = vi.fn(async () => ({
+      text: JSON.stringify({
+        mcpUrl: "https://mcp.gitverse.ru",
+        mcpTransport: "streamable_http",
+        apiBaseUrl: "https://gitverse.ru/api",
+        apiDocsUrl: "https://gitverse.ru/docs/ai/mcp/",
+        authHeader: "Authorization",
+        howToGetKey: "В разделе Управление токенами создайте API-токен",
+        keyPageUrl: "https://gitverse.ru/login",
+        readEndpoints: ["https://gitverse.ru/api/v1/repos"],
+        loginUrl: "https://gitverse.ru/login",
+        appUrl: "https://gitverse.ru/",
+        notes: "GitVerse MCP требует Bearer токен. Endpoint: https://mcp.gitverse.ru.",
+      }),
+      promptTokens: 1,
+      completionTokens: 1,
+      costUsd: 0,
+      model: "m",
+      citations: [{ url: "https://gitverse.ru/docs/ai/mcp/", title: "GitVerse MCP", content: "endpoint https://mcp.gitverse.ru" }],
+    }));
+
+    const result = await discoverService(
+      { service: "Gensite", domain: "gensite.ru", links: ["https://gensite.ru/register?invite=abc"] },
+      { fetchImpl, openRouter: { chat } as unknown as OpenRouterClient, model: "m", agentId: "ag", registryUrl: "https://registry.test" },
+    );
+
+    const fetched = fetchImpl.mock.calls.map((call) => String(call[0]));
+    expect(fetched.some((url) => url.includes("gitverse.ru"))).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("gitverse");
+    expect(result.mcp).toMatchObject({ url: "https://gensite.ru/api/mcp", auth: "bearer", verified: true });
+    expect(result.api).toBeNull();
+    expect(result.browser).toMatchObject({ loginUrl: "https://gensite.ru/register?invite=abc", appUrl: "https://gensite.ru/" });
+    expect(chat).toHaveBeenCalledTimes(1);
+  });
+
   it("skips search when a verified MCP needs no token", async () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
@@ -360,6 +406,40 @@ describe("discoverService", () => {
       expect(seen).not.toContain(skipped);
     }
     expect(chat).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("withoutForeignEndpoints", () => {
+  it("drops GitVerse from a Gensite recipe", () => {
+    const cleaned = withoutForeignEndpoints({
+      slug: "gensite",
+      name: "Gensite",
+      kind: "mcp",
+      domains: ["gensite.ru"],
+      mcp: { url: "https://gensite.ru/api/mcp", transport: "streamable_http", auth: "bearer", includeTools: [] },
+      api: { baseUrl: "https://gitverse.ru/api", docsUrl: "https://gitverse.ru/docs/ai/mcp/", auth: "bearer", authHeader: "Authorization" },
+      browser: { loginUrl: "https://gitverse.ru/login", appUrl: "https://gitverse.ru/" },
+      notes:
+        "GitVerse MCP требует Bearer. Endpoint: https://mcp.gitverse.ru. MCP: https://gensite.ru/api/mcp (проверен). Документация API: https://gitverse.ru/docs/ai/mcp/. Ключ: в разделе Управление токенами.",
+      discoveredBy: null,
+    });
+    expect(cleaned.mcp?.url).toBe("https://gensite.ru/api/mcp");
+    expect(cleaned.api).toBeUndefined();
+    expect(cleaned.browser).toBeUndefined();
+    expect(cleaned.notes).toBe("MCP: https://gensite.ru/api/mcp (проверен).");
+    expect(cleaned.notes).not.toContain("gitverse");
+  });
+});
+
+describe("pickDocsSeed", () => {
+  it("ignores a high-scoring MCP page on another domain", () => {
+    expect(
+      pickDocsSeed("gensite.ru", "https://gitverse.ru/docs/ai/mcp/", [
+        "https://gitverse.ru/docs/ai/mcp/",
+        "https://gensite.ru/docs/mcp",
+      ]),
+    ).toBe("https://gensite.ru/docs/mcp");
+    expect(pickDocsSeed("gensite.ru", null, ["https://gitverse.ru/docs/ai/mcp/"])).toBeNull();
   });
 });
 

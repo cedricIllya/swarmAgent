@@ -12,7 +12,7 @@ import {
   OWNER_OUTAGE,
   interpretApiKeyOutput,
   looksLikeServiceApprovalWait,
-  proofUrls,
+  proofUrlsForService,
   proveApiKey,
   readPagePrompt,
   recipeAuth,
@@ -591,12 +591,14 @@ async function seekApiKey(
 ): Promise<{ token: string | null; proof: Proof; baseUrl: string | null; authHeader: string | null; docsUrl: string | null; notes: string }> {
   const skyvern = rt.skyvern;
   if (!skyvern) return { token: null, proof: "not_tried", baseUrl: null, authHeader: null, docsUrl: null, notes: "" };
-  const hinted = args.discovery?.api?.keyPageUrl ?? null;
-  const baseUrl = args.discovery?.api?.baseUrl ?? null;
+  const serviceUrls = [landedUrl, args.url, args.discovery?.mcp?.url, args.discovery?.domain].filter((u): u is string => Boolean(u));
+  const onService = (url: string | null) => (url && credentialHostAllowed(url, serviceUrls) ? url : null);
+  const hinted = onService(args.discovery?.api?.keyPageUrl ?? null);
+  const baseUrl = onService(args.discovery?.api?.baseUrl ?? null);
   const authHeader = args.discovery?.api?.authHeader || null;
-  const docsUrl = args.discovery?.api?.docsUrl ?? null;
+  const docsUrl = onService(args.discovery?.api?.docsUrl ?? null);
   const anchors = [landedUrl, hinted, baseUrl, docsUrl].filter((u): u is string => Boolean(u));
-  const start = hinted && credentialHostAllowed(hinted, anchors) ? hinted : keySearchStart(landedUrl, args.url ?? null);
+  const start = hinted ?? keySearchStart(landedUrl, args.url ?? null);
 
   let feedback: string | null = null;
   let forceRead = false;
@@ -639,7 +641,7 @@ async function seekApiKey(
   }
   if (notes) await rt.step(run.id, "note", notes.slice(0, 300));
 
-  const proveUrls = proofUrls(args.discovery?.api?.readEndpoints ?? [], baseUrl).filter((u) => credentialHostAllowed(u, anchors));
+  const proveUrls = proofUrlsForService(args.discovery?.api?.readEndpoints ?? [], args.discovery?.api?.baseUrl ?? null, serviceUrls);
   if (!token || !authHeader || !proveUrls.length) {
     return { token, proof: token ? "not_tried" : "not_tried", baseUrl, authHeader, docsUrl, notes };
   }

@@ -2,6 +2,7 @@ import {
   mergeCredential,
   ServiceCredentialSchema,
   ServiceRecipeSchema,
+  withoutForeignEndpoints,
   type ServiceCredential,
   type ServiceRecipe,
   type ServicesSnapshot,
@@ -12,17 +13,19 @@ import { and, desc, eq, newId, schema, type Db } from "@swarm/db";
 type RecipeRow = typeof schema.serviceRecipes.$inferSelect;
 
 function rowToRecipe(row: RecipeRow): ServiceRecipe {
-  return ServiceRecipeSchema.parse({
-    slug: row.slug,
-    name: row.name,
-    kind: row.kind,
-    domains: row.domains,
-    mcp: row.mcp ?? undefined,
-    api: row.api ?? undefined,
-    browser: row.browser ?? undefined,
-    notes: row.notes,
-    discoveredBy: row.discoveredByAgentId,
-  });
+  return withoutForeignEndpoints(
+    ServiceRecipeSchema.parse({
+      slug: row.slug,
+      name: row.name,
+      kind: row.kind,
+      domains: row.domains,
+      mcp: row.mcp ?? undefined,
+      api: row.api ?? undefined,
+      browser: row.browser ?? undefined,
+      notes: row.notes,
+      discoveredBy: row.discoveredByAgentId,
+    }),
+  );
 }
 
 /** Весь общий каталог. Он один на продукт, без фильтра по тенанту. */
