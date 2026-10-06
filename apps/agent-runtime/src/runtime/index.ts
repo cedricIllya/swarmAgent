@@ -1,18 +1,18 @@
 import type { BrowserSession, ChatMessage, Run, RunStep, RuntimeState } from "@swarm/contracts";
 import { emptyUsage } from "@swarm/usage";
-import { ControlPlaneClient } from "../control-plane";
-import { HermesClient } from "../hermes";
-import { OpenRouterClient } from "../openrouter";
+import { ControlPlaneClient } from "../core/control-plane";
+import { HermesClient } from "../llm/hermes";
+import { OpenRouterClient } from "../llm/openrouter";
 import { Store } from "../store";
 import { SkyvernClient } from "../browser/skyvern";
-import { resumeDeferredMail } from "../inbox";
-import { systemPrompt } from "../prompts";
-import { redactInternal } from "../redact";
-import { ensureWorkGuides } from "../service-guide";
-import { ensureRunId } from "../service-work";
-import { recordUsage, turnDetails, type TaskRef } from "../usage";
-import type { RuntimeConfig } from "../config";
-import { log, warn } from "../log";
+import { resumeDeferredMail } from "../tasks/inbox";
+import { systemPrompt } from "../llm/prompts";
+import { redactInternal } from "../core/redact";
+import { ensureWorkGuides } from "../onboarding/service-guide";
+import { ensureRunId } from "../tasks/service-work";
+import { recordUsage, turnDetails, type TaskRef } from "../core/usage";
+import type { RuntimeConfig } from "../core/config";
+import { log, warn } from "../core/log";
 import { Approvals } from "./approvals";
 import { BrowserControl } from "./browser";
 import { Handoffs } from "./handoffs";
@@ -85,12 +85,17 @@ export class AgentRuntime {
 
   // Runs
 
-  async createRun(trigger: Run["trigger"], title: string, threadId: string | null): Promise<Run> {
+  async createRun(
+    trigger: Run["trigger"],
+    title: string,
+    threadId: string | null,
+    status: Run["status"] = "running",
+  ): Promise<Run> {
     const run: Run = {
       id: newId("run"),
       startedAt: new Date().toISOString(),
       finishedAt: null,
-      status: "running",
+      status,
       trigger,
       title: title.slice(0, 120),
       summary: "",
@@ -98,7 +103,7 @@ export class AgentRuntime {
     };
     await this.store.saveRun(run);
     this.armAbort(run.id);
-    log("run", "начата", { id: run.id, trigger, title: run.title });
+    log("run", status === "queued" ? "в очереди" : "начата", { id: run.id, trigger, title: run.title });
     return run;
   }
 

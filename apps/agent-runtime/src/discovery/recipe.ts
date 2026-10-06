@@ -1,6 +1,6 @@
 import type { ServiceRecipe } from "@swarm/contracts";
-import { recipeAuth } from "../connect";
-import { hostOf, rootDomain, sameBrand } from "../domains";
+import { recipeAuth } from "../onboarding/connect";
+import { hostOf, rootDomain, sameBrand } from "../onboarding/domains";
 import { httpsUrl } from "./http";
 import type { ApiFinding, McpFinding } from "./types";
 

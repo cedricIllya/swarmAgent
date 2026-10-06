@@ -143,6 +143,8 @@ const ConnectedServiceSchema = z.object({
   /** Имя, которым агент заполнил регистрацию. */
   accountName: z.string().nullable().optional(),
   hasPassword: z.boolean().optional(),
+  /** Есть ли назначенная работа. null — ещё не выяснили. */
+  watchesTasks: z.boolean().nullable().optional(),
 });
 
 export const RuntimeStateSchema = z.object({

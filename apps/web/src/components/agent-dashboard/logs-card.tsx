@@ -8,6 +8,7 @@ import { ApprovalRow, QuestionCard } from "./approval-bubbles";
 import { SessionShots } from "./browser-bubble";
 import { fmtTime } from "./format";
 import { SecretValue, StepText } from "./secret-value";
+import { TaskWatchTag } from "../task-watch-tag";
 import { accessKindLabel, type AgentAccess } from "./agent-access";
 import { presentSteps, forPerson } from "./present-steps";
 import { servicesForRun } from "./task-services";
@@ -184,6 +185,7 @@ function AccessRow({ login }: { login: AgentAccess }) {
         <div className="row" style={{ gap: 8 }}>
           <span>{login.name}</span>
           <span className="badge">{accessKindLabel(login.kind)}</span>
+          <TaskWatchTag watchesTasks={login.watchesTasks} />
         </div>
         {(login.accountName || login.accountEmail) && (
           <div className="small" style={{ marginTop: 4 }}>
@@ -414,6 +416,7 @@ function RunItem({
               <span key={s.slug} className="service-chip">
                 {s.name}
                 <span className="badge">{accessKindLabel(s.kind)}</span>
+                <TaskWatchTag watchesTasks={accesses.find((login) => login.slug === s.slug)?.watchesTasks} />
               </span>
             ))}
           </div>

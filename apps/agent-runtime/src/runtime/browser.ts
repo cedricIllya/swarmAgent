@@ -2,9 +2,9 @@ import type { Run, ServiceCredential } from "@swarm/contracts";
 import { chromeAvailable, chromeExecutable, ManagedBrowserSession, serviceProfileDir, type BrowserDeps } from "../browser/stagehand";
 import { acceptInvite, type AcceptInviteResult } from "../browser/invite";
 import { applyStorageToProfile } from "../browser/session-transfer";
-import { OWNER_OUTAGE } from "../connect";
-import { hostOf, rootDomain } from "../domains";
-import { warn } from "../log";
+import { OWNER_OUTAGE } from "../onboarding/connect";
+import { hostOf, rootDomain } from "../onboarding/domains";
+import { warn } from "../core/log";
 import type { AgentRuntime } from "./index";
 
 /**

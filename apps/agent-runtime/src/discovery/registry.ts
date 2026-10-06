@@ -1,5 +1,5 @@
-import { hostOf, rootDomain, sameBrand } from "../domains";
-import { warn } from "../log";
+import { hostOf, rootDomain, sameBrand } from "../onboarding/domains";
+import { warn } from "../core/log";
 import { PROBE_TIMEOUT_MS, type McpFinding, type McpTransport } from "./types";
 
 /** Официальный реестр MCP: удалённые серверы, чьё имя подтверждает владение доменом. */

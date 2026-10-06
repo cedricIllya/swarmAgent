@@ -2,7 +2,7 @@ import { appendFile, mkdir, readdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { ChatMessage, ChatThread, Run } from "@swarm/contracts";
-import { emitRuntime } from "../events";
+import { emitRuntime } from "../core/events";
 import { readJson, readJsonl, writeJson } from "./files";
 
 export interface ChatMeta {

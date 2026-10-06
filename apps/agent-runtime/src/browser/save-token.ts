@@ -1,6 +1,6 @@
 import type { ServiceCredential, ServiceRecipe } from "@swarm/contracts";
 import type { AgentRuntime } from "../runtime";
-import { mcpTokenCheck, type TokenCheck } from "../report-guard";
+import { mcpTokenCheck, type TokenCheck } from "../onboarding/report-guard";
 import type { ManagedBrowserSession } from "./stagehand";
 
 export type TokenPick = { token: string; verified: boolean | null } | { token: null; rejected: number };

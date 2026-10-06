@@ -1,7 +1,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser, type BrowserContext, type Cookie } from "playwright-core";
-import { log, warn } from "../log";
+import { log, warn } from "../core/log";
 import { acquireProfile } from "./profile-lock";
 
 /**

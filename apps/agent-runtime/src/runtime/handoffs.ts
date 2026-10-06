@@ -1,10 +1,10 @@
 import type { PendingApproval, Run } from "@swarm/contracts";
 import type { DiscoveryResult } from "../discovery";
-import { mailTouchesHost } from "../connect";
+import { mailTouchesHost } from "../onboarding/connect";
 import { runConnectFollowup, type SecretNeed } from "../onboarding";
-import { escalationNote } from "../prompts";
-import { redactInternal } from "../redact";
-import { warn } from "../log";
+import { escalationNote } from "../llm/prompts";
+import { redactInternal } from "../core/redact";
+import { warn } from "../core/log";
 import { isOwnBrowser } from "../browser/stagehand";
 import { newId } from "./ids";
 import type { AgentRuntime } from "./index";

@@ -10,13 +10,13 @@ import {
   UpdateSettingsRequestSchema,
 } from "@swarm/contracts";
 import type { AgentRuntime } from "../runtime";
-import { processEmail } from "../inbox";
-import { handleChat, retryChatRun } from "../chat";
-import { tick } from "../cron";
-import { streamRuntimeEvents } from "../events-http";
-import { machineIsIdle, markSleepy, noteActivity } from "../idle";
+import { processEmail } from "../tasks/inbox";
+import { handleChat, retryChatRun } from "../tasks/chat";
+import { tick } from "../tasks/cron";
+import { streamRuntimeEvents } from "./events-routes";
+import { machineIsIdle, markSleepy, noteActivity } from "../tasks/idle";
 import { videoMediaType } from "../browser/recordings";
-import { warn } from "../log";
+import { warn } from "../core/log";
 
 /** Control plane → runtime: состояние, почта, чаты, настройки, одобрения, тик. */
 export function controlPlaneRoutes(rt: AgentRuntime): Hono {

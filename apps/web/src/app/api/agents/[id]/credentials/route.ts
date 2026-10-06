@@ -13,15 +13,19 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!agent) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   const [recipes, credentials] = await Promise.all([listRecipes(db()), listCredentials(db(), agent.id)]);
-  const nameOf = new Map(recipes.map((r) => [r.slug, r.name]));
+  const recipeOf = new Map(recipes.map((r) => [r.slug, r]));
   return NextResponse.json(
-    credentials.map((c) => ({
-      slug: c.slug,
-      name: nameOf.get(c.slug) ?? c.slug,
-      kind: c.kind,
-      accountEmail: c.accountEmail ?? null,
-      accountName: c.accountName ?? null,
-      password: c.password ?? null,
-    })),
+    credentials.map((c) => {
+      const recipe = recipeOf.get(c.slug);
+      return {
+        slug: c.slug,
+        name: recipe?.name ?? c.slug,
+        kind: c.kind,
+        accountEmail: c.accountEmail ?? null,
+        accountName: c.accountName ?? null,
+        password: c.password ?? null,
+        watchesTasks: recipe?.watchesTasks ?? null,
+      };
+    }),
   );
 }

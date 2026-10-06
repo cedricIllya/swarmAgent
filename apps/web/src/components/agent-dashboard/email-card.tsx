@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Agent } from "@swarm/contracts";
 import { DisconnectServiceButton } from "../disconnect-service";
+import { TaskWatchTag } from "../task-watch-tag";
 import { accessKindLabel, type AgentAccess } from "./agent-access";
 import { ListSkeleton } from "../skeleton";
 
@@ -50,6 +51,7 @@ export function EmailCard({
                 </div>
                 <div className="row" style={{ gap: 8, flex: "none" }}>
                   <span className="badge">{accessKindLabel(service.kind)}</span>
+                  <TaskWatchTag watchesTasks={service.watchesTasks} />
                   <DisconnectServiceButton
                     agentId={agent.id}
                     slug={service.slug}

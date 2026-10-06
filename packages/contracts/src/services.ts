@@ -39,10 +39,26 @@ export const ServiceRecipeSchema = z.object({
     .optional(),
   /** Что уже выяснили о сервисе словами, чтобы следующий агент не искал заново. */
   notes: z.string().default(""),
+  /**
+   * Есть ли назначенная работа, которую надо смотреть по расписанию.
+   * true — задачи, карточки, тикеты, упоминания.
+   * false — оплата, ключи, хостинг и прочее: открывать только по прямой просьбе.
+   * Нет значения — ещё не выяснили, в плановую проверку не берём.
+   */
+  watchesTasks: z.boolean().nullable().optional(),
   discoveredBy: z.string().nullable().default(null),
 });
 
 export type ServiceRecipe = z.infer<typeof ServiceRecipeSchema>;
+
+/** Повторный отчёт без этого поля не стирает уже решённую классификацию. */
+export function keepWatchesTasks(
+  prev: boolean | null | undefined,
+  next: boolean | null | undefined,
+): boolean | null {
+  if (typeof next === "boolean") return next;
+  return typeof prev === "boolean" ? prev : null;
+}
 
 function hostOnDomains(url: string, domains: string[]): boolean {
   let host = "";

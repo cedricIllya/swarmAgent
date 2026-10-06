@@ -2,17 +2,17 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { timingSafeEqual } from "node:crypto";
 import { ZodError } from "zod";
-import { loadConfig } from "./config";
+import { loadConfig } from "./core/config";
 import { describeZodError } from "./http/lenient";
-import { applyBootstrap } from "./bootstrap";
+import { applyBootstrap } from "./core/bootstrap";
 import { AgentRuntime } from "./runtime";
 import { resumeConnect } from "./onboarding";
-import { startTicker } from "./cron";
-import { startIdleWatch } from "./idle";
+import { startTicker } from "./tasks/cron";
+import { startIdleWatch } from "./tasks/idle";
 import { controlPlaneRoutes } from "./http/control-plane-routes";
 import { browserRoutes } from "./http/browser-routes";
 import { toolRoutes } from "./http/tool-routes";
-import { log, warn } from "./log";
+import { log, warn } from "./core/log";
 
 // Volume общий с Hermes (uid 10000). umask 077 оставлял services.json режимом 0600,
 // Hermes не мог прочитать рецепт и пытался регистрировать MCP через hermes_tools.

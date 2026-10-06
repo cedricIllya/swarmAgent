@@ -1,11 +1,11 @@
 import path from "node:path";
 import { rm } from "node:fs/promises";
-import { mergeCredential, type RuntimeReport, type ServicesSnapshot, type RuntimeState } from "@swarm/contracts";
+import { keepWatchesTasks, mergeCredential, type RuntimeReport, type ServicesSnapshot, type RuntimeState } from "@swarm/contracts";
 import { serviceProfileDir } from "../browser/stagehand";
-import { emitRuntime } from "../events";
-import { matchRecipe } from "../domains";
-import { syncHermesMcp } from "../hermes-config-sync";
-import { warn } from "../log";
+import { emitRuntime } from "../core/events";
+import { matchRecipe } from "../onboarding/domains";
+import { syncHermesMcp } from "../llm/hermes-config-sync";
+import { warn } from "../core/log";
 import type { AgentRuntime } from "./index";
 
 /** Секреты, которые были в прошлом снимке и пропали в новом. */
@@ -40,6 +40,7 @@ export class ServiceCatalog {
           accountEmail: cred?.accountEmail ?? null,
           accountName: cred?.accountName ?? null,
           hasPassword: Boolean(cred?.password),
+          watchesTasks: r.watchesTasks ?? null,
         };
       });
   }
@@ -86,11 +87,26 @@ export class ServiceCatalog {
     opts: { quiet?: boolean } = {},
   ): Promise<{ slug: string; name: string; kind: "mcp" | "api" | "browser" }> {
     const { rt } = this;
+    const snapBefore = input.type === "recipe" || input.type === "credential" ? await rt.store.readServices() : null;
     const prev =
       input.type === "credential"
-        ? (await rt.store.readServices())?.credentials.find((c) => c.slug === input.credential.slug)
+        ? snapBefore?.credentials.find((c) => c.slug === input.credential.slug)
         : undefined;
-    const body = input.type === "credential" ? { ...input, credential: mergeCredential(prev, input.credential) } : input;
+    const body =
+      input.type === "credential"
+        ? { ...input, credential: mergeCredential(prev, input.credential) }
+        : input.type === "recipe"
+          ? {
+              ...input,
+              recipe: {
+                ...input.recipe,
+                watchesTasks: keepWatchesTasks(
+                  snapBefore?.recipes.find((r) => r.slug === input.recipe.slug)?.watchesTasks,
+                  input.recipe.watchesTasks,
+                ),
+              },
+            }
+          : input;
     await rt.controlPlane.report(body);
     const snap = await rt.store.readServices();
     const reported =

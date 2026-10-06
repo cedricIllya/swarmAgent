@@ -4,7 +4,7 @@ import path from "node:path";
 import { withoutForeignEndpoints, type BrowserSession, type InboundEmail, type PendingApproval, type Run, type RunStep, type ServicesSnapshot, type UsageRecord } from "@swarm/contracts";
 import { parseUsageJsonl, summarizeUsage } from "@swarm/usage";
 import { shotFile } from "../browser/shots";
-import { emitRuntime } from "../events";
+import { emitRuntime } from "../core/events";
 import { ChatStore } from "./chats";
 import { SHARED_MODE, chmodShared, readJson, readJsonl, writeJson } from "./files";
 

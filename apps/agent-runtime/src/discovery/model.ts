@@ -1,6 +1,6 @@
-import { canonicalAuthHeader, isConcreteReadUrl } from "../connect";
-import { warn } from "../log";
-import type { WebCitation } from "../openrouter";
+import { canonicalAuthHeader, isConcreteReadUrl } from "../onboarding/connect";
+import { warn } from "../core/log";
+import type { WebCitation } from "../llm/openrouter";
 import { httpsUrl } from "./http";
 import type { FetchedPage } from "./pages";
 import type { DiscoveryDeps, McpTransport } from "./types";

@@ -1,5 +1,5 @@
-import { isConcreteReadUrl } from "../connect";
-import { hostOf, isNoiseDomain, pickServiceDomain, slugFor } from "../domains";
+import { isConcreteReadUrl } from "../onboarding/connect";
+import { hostOf, isNoiseDomain, pickServiceDomain, slugFor } from "../onboarding/domains";
 import { httpsUrl } from "./http";
 import { probeMcp, verifyCandidates, wellKnownMcpUrls } from "./mcp-probe";
 import { EMPTY_FINDINGS, askModel, extractPrompt, mergeFindings, searchCovers, searchPrompt, type ModelFindings } from "./model";

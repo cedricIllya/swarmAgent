@@ -1,8 +1,8 @@
 import type { PendingApproval, Run } from "@swarm/contracts";
-import { approvalContinuationPrompt, questionContinuationPrompt } from "../prompts";
-import { redactInternal } from "../redact";
-import { finishServiceThink } from "../service-work";
-import { warn } from "../log";
+import { approvalContinuationPrompt, questionContinuationPrompt } from "../llm/prompts";
+import { redactInternal } from "../core/redact";
+import { finishServiceThink } from "../tasks/service-work";
+import { warn } from "../core/log";
 import { newId } from "./ids";
 import type { AgentRuntime } from "./index";
 

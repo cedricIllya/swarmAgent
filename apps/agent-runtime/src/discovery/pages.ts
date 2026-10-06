@@ -1,4 +1,4 @@
-import { hostOf, isNoiseDomain, sameBrand } from "../domains";
+import { hostOf, isNoiseDomain, sameBrand } from "../onboarding/domains";
 import { discardBody, httpsUrl, readHead } from "./http";
 import { PROBE_TIMEOUT_MS } from "./types";
 

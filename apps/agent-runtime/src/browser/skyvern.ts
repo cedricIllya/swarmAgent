@@ -1,11 +1,11 @@
 import type { BrowserSession } from "@swarm/contracts";
 import type { Store } from "../store";
 import { downloadUrlTo } from "./recordings";
-import { blockerKind, looksLikeServiceApprovalWait } from "../connect";
+import { blockerKind, looksLikeServiceApprovalWait } from "../onboarding/connect";
 import { generatePassword, type AcceptInviteResult } from "./invite";
 import { registrationNameLine } from "./person-name";
 import { currentUrlFromCdp, exportStorageFromCdp, type BrowserStorageState } from "./session-transfer";
-import { log, warn } from "../log";
+import { log, warn } from "../core/log";
 
 /**
  * Skyvern — только онбординг: принять приглашение, зарегистрироваться, войти.

@@ -1,7 +1,7 @@
 import type { Run } from "@swarm/contracts";
 import { discoverService, fetchPage, type DiscoveryInput, type DiscoveryResult, type FetchedPage } from "../discovery";
-import type { WebCitation } from "../openrouter";
-import { recordUsage, type TaskRef } from "../usage";
+import type { WebCitation } from "../llm/openrouter";
+import { recordUsage, type TaskRef } from "../core/usage";
 import type { AgentRuntime } from "./index";
 
 /** Что runtime умеет искать и читать в интернете от имени агента. */

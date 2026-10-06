@@ -1,5 +1,5 @@
 import type { ServiceRecipe } from "@swarm/contracts";
-import type { ChatResult, OpenRouterClient } from "../openrouter";
+import type { ChatResult, OpenRouterClient } from "../llm/openrouter";
 
 export const MCP_REGISTRY_URL = "https://registry.modelcontextprotocol.io";
 export const PROBE_TIMEOUT_MS = 6_000;

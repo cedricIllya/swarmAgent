@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Agent } from "@swarm/contracts";
 import type { TenantConnection } from "@swarm/connections";
 import { accessKindLabel } from "./agent-dashboard/agent-access";
+import { TaskWatchTag } from "./task-watch-tag";
 import { AgentFace } from "./agent-avatar";
 import { ServiceAgentChips } from "./disconnect-service";
 
@@ -136,6 +137,7 @@ function ServiceRow({ connection }: { connection: TenantConnection }) {
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           <strong>{connection.name}</strong>
           <span className="badge">{accessKindLabel(connection.kind)}</span>
+          <TaskWatchTag watchesTasks={connection.watchesTasks} />
         </div>
         {connection.domains.length > 0 && <div className="faint small">{connection.domains.join(", ")}</div>}
       </div>

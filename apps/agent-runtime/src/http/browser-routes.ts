@@ -4,7 +4,7 @@ import { savedBrowserSlug } from "../browser/local-session";
 import { credentialVariables, referencedVariables } from "../browser/secrets";
 import { saveTokenFromPage } from "../browser/save-token";
 import type { AgentRuntime } from "../runtime";
-import { noteActivity } from "../idle";
+import { noteActivity } from "../tasks/idle";
 import { INSTRUCTION_ALIASES, SESSION_ALIASES, skyvernPurpose, withAliases } from "./lenient";
 
 const BrowserOpen = z.object({

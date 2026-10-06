@@ -1,5 +1,5 @@
 import type { ServicesSnapshot } from "@swarm/contracts";
-import { hostOf, matchRecipe, rootDomain } from "../domains";
+import { hostOf, matchRecipe, rootDomain } from "../onboarding/domains";
 
 /**
  * Сервис, в который Skyvern уже вошёл и cookies лежат в профиле своего Chromium.

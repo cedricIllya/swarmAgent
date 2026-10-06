@@ -1,4 +1,5 @@
 import {
+  keepWatchesTasks,
   mergeCredential,
   ServiceCredentialSchema,
   ServiceRecipeSchema,
@@ -8,7 +9,7 @@ import {
   type ServicesSnapshot,
 } from "@swarm/contracts";
 import { decryptJson, encryptJson } from "@swarm/crypto";
-import { and, desc, eq, newId, schema, type Db } from "@swarm/db";
+import { and, desc, eq, isNull, newId, or, schema, type Db } from "@swarm/db";
 
 type RecipeRow = typeof schema.serviceRecipes.$inferSelect;
 
@@ -23,6 +24,7 @@ function rowToRecipe(row: RecipeRow): ServiceRecipe {
       api: row.api ?? undefined,
       browser: row.browser ?? undefined,
       notes: row.notes,
+      watchesTasks: row.watchesTasks,
       discoveredBy: row.discoveredByAgentId,
     }),
   );
@@ -46,6 +48,7 @@ export async function getRecipe(db: Db, slug: string): Promise<ServiceRecipe | n
 export async function upsertRecipe(db: Db, recipe: ServiceRecipe, discoveredByAgentId: string | null): Promise<void> {
   const parsed = ServiceRecipeSchema.parse(recipe);
   const existing = await getRecipe(db, parsed.slug);
+  const watchesTasks = keepWatchesTasks(existing?.watchesTasks, parsed.watchesTasks);
   const rank = { mcp: 3, api: 2, browser: 1 } as const;
   if (existing && rank[existing.kind] > rank[parsed.kind]) {
     await db
@@ -56,6 +59,7 @@ export async function upsertRecipe(db: Db, recipe: ServiceRecipe, discoveredByAg
         api: parsed.api ?? existing.api ?? null,
         browser: parsed.browser ?? existing.browser ?? null,
         notes: existing.notes ? `${existing.notes}\n${parsed.notes}`.trim() : parsed.notes,
+        watchesTasks,
         updatedAt: new Date(),
       })
       .where(eq(schema.serviceRecipes.slug, parsed.slug));
@@ -72,6 +76,7 @@ export async function upsertRecipe(db: Db, recipe: ServiceRecipe, discoveredByAg
       api: parsed.api ?? null,
       browser: parsed.browser ?? null,
       notes: parsed.notes,
+      watchesTasks,
       discoveredByAgentId,
     })
     .onConflictDoUpdate({
@@ -84,6 +89,7 @@ export async function upsertRecipe(db: Db, recipe: ServiceRecipe, discoveredByAg
         api: parsed.api ?? null,
         browser: parsed.browser ?? null,
         notes: parsed.notes,
+        watchesTasks,
         updatedAt: new Date(),
       },
     });
@@ -157,6 +163,8 @@ export interface TenantConnection {
   name: string;
   kind: ServiceRecipe["kind"];
   domains: string[];
+  /** Есть ли назначенная работа. null — ещё не выяснили. */
+  watchesTasks: boolean | null;
   agents: TenantConnectionAgent[];
 }
 
@@ -171,6 +179,7 @@ export async function listTenantConnections(db: Db, tenantId: string): Promise<T
       name: schema.serviceRecipes.name,
       recipeKind: schema.serviceRecipes.kind,
       domains: schema.serviceRecipes.domains,
+      watchesTasks: schema.serviceRecipes.watchesTasks,
       credentialKind: schema.serviceCredentials.kind,
       accountEmail: schema.serviceCredentials.accountEmail,
       updatedAt: schema.serviceCredentials.updatedAt,
@@ -189,7 +198,14 @@ export async function listTenantConnections(db: Db, tenantId: string): Promise<T
   for (const row of rows) {
     let entry = bySlug.get(row.slug);
     if (!entry) {
-      entry = { slug: row.slug, name: row.name, kind: row.recipeKind, domains: row.domains, agents: [] };
+      entry = {
+        slug: row.slug,
+        name: row.name,
+        kind: row.recipeKind,
+        domains: row.domains,
+        watchesTasks: row.watchesTasks,
+        agents: [],
+      };
       bySlug.set(row.slug, entry);
     }
     entry.agents.push({
@@ -204,11 +220,17 @@ export async function listTenantConnections(db: Db, tenantId: string): Promise<T
   return [...bySlug.values()].sort((a, b) => a.name.localeCompare(b.name, "ru"));
 }
 
-/** Агенты, у которых есть хотя бы один доступ. Остальным плановый тик смотреть нечего. */
+/**
+ * Агенты, которых имеет смысл будить на плановый тик:
+ * есть доступ в сервис, где задачи смотрят или ещё не классифицировали.
+ * Сервис с `watchesTasks = false` машину не поднимает.
+ */
 export async function agentIdsWithCredentials(db: Db): Promise<Set<string>> {
   const rows = await db
     .selectDistinct({ agentId: schema.serviceCredentials.agentId })
-    .from(schema.serviceCredentials);
+    .from(schema.serviceCredentials)
+    .innerJoin(schema.serviceRecipes, eq(schema.serviceRecipes.slug, schema.serviceCredentials.slug))
+    .where(or(isNull(schema.serviceRecipes.watchesTasks), eq(schema.serviceRecipes.watchesTasks, true)));
   return new Set(rows.map((r) => r.agentId));
 }
 

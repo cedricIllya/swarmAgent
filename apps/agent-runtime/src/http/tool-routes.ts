@@ -2,10 +2,10 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { RuntimeReportSchema, type RuntimeReport, type ServiceCredential, type ServiceRecipe } from "@swarm/contracts";
 import type { AgentRuntime } from "../runtime";
-import { noteActivity } from "../idle";
-import { redactInternal } from "../redact";
+import { noteActivity } from "../tasks/idle";
+import { redactInternal } from "../core/redact";
 import { withAliases } from "./lenient";
-import { guardCredentialReport, guardRecipeReport, mcpTokenCheck } from "../report-guard";
+import { guardCredentialReport, guardRecipeReport, mcpTokenCheck } from "../onboarding/report-guard";
 import { storedLoginAsked } from "../browser/secrets";
 
 /**

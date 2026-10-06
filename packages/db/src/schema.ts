@@ -168,6 +168,8 @@ export const serviceRecipes = pgTable("service_recipes", {
   api: jsonb("api").$type<Record<string, unknown> | null>(),
   browser: jsonb("browser").$type<Record<string, unknown> | null>(),
   notes: text("notes").notNull().default(""),
+  /** true — в сервисе есть назначенная работа; false — смотреть задачи не нужно; null — ещё не выяснили. */
+  watchesTasks: boolean("watches_tasks"),
   discoveredByAgentId: text("discovered_by_agent_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
