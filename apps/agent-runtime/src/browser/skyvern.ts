@@ -827,11 +827,8 @@ export class SkyvernClient {
     await this.store.appendBrowserAction(meta.id, { type: "skyvern.start", purpose: args.purpose, url: args.url, appUrl: created.app_url ?? null });
     await args.onSession?.(meta);
     await args.onStep?.(`Skyvern: ${args.purpose}`, { sessionId: meta.id, appUrl: created.app_url ?? null });
-    if (args.expectTotp) {
-      await args.onStep?.(
-        `Skyvern ждёт код или ссылку из письма на ${this.totpIdentifier} — runtime прочитает письмо и передаст в TOTP сам`,
-      );
-    }
+    // Ящик захвачен на всякий случай: страница может спросить код. В журнал это не пишем,
+    // пока письмо реально не передано в задачу — иначе кажется, что код ждём уже сейчас.
 
     const deadline = Date.now() + (args.timeoutMs ?? 15 * 60 * 1000);
     let status = "running";
