@@ -57,7 +57,16 @@ async function rolloutOne(agent: AgentRow): Promise<RolloutOutcome> {
     if (state !== "started") return "busy";
     const client = RuntimeClient.for(agent);
     if (!client) return "skipped";
-    if (!rolloutIdle(await client.state())) return "busy";
+    // Машина запущена, но /state не отвечает: работу она уже не ведёт.
+    // Иначе зависший агент навсегда остаётся на старом образе — именно так
+    // agt_3n2s0d6g5h4e46720v6x не получил закрытие сорвавшегося браузера.
+    try {
+      if (!rolloutIdle(await client.state())) return "busy";
+    } catch (e) {
+      // #region agent log
+      console.log(`[debug-105c57] rollout ${agent.id} state unreachable, updating: ${e instanceof Error ? e.message : String(e)}`.slice(0, 240));
+      // #endregion
+    }
   }
   await reconfigureAgent(agent.id, await ownerEmailFor(agent.tenantId));
   return "updated";
