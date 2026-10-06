@@ -4,6 +4,7 @@ import { eq, schema } from "@swarm/db";
 import { rolloutAgents } from "@/lib/agent-rollout";
 import { reconcileProvisioning } from "@/lib/create-agent";
 import { db } from "@/lib/db";
+import { retryInboundMail } from "@/lib/mail-delivery";
 import { awakeRuntime } from "@/lib/runtime-client";
 
 const g = globalThis as { __swarmClock?: boolean };
@@ -83,6 +84,8 @@ export function startAgentClock(): void {
   // Пока чья-то машина поднимается впервые, статус должен обновиться за минуту, а не за четверть часа.
   // Без застрявших агентов это один запрос к базе и ни одного к Fly.
   setInterval(() => void runReconcile(), 60_000);
+  // Письмо, которое не дождалось подъёма машины. Пустая очередь — это возврат без запросов.
+  setInterval(() => void retryInboundMail(), 60_000);
   // Новый процесс — это чаще всего новая выкладка: агентов надо перевести на её образ сразу.
   setTimeout(() => void runTicks(), 20_000);
   console.log("[clock] проверка агентов раз в 15 минут, пока этот процесс не спит");

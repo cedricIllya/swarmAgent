@@ -3,7 +3,7 @@ import { authorizeInbound, normalizeJson, normalizeMailgunForm, parseAddress } f
 import { findAgentByAddress } from "@swarm/agents";
 import { env } from "@/env";
 import { db } from "@/lib/db";
-import { awakeRuntime } from "@/lib/runtime-client";
+import { acceptInbound } from "@/lib/mail-delivery";
 
 /**
  * Единственный URL, который видит Mailgun. Отвечает 200 сразу, работает после ответа.
@@ -61,16 +61,7 @@ export async function POST(req: Request): Promise<Response> {
       console.warn(`[webhooks/email] нет агента для ${addr.localPart}@${addr.domain}; письмо не обработано`);
       return;
     }
-    try {
-      const client = await awakeRuntime(agent);
-      if (!client) {
-        console.warn(`[webhooks/email] агент ${agent.id} не запущен (${agent.status}); письмо не доставлено`);
-        return;
-      }
-      await client.deliverEmail({ email });
-    } catch (e) {
-      console.error(`[webhooks/email] доставка в runtime ${agent.id} упала: ${String(e)}`);
-    }
+    await acceptInbound(agent.id, email);
   });
 
   return NextResponse.json({ ok: true });
