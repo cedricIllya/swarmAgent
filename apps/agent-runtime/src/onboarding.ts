@@ -753,6 +753,14 @@ async function transferSkyvernCookies(
   }
   try {
     const state = await skyvern.exportStorageState(browserSessionId);
+    // Профиль уже открыт другой задачей (например, плановой проверкой) — второй Chromium на нём
+    // не поднимется, cookies кладём прямо в живой контекст.
+    const live = [...rt.browser.sessions.values()].find((s) => s.serviceSlug === slug);
+    if (live) {
+      await live.seedState(state);
+      await rt.step(run.id, "note", `cookies Skyvern переданы в открытый браузер ${slug}`);
+      return true;
+    }
     await applyStorageToProfile({
       profileDir: serviceProfileDir(rt.store, slug),
       state,

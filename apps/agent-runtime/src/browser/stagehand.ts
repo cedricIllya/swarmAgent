@@ -11,6 +11,8 @@ import { recordUsage, type TaskRef } from "../usage";
 import { log, warn } from "../log";
 import { toExtractSchema } from "./schema";
 import { shotFile } from "./shots";
+import { acquireProfile } from "./profile-lock";
+import type { BrowserStorageState } from "./session-transfer";
 
 type LLMContentBlock = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
@@ -46,6 +48,55 @@ type SettlePage = {
 /** Есть ли на странице хоть какой-то текст. Ошибка оценки — считаем, что есть: ждать дальше нечего. */
 async function hasVisibleText(page: SettlePage): Promise<boolean> {
   return page.evaluate<boolean>("(document.body && document.body.innerText || '').trim().length > 0").catch(() => true);
+}
+
+export interface PageReading {
+  url: string;
+  /** Видимый текст страницы, до READ_TEXT_MAX символов. */
+  text: string;
+  /** Значения input/textarea с подписью: сюда сервисы кладут выпущенные ключи. */
+  fields: Array<{ label: string; value: string }>;
+  /** Похожие на ключ или токен строки из текста и полей, точно как на странице. */
+  tokens: string[];
+}
+
+const READ_TEXT_MAX = 20_000;
+const READ_FIELD_MAX = 4_000;
+
+/** Выполняется в странице: текст и поля формы, пароли не читаем. */
+const PAGE_READ_SCRIPT = `(() => {
+  const text = (document.body && document.body.innerText) || "";
+  const fields = [];
+  for (const el of document.querySelectorAll("input, textarea")) {
+    const type = (el.getAttribute("type") || "").toLowerCase();
+    if (type === "password" || type === "hidden" || type === "checkbox" || type === "radio" || type === "submit" || type === "button") continue;
+    const value = typeof el.value === "string" ? el.value : "";
+    if (!value.trim()) continue;
+    const labelEl = el.id ? document.querySelector('label[for="' + el.id.replace(/"/g, '\\\\"') + '"]') : null;
+    const label = (labelEl && labelEl.textContent) || el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.getAttribute("name") || el.id || el.tagName.toLowerCase();
+    fields.push({ label: String(label).trim().slice(0, 80), value: value.slice(0, ${READ_FIELD_MAX}) });
+  }
+  return { text: text.slice(0, ${READ_TEXT_MAX}), fields };
+})()`;
+
+/** Строки, похожие на выпущенный ключ: длинные, без пробелов, не адреса и не слова. */
+export function tokenCandidates(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of text.matchAll(/[A-Za-z0-9][A-Za-z0-9._~+\/=-]{19,}/g)) {
+    const s = m[0].replace(/[.,;:)]+$/, "");
+    if (s.length < 20) continue;
+    if (/^https?:|^www\.|@|\.(com|ru|io|app|org|net|dev)(\/|$)/i.test(s)) continue;
+    if (!/\d/.test(s) && !/[._-]/.test(s)) continue;
+    out.add(s);
+  }
+  return [...out];
+}
+
+export function pageReading(url: string, text: string, fields: Array<{ label: string; value: string }>): PageReading {
+  const tokens = new Set<string>();
+  for (const f of fields) for (const t of tokenCandidates(f.value)) tokens.add(t);
+  for (const t of tokenCandidates(text)) tokens.add(t);
+  return { url, text, fields, tokens: [...tokens] };
 }
 
 export async function settlePage(page: SettlePage, opts: { network: boolean; budgetMs?: number }): Promise<void> {
@@ -153,6 +204,7 @@ export class ManagedBrowserSession {
   private shotN = 0;
   private readonly profile: string;
   private readonly ephemeral: boolean;
+  private releaseProfile: (() => void) | null = null;
 
   constructor(
     private readonly deps: BrowserDeps,
@@ -188,25 +240,52 @@ export class ManagedBrowserSession {
   }
 
   private async connect(): Promise<void> {
-    await mkdir(this.profile, { recursive: true });
-    for (const name of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
-      await rm(path.join(this.profile, name), { force: true }).catch(() => undefined);
+    this.releaseProfile = await acquireProfile(this.profile);
+    try {
+      await mkdir(this.profile, { recursive: true });
+      for (const name of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+        await rm(path.join(this.profile, name), { force: true }).catch(() => undefined);
+      }
+      const executablePath = chromeExecutable();
+      this.browser = await localBrowser.launch({
+        headless: true,
+        executablePath,
+        userDataDir: this.profile,
+        preserveUserDataDir: true,
+        chromiumSandbox: process.getuid?.() !== 0,
+        viewport: { width: 1280, height: 800 },
+        args: ["--disable-dev-shm-usage", "--disable-gpu", "--no-first-run", "--no-default-browser-check", ...userAgentArg(executablePath)],
+      });
+      this.stagehand = await Stagehand.create({
+        browser: this.browser,
+        model: { generate: (params: LLMGenerateParams) => this.generate(params) },
+      } as never);
+    } catch (e) {
+      this.releaseProfile?.();
+      this.releaseProfile = null;
+      throw e;
     }
-    const executablePath = chromeExecutable();
-    this.browser = await localBrowser.launch({
-      headless: true,
-      executablePath,
-      userDataDir: this.profile,
-      preserveUserDataDir: true,
-      chromiumSandbox: process.getuid?.() !== 0,
-      viewport: { width: 1280, height: 800 },
-      args: ["--disable-dev-shm-usage", "--disable-gpu", "--no-first-run", "--no-default-browser-check", ...userAgentArg(executablePath)],
-    });
-    this.stagehand = await Stagehand.create({
-      browser: this.browser,
-      model: { generate: (params: LLMGenerateParams) => this.generate(params) },
-    } as never);
     await this.action({ type: "open", purpose: this.meta.purpose });
+  }
+
+  /** Cookies из другой сессии (Skyvern) — в живой контекст, без второго запуска на том же профиле. */
+  async seedState(state: BrowserStorageState): Promise<void> {
+    if (!this.browser || this.closed) throw new Error("Сессия браузера закрыта");
+    if (state.cookies.length) await this.browser.context.addCookies(state.cookies as never);
+    await this.action({ type: "seed-cookies", cookies: state.cookies.length });
+  }
+
+  /**
+   * Точный текст страницы и значения полей без модели: extract сокращает длинные токены,
+   * а ключ нужен символ в символ.
+   */
+  async read(): Promise<PageReading> {
+    const page = await this.page();
+    await this.settled();
+    const raw = (await page.evaluate(PAGE_READ_SCRIPT)) as { text: string; fields: Array<{ label: string; value: string }> };
+    const reading = pageReading(await page.url(), raw.text, raw.fields);
+    await this.action({ type: "read", url: reading.url, textChars: reading.text.length, fields: reading.fields.length, tokens: reading.tokens.length });
+    return reading;
   }
 
   /** Stagehand думает той же моделью агента через OpenRouter; токены пишем в usage. */
@@ -399,6 +478,8 @@ export class ManagedBrowserSession {
     } catch {
       // процесс Chrome уже мог завершиться
     }
+    this.releaseProfile?.();
+    this.releaseProfile = null;
     if (this.ephemeral) await rm(this.profile, { recursive: true, force: true }).catch(() => undefined);
     await this.action({ type: "close" });
     this.meta.finishedAt = new Date().toISOString();

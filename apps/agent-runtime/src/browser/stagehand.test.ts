@@ -1,5 +1,49 @@
 import { describe, expect, it } from "vitest";
-import { desktopUserAgent, settlePage } from "./stagehand";
+import { desktopUserAgent, pageReading, settlePage, tokenCandidates } from "./stagehand";
+import { acquireProfile } from "./profile-lock";
+
+describe("tokenCandidates", () => {
+  it("находит длинные ключи и пропускает адреса и слова", () => {
+    const text = [
+      "Authorization: Bearer gs1.eyJhbGciOiJIUzI1NiJ9.abcdef0123456789",
+      "Документация: https://gensite.ru/docs/mcp/very-long-path-name",
+      "Напишите на support@gensite.ru или прочитайте инструкциюпоподключению",
+      "sk-live-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345",
+    ].join("\n");
+    const found = tokenCandidates(text);
+    expect(found).toContain("gs1.eyJhbGciOiJIUzI1NiJ9.abcdef0123456789");
+    expect(found).toContain("sk-live-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345");
+    expect(found.some((t) => t.includes("gensite.ru"))).toBe(false);
+    expect(found.some((t) => t.includes("инструкцию"))).toBe(false);
+  });
+
+  it("pageReading собирает токены из полей раньше текста, без повторов", () => {
+    const r = pageReading("https://x/settings", "токен: gs1.aaaaaaaaaaaaaaaaaaaaaaaa", [
+      { label: "Config", value: '{"Authorization":"Bearer gs1.aaaaaaaaaaaaaaaaaaaaaaaa"}' },
+    ]);
+    expect(r.tokens).toEqual(["gs1.aaaaaaaaaaaaaaaaaaaaaaaa"]);
+    expect(r.fields).toHaveLength(1);
+  });
+});
+
+describe("acquireProfile", () => {
+  it("второй захват ждёт освобождения первого, таймаут — ошибка", async () => {
+    const release = await acquireProfile("/tmp/p1");
+    let second = false;
+    const waiting = acquireProfile("/tmp/p1").then((r) => {
+      second = true;
+      r();
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(second).toBe(false);
+    release();
+    await waiting;
+    expect(second).toBe(true);
+    const hold = await acquireProfile("/tmp/p2");
+    await expect(acquireProfile("/tmp/p2", 30)).rejects.toThrow("занят");
+    hold();
+  });
+});
 
 function fakePage(texts: boolean[], opts: { networkIdleRejects?: boolean } = {}) {
   const calls: string[] = [];

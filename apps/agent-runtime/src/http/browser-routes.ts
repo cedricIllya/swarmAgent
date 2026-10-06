@@ -64,6 +64,15 @@ export function browserRoutes(rt: AgentRuntime): Hono {
     return c.json({ data: await s.extract(body.instruction, body.schema) });
   });
 
+  // Точный текст и поля без модели: ключи и токены символ в символ.
+  app.post("/browser/read", async (c) => {
+    noteActivity();
+    const body = Session.parse(withAliases(await c.req.json(), SESSION_ALIASES));
+    const s = rt.browser.sessions.get(body.sessionId);
+    if (!s) return c.json({ error: "session not found" }, 404);
+    return c.json(await s.read());
+  });
+
   app.post("/browser/observe", async (c) => {
     noteActivity();
     const body = Session.extend({ instruction: z.string() }).parse(withAliases(await c.req.json(), INSTRUCTION_ALIASES));

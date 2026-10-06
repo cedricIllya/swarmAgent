@@ -93,7 +93,7 @@ export function secretFollowupPrompt(
       need.cookiesInProfile
         ? `Открой свой браузер: POST /browser/open с runId, purpose, serviceSlug "${need.slug}" и url "${need.appUrl}" — cookies сохранены, ты уже внутри.`
         : `Открой свой браузер: POST /browser/open с runId, purpose, serviceSlug "${need.slug}" и url "${need.appUrl}". Если сервис просит войти — почта ${agentEmail ?? "агента"} и пароль из credentials (slug "${need.slug}") через /browser/act.`,
-      `Дальше /browser/observe и /browser/act (поле instruction): настройки аккаунта → раздел API или MCP → выпустить ${what}; значение забери через /browser/extract. Сессию закрой через /browser/close.`,
+      `Дальше /browser/observe и /browser/act (поле instruction): настройки аккаунта → раздел API или MCP → выпустить ${what}. Значение бери только через POST /browser/read (sessionId): он отдаёт текст страницы и поля символ в символ, список tokens — кандидаты. /browser/extract длинные токены сокращает — для секрета он не годится. Сессию закрой через /browser/close.`,
       `Запиши секрет: POST /report {"type":"credential","credential":{"slug":"${need.slug}","kind":"${kind}","token":"<значение>","accountEmail":"${agentEmail ?? ""}"}}.${kind === "mcp" ? ` Инструменты mcp_${need.slug}_* появятся сами.` : " Затем проверь ключ вызовом API."}`,
     );
   } else {
@@ -243,7 +243,7 @@ export function systemPrompt(ctx: PromptContext): string {
     "Подключение к сервису после регистрации — всегда лестница: 1) MCP, 2) API, 3) браузер. Браузер — только если первых двух нет.",
     "Задачу выполняй в самом сервисе тем же способом. Письмо-уведомление только сообщает о ней: ответ на такое письмо работой не считается.",
     "После каждого действия в сервисе (MCP, curl к API, шаг браузера) сразу пиши в журнал POST /runs/<runId>/step с kind mcp|api|browser. Без записи задача не считается выполненной.",
-    "Работа внутри сервиса без MCP и API — свой браузер через runtime (/browser/open с serviceSlug). Cookies этого сервиса сохраняются (после своего браузера или переноса из Skyvern). Если сессия не вошла — войди по паролю из credentials через /browser/act; коды из писем runtime передаст сам. Skyvern — только регистрация и вход, капчи он обходит сам.",
+    "Работа внутри сервиса без MCP и API — свой браузер через runtime (/browser/open с serviceSlug). Cookies этого сервиса сохраняются (после своего браузера или переноса из Skyvern). Если сессия не вошла — войди по паролю из credentials через /browser/act; коды из писем runtime передаст сам. Ключи и токены со страницы читай через /browser/read (точный текст и поля), не через extract. Skyvern — только регистрация и вход, капчи он обходит сам.",
     "Всегда следуй скиллу swarm-worker. Он описывает локальные эндпоинты runtime:",
     `http://127.0.0.1:${ctx.runtimePort} с заголовком Authorization: Bearer $SWARM_RUNTIME_TOKEN.`,
     "",

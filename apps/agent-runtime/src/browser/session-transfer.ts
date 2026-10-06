@@ -2,6 +2,7 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser, type BrowserContext, type Cookie } from "playwright-core";
 import { log, warn } from "../log";
+import { acquireProfile } from "./profile-lock";
 
 /**
  * Перенос cookies/localStorage из живой сессии Skyvern (CDP) в профиль своего Chromium.
@@ -99,17 +100,24 @@ export async function seedStorageIntoProfile(args: {
   executablePath: string;
   launch?: LaunchPersistent;
 }): Promise<void> {
-  await mkdir(args.profileDir, { recursive: true });
-  for (const name of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
-    await rm(path.join(args.profileDir, name), { force: true }).catch(() => undefined);
+  const release = await acquireProfile(args.profileDir);
+  let context: BrowserContext;
+  try {
+    await mkdir(args.profileDir, { recursive: true });
+    for (const name of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+      await rm(path.join(args.profileDir, name), { force: true }).catch(() => undefined);
+    }
+    const launch = args.launch ?? defaultLaunch();
+    context = await launch(args.profileDir, {
+      executablePath: args.executablePath,
+      headless: true,
+      chromiumSandbox: process.getuid?.() !== 0,
+      args: ["--disable-dev-shm-usage", "--disable-gpu", "--no-first-run", "--no-default-browser-check"],
+    });
+  } catch (e) {
+    release();
+    throw e;
   }
-  const launch = args.launch ?? defaultLaunch();
-  const context = await launch(args.profileDir, {
-    executablePath: args.executablePath,
-    headless: true,
-    chromiumSandbox: process.getuid?.() !== 0,
-    args: ["--disable-dev-shm-usage", "--disable-gpu", "--no-first-run", "--no-default-browser-check"],
-  });
   try {
     if (args.state.cookies.length) {
       await context.addCookies(args.state.cookies);
@@ -129,6 +137,7 @@ export async function seedStorageIntoProfile(args: {
     }
   } finally {
     await context.close().catch(() => undefined);
+    release();
   }
 }
 
