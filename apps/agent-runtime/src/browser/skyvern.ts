@@ -25,6 +25,48 @@ const CAPTCHA_STALL_ATTEMPTS = 2;
 /** Сколько раз одно письмо пробуем отдать в TOTP, прежде чем оставить его в покое. */
 const TOTP_POST_ATTEMPTS = 3;
 const CAPTCHA_CHECK_INTERVAL_MS = 60 * 1000;
+/** Playwright дописывает ролик после закрытия сессии. Столько же ждёт интерфейс Skyvern. */
+const SESSION_RECORDING_WAIT_MS = 2 * 60 * 1000;
+const SESSION_RECORDING_POLL_MS = 10_000;
+
+export interface SkyvernRecording {
+  url?: string | null;
+  modified_at?: string | null;
+}
+
+/** Поздняя http(s)-запись сессии. `file://` с чужой машины не скачать. */
+export function pickRecordingUrl(recordings: SkyvernRecording[] | null | undefined): string | null {
+  if (!recordings?.length) return null;
+  const usable = recordings.filter((r): r is SkyvernRecording & { url: string } => typeof r.url === "string" && /^https?:\/\//.test(r.url));
+  if (!usable.length) return null;
+  usable.sort((a, b) => {
+    const am = Date.parse(a.modified_at ?? "");
+    const bm = Date.parse(b.modified_at ?? "");
+    const aOk = Number.isFinite(am);
+    const bOk = Number.isFinite(bm);
+    if (aOk && bOk && am !== bm) return am - bm;
+    if (aOk !== bOk) return aOk ? -1 : 1;
+    return 0;
+  });
+  return usable[usable.length - 1]!.url;
+}
+
+/**
+ * null — это не ответ о сессии, ждать нечего.
+ * Пока сессия жива или список записей пуст, ролик ещё может появиться.
+ */
+export function sessionRecordingState(body: unknown): { url: string | null; wait: boolean } | null {
+  if (!body || typeof body !== "object") return null;
+  const json = body as { browser_session_id?: unknown; status?: unknown; recordings?: unknown };
+  if (typeof json.browser_session_id !== "string" && !("recordings" in json)) return null;
+  const status = typeof json.status === "string" ? json.status : "";
+  if (status === "running" || status === "created" || status === "retry") return { url: null, wait: true };
+  const recordings = Array.isArray(json.recordings) ? (json.recordings as SkyvernRecording[]) : [];
+  const url = pickRecordingUrl(recordings);
+  if (url) return { url, wait: false };
+  if (recordings.length > 0) return { url: null, wait: false };
+  return { url: null, wait: true };
+}
 
 interface SkyvernStep {
   status?: string;
@@ -335,6 +377,8 @@ export class SkyvernClient {
   private onMailboxRelease: (() => void) | null = null;
   /** Задачи runtime, которые пользователь остановил — опрос Skyvern выходит сразу. */
   private readonly canceledRuns = new Set<string>();
+  /** Ждём, пока Skyvern допишет ролик закрытой сессии. */
+  private savingRecordings = 0;
 
   constructor(
     private readonly apiKey: string,
@@ -355,11 +399,11 @@ export class SkyvernClient {
     return this.mailboxHolds > 0;
   }
 
-  /** Идёт задача или открыта сессия онбординга. Машину не усыплять; почту само по себе не глотать. */
+  /** Идёт задача, открыта сессия или дописывается её ролик. Машину не усыплять; почту само по себе не глотать. */
   get busy(): boolean {
     const now = Date.now();
     for (const [id, until] of this.held) if (until <= now) this.held.delete(id);
-    return this.active.size > 0 || this.held.size > 0;
+    return this.active.size > 0 || this.held.size > 0 || this.savingRecordings > 0;
   }
 
   /** Остановить задачи Skyvern и закрыть сессии, привязанные к runId. */
@@ -500,6 +544,56 @@ export class SkyvernClient {
       });
     } catch (e) {
       warn("skyvern", "не удалось закрыть сессию", { error: String(e) });
+    }
+    if (meta) await this.captureSessionRecording(browserSessionId, meta);
+  }
+
+  /**
+   * Ролик сессии появляется после close. Пока список пуст — опрашиваем до двух минут
+   * и кладём файл в журнал сессии. Ошибка скачивания сессию не откатывает.
+   */
+  private async captureSessionRecording(browserSessionId: string, meta: BrowserSession): Promise<void> {
+    this.savingRecordings++;
+    try {
+      const deadline = Date.now() + SESSION_RECORDING_WAIT_MS;
+      while (true) {
+        let body: unknown;
+        try {
+          const res = await this.fetchImpl(`${this.base}/v1/browser_sessions/${browserSessionId}`, {
+            headers: { "x-api-key": this.apiKey },
+          });
+          if (!res.ok) {
+            warn("skyvern", "не удалось получить ролик сессии", { browserSessionId, status: res.status });
+            return;
+          }
+          body = await res.json();
+        } catch (e) {
+          warn("skyvern", "не удалось получить ролик сессии", { browserSessionId, error: String(e) });
+          return;
+        }
+        const state = sessionRecordingState(body);
+        if (!state) return;
+        if (state.url) {
+          try {
+            const ok = await downloadUrlTo(state.url, this.store.videoPath(meta.id), this.fetchImpl);
+            if (ok) {
+              meta.hasVideo = true;
+              await this.store.saveBrowserSession(meta);
+              log("skyvern", "ролик сессии сохранён", { browserSessionId, sessionId: meta.id });
+            }
+          } catch (e) {
+            warn("skyvern", "не удалось скачать ролик сессии", { browserSessionId, error: String(e) });
+          }
+          return;
+        }
+        if (!state.wait || Date.now() >= deadline) {
+          if (state.wait) warn("skyvern", "ролик сессии не появился", { browserSessionId });
+          return;
+        }
+        await new Promise((r) => setTimeout(r, SESSION_RECORDING_POLL_MS));
+      }
+    } finally {
+      this.savingRecordings--;
     }
   }
 
@@ -913,7 +1007,7 @@ export class SkyvernClient {
 
     if (recordingUrl) {
       try {
-        meta.hasVideo = await downloadUrlTo(recordingUrl, this.store.videoPath(meta.id));
+        meta.hasVideo = await downloadUrlTo(recordingUrl, this.store.videoPath(meta.id), this.fetchImpl);
       } catch (e) {
         warn("skyvern", "не удалось скачать ролик", { error: String(e) });
       }

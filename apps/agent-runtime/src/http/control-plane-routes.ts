@@ -15,6 +15,7 @@ import { handleChat, retryChatRun } from "../chat";
 import { tick } from "../cron";
 import { streamRuntimeEvents } from "../events-http";
 import { machineIsIdle, markSleepy, noteActivity } from "../idle";
+import { videoMediaType } from "../browser/recordings";
 import { warn } from "../log";
 
 /** Control plane → runtime: состояние, почта, чаты, настройки, одобрения, тик. */
@@ -146,8 +147,9 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
   app.get("/browser-sessions/:id/video", async (c) => {
     const id = c.req.param("id");
     if (!(await rt.store.hasVideo(id))) return c.json({ error: "no video" }, 404);
-    const stream = Readable.toWeb(createReadStream(rt.store.videoPath(id))) as ReadableStream;
-    return new Response(stream, { headers: { "Content-Type": "video/mp4" } });
+    const file = rt.store.videoPath(id);
+    const stream = Readable.toWeb(createReadStream(file)) as ReadableStream;
+    return new Response(stream, { headers: { "Content-Type": await videoMediaType(file) } });
   });
 
   return app;

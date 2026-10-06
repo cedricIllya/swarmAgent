@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import { unlink } from "node:fs/promises";
 import {
   SkyvernClient,
   countCaptchaFailures,
   interpretInviteOutput,
   inviteTaskPrompt,
+  pickRecordingUrl,
+  sessionRecordingState,
   skyvernInboxContent,
   totpTarget,
   workflowRunIdFrom,
@@ -61,6 +64,38 @@ describe("interpretInviteOutput with a captcha stall", () => {
   it("does not override a completed task", () => {
     const r = interpretInviteOutput("completed", { outcome: "landed", final_url: "https://x" }, { email: "a@b.c", password: "p", captchaStall: true });
     expect(r.status).toBe("accepted");
+  });
+});
+
+describe("pickRecordingUrl", () => {
+  it("takes the latest http recording and skips file urls", () => {
+    expect(
+      pickRecordingUrl([
+        { url: "file:///tmp/old.webm", modified_at: "2026-10-06T12:00:00Z" },
+        { url: "https://cdn.skyvern.test/early.webm", modified_at: "2026-10-06T11:00:00Z" },
+        { url: "https://cdn.skyvern.test/late.webm", modified_at: "2026-10-06T12:00:00Z" },
+      ]),
+    ).toBe("https://cdn.skyvern.test/late.webm");
+    expect(pickRecordingUrl([{ url: "file:///tmp/only.webm" }])).toBeNull();
+    expect(pickRecordingUrl([])).toBeNull();
+  });
+});
+
+describe("sessionRecordingState", () => {
+  it("waits while the session is open or the recording list is still empty", () => {
+    expect(sessionRecordingState({ status: "completed", output: { outcome: "accepted" } })).toBeNull();
+    expect(sessionRecordingState({ browser_session_id: "pbs_1", status: "running", recordings: [{ url: "https://cdn/a.webm" }] })).toEqual({
+      url: null,
+      wait: true,
+    });
+    expect(sessionRecordingState({ browser_session_id: "pbs_1", status: "completed", recordings: [] })).toEqual({ url: null, wait: true });
+    expect(sessionRecordingState({ browser_session_id: "pbs_1", status: "completed", recordings: [{ url: "file:///tmp/a.webm" }] })).toEqual({
+      url: null,
+      wait: false,
+    });
+    expect(
+      sessionRecordingState({ browser_session_id: "pbs_1", status: "completed", recordings: [{ url: "https://cdn.skyvern.test/a.webm" }] }),
+    ).toEqual({ url: "https://cdn.skyvern.test/a.webm", wait: false });
   });
 });
 
@@ -378,6 +413,47 @@ describe("SkyvernClient", () => {
     expect(await client.offerEmail("Verify\n482913")).toMatchObject({ taken: true, posted: false, code: null });
     await vi.advanceTimersByTimeAsync(6_000);
     await expect(pending).resolves.toMatchObject({ status: "accepted" });
+    vi.useRealTimers();
+  });
+
+  it("saves the session recording after close, once Skyvern finishes the file", async () => {
+    vi.useFakeTimers();
+    const { store, sessions } = fakeStore();
+    let polls = 0;
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith("/v1/browser_sessions")) {
+        return json({ browser_session_id: "pbs_rec", app_url: null, browser_address: "wss://sessions.skyvern.com/pbs_rec" });
+      }
+      if (u.endsWith("/close")) return json({ ok: true });
+      if (u.endsWith("/v1/run/tasks")) return json({ run_id: "tsk_rec" });
+      if (u.endsWith("/v1/browser_sessions/pbs_rec")) {
+        polls++;
+        if (polls === 1) return json({ browser_session_id: "pbs_rec", status: "completed", recordings: [] });
+        return json({
+          browser_session_id: "pbs_rec",
+          status: "completed",
+          recordings: [{ url: "https://cdn.skyvern.test/session.webm", modified_at: "2026-10-06T12:00:00Z" }],
+        });
+      }
+      if (u === "https://cdn.skyvern.test/session.webm") return new Response(Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3]));
+      return json({ status: "completed", output: { outcome: "accepted", password_set: true }, recording_url: null });
+    });
+    const client = new SkyvernClient("key", store, "bot@agents.test", "https://api.skyvern.test", fetchImpl as typeof fetch);
+    const pending = client.acceptInvite({
+      runId: "run_rec",
+      url: "https://app.acme.io/invite/abc",
+      service: "Acme",
+      agentName: "Bot",
+      email: "bot@agents.test",
+    });
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(client.busy).toBe(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(pending).resolves.toMatchObject({ status: "accepted" });
+    expect(polls).toBe(2);
+    expect(sessions.at(-1)).toMatchObject({ id: "skyvern-pbs_rec", hasVideo: true, finishedAt: expect.any(String) });
+    await unlink("/tmp/skyvern-pbs_rec.mp4").catch(() => undefined);
     vi.useRealTimers();
   });
 
