@@ -90,13 +90,14 @@ export class BrowserControl {
 
   /** В журнал задачи своего браузера. В страницу Skyvern код отсюда не попадает. */
   private async noteChallenge(v: { kind: "code" | "link"; value: string }): Promise<void> {
-    const runId = this.challengeRunId();
+    const runId = this.activeRunId();
     if (!runId) return;
     const text = v.kind === "code" ? `код подтверждения из письма: ${v.value}` : `ссылка для входа из письма: ${v.value}`;
     await this.rt.step(runId, "email", text).catch((e) => warn("browser", "не записал код в журнал", { error: String(e) }));
   }
 
-  private challengeRunId(): string | null {
+  /** Задача своего браузера, в журнал которой пишется код из письма. */
+  activeRunId(): string | null {
     for (const s of this.sessions.values()) {
       if (s.waitingForCode) return s.meta.runId;
     }

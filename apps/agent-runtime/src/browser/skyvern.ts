@@ -378,6 +378,14 @@ export class SkyvernClient {
     }
   }
 
+  /** Письмо уже ушло в задачу входа. Повторный разбор не должен открывать новую задачу. */
+  wasForwarded(content: string): boolean {
+    const body = content.trim().slice(0, TOTP_CONTENT_MAX);
+    if (!body) return false;
+    this.pruneTotp();
+    return this.forwarded.has(body);
+  }
+
   /** runId задачи, в которую сейчас идёт браузер Skyvern (для журнала кода). */
   activeRunId(): string | null {
     const latest = [...this.active.values()].sort((a, b) => b.startedAt - a.startedAt)[0];

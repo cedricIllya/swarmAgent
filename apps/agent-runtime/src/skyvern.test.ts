@@ -236,6 +236,7 @@ describe("SkyvernClient", () => {
 
     const letter = "Verify\nYour code is 482913\nhttps://app.acme.io/magic";
     expect(await client.offerEmail(letter)).toMatchObject({ taken: true, posted: true, code: "482913" });
+    expect(client.wasForwarded(letter)).toBe(true);
     const totp = calls.find((c) => c.url.endsWith("/v1/credentials/totp"))!.body as Record<string, unknown>;
     expect(totp).toEqual({
       totp_identifier: "bot@agents.test",

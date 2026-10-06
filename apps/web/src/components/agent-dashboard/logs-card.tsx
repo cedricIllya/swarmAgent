@@ -7,6 +7,7 @@ import { ApprovalRow } from "./approval-bubbles";
 import { SessionShots } from "./browser-bubble";
 import { fmtTime } from "./format";
 import { SecretValue, StepText } from "./secret-value";
+import { accessKindLabel, type AgentAccess } from "./agent-access";
 import { presentSteps, forPerson } from "./present-steps";
 import { servicesForRun } from "./task-services";
 import { ListSkeleton, Skeleton } from "../skeleton";
@@ -27,15 +28,6 @@ const TRIGGER_LABEL: Record<Run["trigger"], string> = {
   cron: "по расписанию",
   approval: "одобрение",
 };
-
-interface SavedLogin {
-  slug: string;
-  name: string;
-  kind: "mcp" | "api" | "browser";
-  accountEmail: string | null;
-  accountName: string | null;
-  password: string | null;
-}
 
 function mergeSteps(loaded: RunStep[] | null, live: RunStep[]): RunStep[] {
   const seen = new Set<string>();
@@ -68,40 +60,26 @@ export function LogsCard({
   stepsByRun,
   messagesByRun,
   pending,
+  accesses,
+  accessReady,
 }: {
   agent: Agent;
   state: RuntimeState | null;
   stepsByRun: Record<string, RunStep[]>;
   messagesByRun: Record<string, ChatMessage[]>;
   pending: boolean;
+  accesses: AgentAccess[];
+  accessReady: boolean;
 }) {
   const runs = state?.runs ?? [];
   const approvals = state?.pendingApprovals ?? [];
-  const [logins, setLogins] = useState<SavedLogin[]>([]);
-  const [loginsReady, setLoginsReady] = useState(false);
   const [deciding, setDeciding] = useState<string | null>(null);
-  const live = state?.connectedServices ?? [];
   const sessionsByRun = new Map<string, BrowserSession[]>();
   for (const s of state?.browserSessions ?? []) {
     const arr = sessionsByRun.get(s.runId) ?? [];
     arr.push(s);
     sessionsByRun.set(s.runId, arr);
   }
-
-  useEffect(() => {
-    let cancel = false;
-    void fetch(`/api/agents/${agent.id}/credentials`, { cache: "no-store" })
-      .then(async (res) => {
-        if (!res.ok || cancel) return;
-        setLogins((await res.json()) as SavedLogin[]);
-      })
-      .finally(() => {
-        if (!cancel) setLoginsReady(true);
-      });
-    return () => {
-      cancel = true;
-    };
-  }, [agent.id, live.length]);
 
   async function decide(id: string, approved: boolean) {
     setDeciding(id);
@@ -115,21 +93,6 @@ export function LogsCard({
       setDeciding(null);
     }
   }
-
-  const rows = new Map<string, SavedLogin>();
-  for (const s of live) {
-    const saved = logins.find((l) => l.slug === s.slug);
-    rows.set(s.slug, {
-      slug: s.slug,
-      name: s.name,
-      kind: s.kind,
-      accountEmail: saved?.accountEmail ?? s.accountEmail ?? null,
-      accountName: saved?.accountName ?? s.accountName ?? null,
-      password: saved?.password ?? null,
-    });
-  }
-  for (const saved of logins) if (!rows.has(saved.slug)) rows.set(saved.slug, saved);
-  const accesses = [...rows.values()];
 
   return (
     <section className="card" aria-busy={pending}>
@@ -180,7 +143,7 @@ export function LogsCard({
             Все сервисы →
           </Link>
         </div>
-        {pending || !loginsReady ? (
+        {pending || !accessReady ? (
           <ListSkeleton count={1} />
         ) : accesses.length === 0 ? (
           <p className="faint small" style={{ margin: 0 }}>
@@ -198,11 +161,14 @@ export function LogsCard({
   );
 }
 
-function AccessRow({ login }: { login: SavedLogin }) {
+function AccessRow({ login }: { login: AgentAccess }) {
   return (
     <div className="list-item access-row">
       <div>
-        <div>{login.name}</div>
+        <div className="row" style={{ gap: 8 }}>
+          <span>{login.name}</span>
+          <span className="badge">{accessKindLabel(login.kind)}</span>
+        </div>
         {(login.accountName || login.accountEmail) && (
           <div className="small" style={{ marginTop: 4 }}>
             {[login.accountName, login.accountEmail].filter(Boolean).join(" · ")}
@@ -237,7 +203,7 @@ function RunItem({
   liveSteps: RunStep[];
   liveMessages: ChatMessage[];
   approvals: PendingApproval[];
-  accesses: SavedLogin[];
+  accesses: AgentAccess[];
   deciding: string | null;
   onDecide: (id: string, approved: boolean) => void;
 }) {
@@ -388,6 +354,7 @@ function RunItem({
             {usedServices.map((s) => (
               <span key={s.slug} className="service-chip">
                 {s.name}
+                <span className="badge">{accessKindLabel(s.kind)}</span>
               </span>
             ))}
           </div>

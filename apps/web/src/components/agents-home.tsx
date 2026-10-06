@@ -71,7 +71,9 @@ export function AgentsHome({ initialAgents, ownerLogin }: { initialAgents: Agent
                 </div>
                 <StatusBadge status={a.status} />
               </div>
-              <div className="mono muted">{a.email}</div>
+              <div className="mono muted agent-card-email" title={a.email}>
+                {a.email}
+              </div>
               {a.statusMessage && (
                 <div className="small" style={{ marginTop: 8, color: a.status === "failed" ? "var(--danger)" : "var(--text-muted)" }}>
                   {personStatus(a.statusMessage, a.status)}

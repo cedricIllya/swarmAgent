@@ -147,6 +147,10 @@ code,
   font-family: var(--mono);
   font-size: 13px;
 }
+.agent-card-email {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 code {
   background: var(--ink-soft);
   padding: 1px 6px;

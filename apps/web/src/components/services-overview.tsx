@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Agent } from "@swarm/contracts";
 import type { TenantConnection } from "@swarm/connections";
+import { accessKindLabel } from "./agent-dashboard/agent-access";
 import { AgentFace } from "./agent-avatar";
 
 function fmtDate(iso: string): string {
@@ -137,6 +138,7 @@ function ServiceRow({ connection }: { connection: TenantConnection }) {
       <div className="service-main">
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           <strong>{connection.name}</strong>
+          <span className="badge">{accessKindLabel(connection.kind)}</span>
         </div>
         {connection.domains.length > 0 && <div className="faint small">{connection.domains.join(", ")}</div>}
       </div>

@@ -15,6 +15,7 @@ import {
 import type { AgentRuntime } from "./runtime";
 import { finishServiceThink } from "./service-work";
 import { recordUsage } from "./usage";
+import { markVerificationApplied, verificationAlreadyApplied, verificationRunId } from "./verification-mail";
 import { log, warn } from "./log";
 
 function ownerAddress(rt: AgentRuntime): string | null {
@@ -88,6 +89,7 @@ async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> 
   if (rt.skyvern) {
     const offer = await rt.skyvern.offerEmail(skyvernInboxContent(email));
     if (offer.taken) {
+      markVerificationApplied(email.messageId);
       await rt.store.deferEmail(email);
       const runId = rt.skyvern.activeRunId();
       if (runId) {
@@ -120,6 +122,7 @@ async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> 
   let known: EmailClassification | null = null;
   if (rt.browser.sessions.size > 0 && !fromOwner) {
     if (await deliverEmailChallenge(rt, email)) {
+      markVerificationApplied(email.messageId);
       await rt.store.deferEmail(email);
       return;
     }
@@ -127,6 +130,7 @@ async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> 
     if (known?.kind === "verification" && known.hasLoginLink && email.links.length > 0) {
       const link = pickLoginLink(email.links);
       if (await rt.browser.deliverCode({ kind: "link", value: link })) {
+        markVerificationApplied(email.messageId);
         await rt.store.deferEmail(email);
         log("inbox", "ссылка для входа отдана в браузер и письмо сохранено");
         return;
@@ -195,12 +199,16 @@ async function handleThreadReply(
 async function handleWhileInBrowser(rt: AgentRuntime, email: InboundEmail): Promise<void> {
   await rt.store.deferEmail(email);
 
-  if (await deliverEmailChallenge(rt, email)) return;
+  if (await deliverEmailChallenge(rt, email)) {
+    markVerificationApplied(email.messageId);
+    return;
+  }
 
   const c = await classifyEmail(rt, email, "classify.email.in-browser").catch(() => null);
   if (c?.kind === "verification" && c.hasLoginLink && email.links.length > 0) {
     const link = pickLoginLink(email.links);
     const delivered = await rt.browser.deliverCode({ kind: "link", value: link });
+    if (delivered) markVerificationApplied(email.messageId);
     log("inbox", "ссылка для входа в браузер", { delivered });
     return;
   }
@@ -208,6 +216,53 @@ async function handleWhileInBrowser(rt: AgentRuntime, email: InboundEmail): Prom
 }
 
 const CLASSIFY_ATTEMPTS = 3;
+
+/**
+ * Код подтверждения не открывает задачу. Он пишется в журнал той, где применяется:
+ * вход в браузере, идущая задача или только что законченный вход.
+ */
+async function attachVerification(rt: AgentRuntime, email: InboundEmail, c: EmailClassification): Promise<void> {
+  const body = `${email.subject}\n${email.replyText || email.text}`;
+  const code = findDigitCode(body);
+  const already =
+    verificationAlreadyApplied(email.messageId) || (rt.skyvern?.wasForwarded(skyvernInboxContent(email)) ?? false);
+  if (already) {
+    log("inbox", "verification уже в журнале задачи входа", { subject: email.subject });
+    return;
+  }
+  if (code && (await rt.browser.deliverCode({ kind: "code", value: code }))) {
+    markVerificationApplied(email.messageId);
+    return;
+  }
+  if (c.hasLoginLink && email.links.length > 0) {
+    const link = pickLoginLink(email.links);
+    if (await rt.browser.deliverCode({ kind: "link", value: link })) {
+      markVerificationApplied(email.messageId);
+      return;
+    }
+  }
+  if (browserHoldsMail(rt)) {
+    await rt.store.deferEmail(email);
+    log("inbox", "verification отложен: браузер занят, код не извлечён", { subject: email.subject });
+    return;
+  }
+  const preferred = rt.skyvern?.activeRunId() ?? rt.browser.activeRunId();
+  const runId = verificationRunId(await rt.store.listRuns(20), Date.now(), preferred);
+  if (!runId) {
+    log("inbox", "verification без задачи, в которую его применить", { subject: email.subject });
+    return;
+  }
+  const link = c.hasLoginLink && email.links.length > 0 ? pickLoginLink(email.links) : null;
+  const text = code
+    ? `код подтверждения из письма: ${code}`
+    : link
+      ? `ссылка для входа из письма: ${link}`
+      : `подтверждение из письма: ${c.summary}`;
+  await rt.step(runId, "email", text);
+  markVerificationApplied(email.messageId);
+  log("inbox", "verification записан в журнал задачи", { runId, subject: email.subject });
+}
+
 
 function classifyAttempts(email: InboundEmail): number {
   const n = (email as { classifyAttempts?: unknown }).classifyAttempts;
@@ -252,22 +307,7 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
   }
 
   if (c.kind === "verification") {
-    // Письмо с OTP могло прийти чуть раньше/позже окна busyInBrowser — всё равно пробуем отдать.
-    // Успешная передача уже пишет сам код в журнал активной задачи (онбординг / сессия).
-    const code = findDigitCode(`${email.subject}\n${email.replyText || email.text}`);
-    if (code && (await rt.browser.deliverCode({ kind: "code", value: code }))) return;
-    if (c.hasLoginLink && email.links.length > 0) {
-      const link = pickLoginLink(email.links);
-      if (await rt.browser.deliverCode({ kind: "link", value: link })) return;
-    }
-    if (browserHoldsMail(rt)) {
-      await rt.store.deferEmail(email);
-      log("inbox", "verification отложен: браузер занят, код не извлечён", { subject: email.subject });
-      return;
-    }
-    const run = await rt.createRun("email", email.subject || "Письмо", email.messageId);
-    await rt.step(run.id, "email", `verification: ${c.summary}${code ? ` (код ${code})` : ""}`);
-    await rt.finishRun(run, "done", `Без действий: ${c.summary}`);
+    await attachVerification(rt, email, c);
     return;
   }
 
