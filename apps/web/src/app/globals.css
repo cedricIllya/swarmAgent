@@ -1463,6 +1463,40 @@ code {
   background: var(--bg-elev);
   border-color: var(--border-strong);
 }
+.chip a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: inherit;
+}
+.chip a:hover {
+  text-decoration: none;
+}
+.chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0 -2px 0 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.chip-remove:hover {
+  background: var(--ink-soft);
+  color: var(--text);
+}
+.chip-remove:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 .chip-dot {
   width: 7px;
   height: 7px;

@@ -63,6 +63,12 @@ export class BrowserControl {
     await this.rt.step(meta.runId, "browser", "браузер закрыт", { sessionId });
   }
 
+  /** Закрыть свой браузер сервиса, прежде чем стереть его профиль. */
+  async closeForService(slug: string): Promise<void> {
+    const ids = [...this.sessions.entries()].filter(([, s]) => s.serviceSlug === slug).map(([id]) => id);
+    for (const id of ids) await this.close(id);
+  }
+
   /** Закрыть все свои сессии, привязанные к задаче (остановка пользователем). */
   async closeForRun(runId: string): Promise<void> {
     const ids = [...this.sessions.entries()].filter(([, s]) => s.meta.runId === runId).map(([id]) => id);

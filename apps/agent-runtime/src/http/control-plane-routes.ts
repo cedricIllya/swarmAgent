@@ -86,7 +86,9 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
   app.post("/services", async (c) => {
     noteActivity();
     const body = SyncServicesRequestSchema.parse(await c.req.json());
+    const prev = await rt.store.readServices();
     await rt.store.writeServices(body.snapshot);
+    await rt.services.dropRemoved(prev, body.snapshot);
     await rt.services.refreshHermesMcp();
     return c.json({ ok: true, recipes: body.snapshot.recipes.length, credentials: body.snapshot.credentials.length });
   });

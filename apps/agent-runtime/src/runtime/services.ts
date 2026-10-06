@@ -1,8 +1,21 @@
-import { mergeCredential, type RuntimeReport, type RuntimeState } from "@swarm/contracts";
+import path from "node:path";
+import { rm } from "node:fs/promises";
+import { mergeCredential, type RuntimeReport, type ServicesSnapshot, type RuntimeState } from "@swarm/contracts";
+import { serviceProfileDir } from "../browser/stagehand";
 import { emitRuntime } from "../events";
 import { matchRecipe } from "../domains";
 import { syncHermesMcp } from "../hermes-config-sync";
+import { warn } from "../log";
 import type { AgentRuntime } from "./index";
+
+/** Секреты, которые были в прошлом снимке и пропали в новом. */
+export function droppedCredentialSlugs(
+  prev: Array<{ slug: string }> | undefined,
+  next: Array<{ slug: string }>,
+): string[] {
+  const keep = new Set(next.map((c) => c.slug));
+  return [...new Set((prev ?? []).map((c) => c.slug).filter((slug) => !keep.has(slug)))];
+}
 
 /**
  * Каталог сервисов агента: рецепты и секреты в `services.json`, их отражение
@@ -33,6 +46,26 @@ export class ServiceCatalog {
 
   async publish(): Promise<void> {
     emitRuntime({ type: "services", connectedServices: await this.connected() });
+  }
+
+  /**
+   * Доступ сняли на control plane: закрыть браузер этого сервиса и стереть профиль,
+   * чтобы cookies не оставляли вход после нового `services.json`.
+   */
+  async dropRemoved(prev: ServicesSnapshot | null, next: ServicesSnapshot): Promise<void> {
+    for (const slug of droppedCredentialSlugs(prev?.credentials, next.credentials)) {
+      try {
+        await this.rt.browser.closeForService(slug);
+      } catch (e) {
+        warn("services", "браузер сервиса не закрылся", { slug, error: String(e) });
+      }
+      const dir = serviceProfileDir(this.rt.store, slug);
+      const root = this.rt.store.dir("browser-profiles");
+      if (!dir.startsWith(root + path.sep)) continue;
+      await rm(dir, { recursive: true, force: true }).catch((e) =>
+        warn("services", "профиль браузера не удалён", { slug, error: String(e) }),
+      );
+    }
   }
 
   /** Переписать `mcp_servers` Hermes по текущему `services.json` и обновить карточку. */

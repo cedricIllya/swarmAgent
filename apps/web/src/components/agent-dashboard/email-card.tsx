@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import type { Agent } from "@swarm/contracts";
+import { DisconnectServiceButton } from "../disconnect-service";
 import { accessKindLabel, type AgentAccess } from "./agent-access";
 import { ListSkeleton } from "../skeleton";
 
@@ -8,17 +10,25 @@ export function EmailCard({
   agent,
   services,
   pending,
+  onRemoved,
 }: {
   agent: Agent;
   services: AgentAccess[];
   pending: boolean;
+  onRemoved: (slug: string) => void;
 }) {
+  const [error, setError] = useState<string | null>(null);
   return (
     <section className="card">
       <div className="card-head">
         <h2>Подключение сервисов</h2>
         <span className="muted small">Пришлите инвайт на адрес агента или вставьте ссылку и ключ в задачу</span>
       </div>
+      {error && (
+        <p className="notice notice-warn" style={{ margin: "0 0 14px" }}>
+          {error}
+        </p>
+      )}
       {pending ? (
         <ListSkeleton count={1} />
       ) : services.length === 0 ? (
@@ -29,7 +39,7 @@ export function EmailCard({
         <div className="list" style={{ marginBottom: 14 }}>
           {services.map((service) => (
             <div key={service.slug} className="list-item">
-              <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>
+              <div className="row" style={{ justifyContent: "space-between", gap: 8, width: "100%" }}>
                 <div>
                   <div>{service.name}</div>
                   {(service.accountName || service.accountEmail) && (
@@ -38,7 +48,16 @@ export function EmailCard({
                     </div>
                   )}
                 </div>
-                <span className="badge">{accessKindLabel(service.kind)}</span>
+                <div className="row" style={{ gap: 8, flex: "none" }}>
+                  <span className="badge">{accessKindLabel(service.kind)}</span>
+                  <DisconnectServiceButton
+                    agentId={agent.id}
+                    slug={service.slug}
+                    serviceName={service.name}
+                    onRemoved={() => onRemoved(service.slug)}
+                    onFailed={setError}
+                  />
+                </div>
               </div>
             </div>
           ))}

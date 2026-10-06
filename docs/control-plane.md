@@ -33,6 +33,8 @@
 | GET | `/api/agents/:id/runs/:runId` | Шаги задачи. |
 | GET | `/api/agents/:id/browser-sessions/:sessionId/actions` | Журнал браузера. |
 | GET | `/api/agents/:id/browser-sessions/:sessionId/video` | MP4. |
+| GET | `/api/agents/:id/credentials` | Входы агента без токена и cookies: имя, способ, почта, пароль. |
+| DELETE | `/api/agents/:id/credentials/:slug` | Снимает доступ этого агента. Свежий снимок уходит на машину: секрет, MCP и профиль браузера пропадают. |
 | GET | `/api/agents/:id/google` | Редирект на согласие Google. |
 | GET | `/api/google/callback` | Код меняется на refresh token, токен шифруется в базу, `google_token.json` кладётся на машину. |
 | GET | `/api/models` | Модели OpenRouter, у которых есть tools. Кэш 10 минут. |

@@ -3,10 +3,7 @@ import type { Agent } from "@swarm/contracts";
 import type { TenantConnection } from "@swarm/connections";
 import { accessKindLabel } from "./agent-dashboard/agent-access";
 import { AgentFace } from "./agent-avatar";
-
-function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-}
+import { ServiceAgentChips } from "./disconnect-service";
 
 function initials(name: string): string {
   return name.trim().slice(0, 1).toUpperCase() || "?";
@@ -142,20 +139,7 @@ function ServiceRow({ connection }: { connection: TenantConnection }) {
         </div>
         {connection.domains.length > 0 && <div className="faint small">{connection.domains.join(", ")}</div>}
       </div>
-      <div className="chips">
-        {connection.agents.map((a) => (
-          <Link
-            key={a.agentId}
-            href={`/agents/${a.agentId}`}
-            className="chip"
-            title={`${a.agentEmail}${a.accountEmail ? ` · ${a.accountEmail}` : ""} · ${fmtDate(a.updatedAt)}`}
-          >
-            <span className="chip-dot" />
-            {a.agentName}
-            {a.accountEmail && <span className="chip-meta">{a.accountEmail}</span>}
-          </Link>
-        ))}
-      </div>
+      <ServiceAgentChips slug={connection.slug} serviceName={connection.name} agents={connection.agents} />
     </div>
   );
 }

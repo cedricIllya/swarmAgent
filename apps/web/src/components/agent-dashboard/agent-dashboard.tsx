@@ -24,7 +24,7 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const { agent, state, runtimeError, asleep, waking } = detail;
-  const { accesses, ready: accessReady } = useAgentAccess(agent.id, state?.connectedServices ?? []);
+  const { accesses, ready: accessReady, forget } = useAgentAccess(agent.id, state?.connectedServices ?? []);
 
   async function remove() {
     if (removing) return;
@@ -94,7 +94,7 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
         </div>
       )}
 
-      <EmailCard agent={agent} services={accesses} pending={!accessReady} />
+      <EmailCard agent={agent} services={accesses} pending={!accessReady} onRemoved={forget} />
       <TaskComposer agent={agent} onStage={stageChatTask} />
       <LogsCard
         agent={agent}
