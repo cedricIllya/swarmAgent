@@ -1,6 +1,7 @@
 import type { RuntimeState, UsageByTask } from "@swarm/contracts";
 import { UsageBodySkeleton } from "../skeleton";
 import { usd } from "./format";
+import { presentDetail } from "./present-steps";
 
 const ACTION_LABEL: Record<string, string> = {
   "hermes.turn": "работа агента",
@@ -13,7 +14,7 @@ const ACTION_LABEL: Record<string, string> = {
 };
 
 function actionLabel(action: string): string {
-  return ACTION_LABEL[action] ?? action.replace(/[._]/g, " ");
+  return ACTION_LABEL[action] ?? "действие";
 }
 
 export function UsageCard({ state, pending }: { state: RuntimeState | null; pending: boolean }) {
@@ -22,7 +23,7 @@ export function UsageCard({ state, pending }: { state: RuntimeState | null; pend
     <section className="card" aria-busy={pending}>
       <div className="card-head">
         <h2>Токены и деньги</h2>
-        <span className="muted small">По задачам и действиям, как вернул OpenRouter</span>
+        <span className="muted small">По задачам</span>
       </div>
       {pending ? (
         <UsageBodySkeleton />
@@ -69,7 +70,8 @@ export function UsageCard({ state, pending }: { state: RuntimeState | null; pend
 }
 
 function TaskRows({ task }: { task: UsageByTask }) {
-  const notes = (action: UsageByTask["actions"][number]) => action.details ?? [];
+  const notes = (action: UsageByTask["actions"][number]) =>
+    (action.details ?? []).map(presentDetail).filter((line): line is string => Boolean(line));
   const breakdown = task.actions.length > 1 || task.actions.some((a) => notes(a).length > 0);
   return (
     <>

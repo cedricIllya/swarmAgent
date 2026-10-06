@@ -6,6 +6,7 @@ import type { Agent } from "@swarm/contracts";
 import { StatusBadge } from "./status-badge";
 import { CreateAgentForm } from "./create-agent-form";
 import { AgentFace } from "./agent-avatar";
+import { personStatus } from "./agent-dashboard/present-steps";
 
 export function AgentsHome({ initialAgents, ownerLogin }: { initialAgents: Agent[]; ownerLogin: string }) {
   const [agents, setAgents] = useState(initialAgents);
@@ -73,7 +74,7 @@ export function AgentsHome({ initialAgents, ownerLogin }: { initialAgents: Agent
               <div className="mono muted">{a.email}</div>
               {a.statusMessage && (
                 <div className="small" style={{ marginTop: 8, color: a.status === "failed" ? "var(--danger)" : "var(--text-muted)" }}>
-                  {a.statusMessage}
+                  {personStatus(a.statusMessage, a.status)}
                 </div>
               )}
               <div className="card-foot">

@@ -13,10 +13,11 @@ import { TaskComposer } from "./task-composer";
 import { UsageCard } from "./usage-card";
 import { AgentModelControl } from "./agent-model-control";
 import { AgentAvatarControl } from "../agent-avatar";
+import { personStatus } from "./present-steps";
 import { useAgentLive } from "./use-agent-live";
 
 export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
-  const { detail, stepsByRun, messagesByRun, livePending, patchAgent } = useAgentLive(initialAgent);
+  const { detail, stepsByRun, messagesByRun, livePending, patchAgent, stageChatTask } = useAgentLive(initialAgent);
   const router = useRouter();
   const confirm = useConfirm();
   const [removing, setRemoving] = useState(false);
@@ -27,7 +28,7 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
     if (removing) return;
     const ok = await confirm({
       title: `Удалить агента ${agent.name}?`,
-      body: "Машина и диск будут уничтожены, адрес освободится.",
+      body: "Агент и его данные будут удалены, адрес освободится.",
       confirmLabel: "Удалить",
     });
     if (!ok) return;
@@ -62,7 +63,7 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
             <AgentEmail email={agent.email} />
             {agent.statusMessage && (
               <div className="faint small" style={{ marginTop: 4 }}>
-                {agent.statusMessage}
+                {personStatus(agent.statusMessage, agent.status)}
               </div>
             )}
             <AgentModelControl agent={agent} onUpdated={patchAgent} />
@@ -81,18 +82,18 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
 
       {asleep && (
         <div className="notice" style={{ marginBottom: 16 }}>
-          Агент спит: процессор и память Fly не тарифицирует. Диск считается и во сне. Письмо, задача и одобрение будят машину.
+          Агент спит и не тратит ресурсы, пока не придёт письмо, задача или вопрос. Место для его данных считается и во сне.
         </div>
       )}
 
       {runtimeError && !asleep && (
         <div className="notice notice-warn" style={{ marginBottom: 16 }}>
-          Машина агента не отвечает: {runtimeError}
+          Агент сейчас не отвечает.
         </div>
       )}
 
       <EmailCard agent={agent} />
-      <TaskComposer agent={agent} />
+      <TaskComposer agent={agent} onStage={stageChatTask} />
       <LogsCard
         agent={agent}
         state={state}

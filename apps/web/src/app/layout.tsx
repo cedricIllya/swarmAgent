@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Swarm Agent",
-  description: "Агенты с собственной почтой на Hermes и Fly.io",
+  description: "Агенты с собственной почтой",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

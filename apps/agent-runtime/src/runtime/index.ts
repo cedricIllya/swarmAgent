@@ -8,6 +8,7 @@ import { SkyvernClient } from "../browser/skyvern";
 import { resumeDeferredMail } from "../inbox";
 import { systemPrompt } from "../prompts";
 import { redactInternal } from "../redact";
+import { ensureWorkGuides } from "../service-guide";
 import { ensureRunId } from "../service-work";
 import { recordUsage, turnDetails, type TaskRef } from "../usage";
 import type { RuntimeConfig } from "../config";
@@ -191,6 +192,7 @@ export class AgentRuntime {
   /** Одна «мысль» Hermes в контексте задачи. Hermes сам ходит в MCP и скиллы. */
   async think(run: Run, prompt: string, action = "hermes.turn"): Promise<ThinkResult> {
     if (await this.isCanceled(run.id)) throw new DOMException("Задача остановлена", "AbortError");
+    await ensureWorkGuides(this, run);
     const services = await this.store.readServices();
     const system = systemPrompt({
       agentName: this.cfg.agentName,

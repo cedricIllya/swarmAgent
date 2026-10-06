@@ -122,7 +122,7 @@ export function BrowserBubble({
           ) : (
             <div className="approval-actions">
               <a className="btn btn-sm btn-primary" href={session.liveUrl} target="_blank" rel="noopener noreferrer">
-                смотреть браузер в Skyvern
+                смотреть браузер
               </a>
               <span className="faint small">там же можно взять управление</span>
             </div>
@@ -147,12 +147,8 @@ export function BrowserBubble({
             : loaded === null
               ? "загружаю шаги браузера"
               : session.finishedAt
-                ? session.provider === "skyvern"
-                  ? "сессия завершена, видео недоступно"
-                  : "сессия завершена, кадров нет"
-                : session.provider === "skyvern"
-                  ? "сессия идёт, ссылки на живой экран пока нет — видео появится после"
-                  : "свой браузер работает, кадр появится после шага"}
+                ? "сессия завершена"
+                : "браузер работает, кадр появится после шага"}
         </span>
       )}
       <span className="bubble-time">{fmtTime(message.at)}</span>

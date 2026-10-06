@@ -70,7 +70,10 @@ async function classifyChat(rt: AgentRuntime, message: string, links: string[]):
   return result;
 }
 
-/** Чат на карточке: отдельная история и сессия Hermes на каждый чат. */
+/**
+ * Чат на карточке: задача появляется сразу, до разбора сообщения моделью.
+ * Классификация и ход Hermes идут уже у созданной задачи.
+ */
 export async function handleChat(
   rt: AgentRuntime,
   args: { chatId?: string | undefined; message: string; author: string },
@@ -93,34 +96,19 @@ export async function handleChat(
     }
   }
 
-  const links = extractLinks(args.message);
-  const classification = await classifyChat(rt, args.message, links);
-  const hosts = [...links.map(hostOf), classification.serviceDomain ?? ""].filter(Boolean);
-  const recipe = classification.kind === "invite" ? null : await rt.services.knownRecipe(hosts);
-
   let chatId = args.chatId ?? null;
+  const renameChat = !chatId;
   if (chatId) {
     const existing = await rt.store.chats.get(chatId);
     if (!existing) return null;
   } else {
-    const created = await rt.store.chats.create(chatTitle(classification.kind, classification.service, args.message));
+    const created = await rt.store.chats.create(chatTitle("task", null, args.message));
     chatId = created.id;
   }
 
-  const run = await rt.createRun("chat", runTitle(classification.kind, classification.service, args.message), chatId);
-  await rt.step(run.id, "note", `чат: ${classification.kind}${classification.service ? `, ${classification.service}` : ""}`);
+  const run = await rt.createRun("chat", runTitle("task", null, args.message), chatId);
   await rt.addChat({ role: "user", text: args.message, runId: run.id, chatId });
-
-  const knownRecipe = recipe ? { slug: recipe.slug, name: recipe.name, kind: recipe.kind } : null;
-  startChatTask(rt, {
-    run,
-    chatId,
-    message: args.message,
-    author: args.author,
-    links,
-    classification,
-    recipe: knownRecipe,
-  });
+  enqueueChatWork(rt, { run, chatId, message: args.message, author: args.author, renameChat });
   return { run, chatId };
 }
 
@@ -142,22 +130,65 @@ export async function retryChatRun(
   const message = chatRetrySource(await rt.store.chats.listMessages(args.chatId, 1000), args.runId);
   if (!message) return { error: "not_found" };
 
-  const links = extractLinks(message);
-  const classification = await classifyChat(rt, message, links);
-  const hosts = [...links.map(hostOf), classification.serviceDomain ?? ""].filter(Boolean);
-  const recipe = classification.kind === "invite" ? null : await rt.services.knownRecipe(hosts);
-  const run = await rt.createRun("chat", runTitle(classification.kind, classification.service, message), args.chatId);
+  const run = await rt.createRun("chat", runTitle("task", null, message), args.chatId);
   await rt.step(run.id, "note", "Повторяю задачу.");
-  startChatTask(rt, {
-    run,
-    chatId: args.chatId,
-    message,
-    author: args.author,
-    links,
-    classification,
-    recipe: recipe ? { slug: recipe.slug, name: recipe.name, kind: recipe.kind } : null,
-  });
+  enqueueChatWork(rt, { run, chatId: args.chatId, message, author: args.author, renameChat: false });
   return { run, chatId: args.chatId };
+}
+
+/**
+ * Разбор сообщения не блокирует ответ: задача уже в журнале, заголовок
+ * уточняется после классификации.
+ */
+function enqueueChatWork(
+  rt: AgentRuntime,
+  task: { run: Run; chatId: string; message: string; author: string; renameChat: boolean },
+): void {
+  void (async () => {
+    try {
+      if (await rt.isCanceled(task.run.id)) return;
+      const links = extractLinks(task.message);
+      const classification = await classifyChat(rt, task.message, links);
+      if (await rt.isCanceled(task.run.id)) return;
+      const hosts = [...links.map(hostOf), classification.serviceDomain ?? ""].filter(Boolean);
+      const recipe = classification.kind === "invite" ? null : await rt.services.knownRecipe(hosts);
+      await applyClassificationTitles(rt, task.run, task.chatId, classification, task.message, task.renameChat);
+      startChatTask(rt, {
+        run: task.run,
+        chatId: task.chatId,
+        message: task.message,
+        author: task.author,
+        links,
+        classification,
+        recipe: recipe ? { slug: recipe.slug, name: recipe.name, kind: recipe.kind } : null,
+      });
+    } catch (e) {
+      if (await rt.isCanceled(task.run.id)) return;
+      warn("chat", "задача упала", { error: String(e) });
+      await rt.step(task.run.id, "error", String(e));
+      await rt.finishRun(task.run, "failed", String(e));
+      await rt.addChat({ role: "agent", text: redactInternal(`Не получилось: ${String(e)}`), runId: task.run.id, chatId: task.chatId });
+    }
+  })();
+}
+
+async function applyClassificationTitles(
+  rt: AgentRuntime,
+  run: Run,
+  chatId: string,
+  classification: ChatClassification,
+  message: string,
+  renameChat: boolean,
+): Promise<void> {
+  const nextTitle = runTitle(classification.kind, classification.service, message);
+  if (run.title !== nextTitle) {
+    run.title = nextTitle;
+    await rt.store.saveRun(run);
+  }
+  if (!renameChat) return;
+  const nextChat = chatTitle(classification.kind, classification.service, message);
+  const chat = await rt.store.chats.get(chatId);
+  if (chat && chat.title !== nextChat) await rt.store.chats.rename(chatId, nextChat);
 }
 
 function startChatTask(

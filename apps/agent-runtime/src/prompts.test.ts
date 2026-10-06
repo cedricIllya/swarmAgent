@@ -78,6 +78,7 @@ describe("systemPrompt recipe details", () => {
       },
     });
     expect(text).toContain("https://api.pneumatic.app");
+    expect(text).toContain("Как работать");
     expect(text).toContain("https://api-docs.pneumatic.app/");
     expect(text).toContain("Ключ: Integrations");
     expect(text).toMatch(/kind mcp\|api\|browser/);

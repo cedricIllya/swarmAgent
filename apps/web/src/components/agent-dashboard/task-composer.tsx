@@ -1,13 +1,19 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Agent } from "@swarm/contracts";
 
 /** Поле задачи: без ленты чатов. История и кнопки живут в журнале задачи. */
-export function TaskComposer({ agent }: { agent: Agent }) {
+export function TaskComposer({
+  agent,
+  onStage,
+}: {
+  agent: Agent;
+  onStage: (title: string) => { drop: () => void; adopt: (runId: string) => void };
+}) {
   const [autonomous, setAutonomous] = useState(agent.autonomous);
   const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
+  const textRef = useRef("");
   const [error, setError] = useState<string | null>(null);
   const running = agent.status === "running";
 
@@ -24,24 +30,38 @@ export function TaskComposer({ agent }: { agent: Agent }) {
     });
   }
 
+  function write(next: string) {
+    textRef.current = next;
+    setText(next);
+  }
+
   async function send(e: FormEvent) {
     e.preventDefault();
-    const message = text.trim();
-    if (!message || busy) return;
-    setBusy(true);
+    const message = textRef.current.trim();
+    if (!message || !running) return;
+    write("");
     setError(null);
-    const res = await fetch(`/api/agents/${agent.id}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
-    });
-    setBusy(false);
-    if (!res.ok) {
-      const data = (await res.json().catch(() => null)) as { error?: string } | null;
-      setError(data?.error ?? "Не удалось отправить задачу");
-      return;
+    const staged = onStage(message);
+    try {
+      const res = await fetch(`/api/agents/${agent.id}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+      if (!res.ok) {
+        staged.drop();
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        setError(data?.error ?? "Не удалось отправить задачу");
+        if (!textRef.current.trim()) write(message);
+        return;
+      }
+      const data = (await res.json().catch(() => null)) as { runId?: string } | null;
+      if (data?.runId) staged.adopt(data.runId);
+    } catch {
+      staged.drop();
+      setError("Не удалось отправить задачу");
+      if (!textRef.current.trim()) write(message);
     }
-    setText("");
   }
 
   return (
@@ -61,15 +81,15 @@ export function TaskComposer({ agent }: { agent: Agent }) {
         <textarea
           className="textarea"
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => write(e.target.value)}
           placeholder={running ? "Ссылка-приглашение, API-ключ или задача" : "Агент ещё поднимается…"}
           disabled={!running}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send(e);
           }}
         />
-        <button className="btn btn-primary" type="submit" disabled={!running || busy || !text.trim()}>
-          {busy ? "…" : "Отправить"}
+        <button className="btn btn-primary" type="submit" disabled={!running || !text.trim()}>
+          Отправить
         </button>
       </form>
       {error && (

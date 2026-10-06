@@ -142,15 +142,15 @@ async function provision(agent: AgentRow, runtimeToken: string, ownerEmail: stri
   const fly = flyClient();
   const appName = appNameFor(agent.id);
 
-  await updateAgent(database, agent.id, { status: "provisioning", statusMessage: "Создаём приложение Fly", flyAppName: appName });
+  await updateAgent(database, agent.id, { status: "provisioning", statusMessage: "Готовим агента", flyAppName: appName });
   await fly.ensureApp(appName);
   await fly.ensureFlycast(appName);
 
-  await updateAgent(database, agent.id, { statusMessage: `Создаём диск ${AGENT_VOLUME_GB} GB` });
+  await updateAgent(database, agent.id, { statusMessage: "Готовим место для данных" });
   const volume = await fly.ensureVolume(appName, "agent_data", AGENT_VOLUME_GB);
   await updateAgent(database, agent.id, { flyVolumeId: volume.id });
 
-  await updateAgent(database, agent.id, { statusMessage: "Запускаем Hermes и runtime" });
+  await updateAgent(database, agent.id, { statusMessage: "Запускаем агента" });
   const config = await machineConfigFor(agent, runtimeToken, ownerEmail, volume.id);
   const machine = await fly.createMachine(appName, { name: appName, config });
   await updateAgent(database, agent.id, { flyMachineId: machine.id, statusMessage: BOOTING_MESSAGE });
@@ -170,7 +170,7 @@ async function provision(agent: AgentRow, runtimeToken: string, ownerEmail: stri
 
 /** Первый старт машины: Fly готовит два образа, на новом хосте это минуты, а не секунды. */
 const FIRST_BOOT_WAIT_SEC = 600;
-const BOOTING_MESSAGE = "Машина создана, Fly готовит образы Hermes и runtime — обычно 1–5 минут";
+const BOOTING_MESSAGE = "Агент запускается — обычно 1–5 минут";
 
 async function markRunning(agentId: string, appName: string): Promise<void> {
   await updateAgent(db(), agentId, {
@@ -259,7 +259,7 @@ export async function pushServicesToTenant(tenantId: string): Promise<void> {
 /** Удаление: Fly app вместе с диском, запись в базе, адрес освобождается. */
 export async function destroyAgent(agent: AgentRow): Promise<void> {
   const database = db();
-  await updateAgent(database, agent.id, { status: "deleting", statusMessage: "Удаляем машину" });
+  await updateAgent(database, agent.id, { status: "deleting", statusMessage: "Удаляем агента" });
   if (agent.flyAppName && env.fly.apiToken) {
     await flyClient().destroyApp(agent.flyAppName);
   }

@@ -64,7 +64,7 @@ export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string;
         Адрес соберётся из вашего логина, имени и фамилии: Владимир Ленин → {ownerLogin}.vladimir.lenin@…
       </p>
       <div className="field">
-        <label className="label">Модель (OpenRouter)</label>
+        <label className="label">Модель</label>
         <ModelSelect value={model} onChange={setModel} disabled={busy} />
       </div>
       {error && <p className="error">{error}</p>}

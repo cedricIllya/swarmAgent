@@ -7,6 +7,7 @@ import { ApprovalRow } from "./approval-bubbles";
 import { SessionShots } from "./browser-bubble";
 import { fmtTime } from "./format";
 import { SecretValue, StepText } from "./secret-value";
+import { presentSteps, forPerson } from "./present-steps";
 import { servicesForRun } from "./task-services";
 import { ListSkeleton, Skeleton } from "../skeleton";
 
@@ -26,8 +27,6 @@ const TRIGGER_LABEL: Record<Run["trigger"], string> = {
   cron: "по расписанию",
   approval: "одобрение",
 };
-
-const KIND_LABEL = { mcp: "MCP", api: "API", browser: "браузер" } as const;
 
 interface SavedLogin {
   slug: string;
@@ -204,7 +203,6 @@ function AccessRow({ login }: { login: SavedLogin }) {
     <div className="list-item access-row">
       <div>
         <div>{login.name}</div>
-        <div className="faint small mono">{login.slug}</div>
         {(login.accountName || login.accountEmail) && (
           <div className="small" style={{ marginTop: 4 }}>
             {[login.accountName, login.accountEmail].filter(Boolean).join(" · ")}
@@ -216,7 +214,6 @@ function AccessRow({ login }: { login: SavedLogin }) {
           </div>
         )}
       </div>
-      <span className="badge">{KIND_LABEL[login.kind]}</span>
     </div>
   );
 }
@@ -252,6 +249,7 @@ function RunItem({
   const [retryError, setRetryError] = useState<string | null>(null);
 
   async function load() {
+    if (run.id.startsWith("local_")) return;
     const res = await fetch(`/api/agents/${agent.id}/runs/${run.id}`);
     if (res.ok) setLoaded(((await res.json()) as { steps: RunStep[] }).steps);
   }
@@ -318,7 +316,11 @@ function RunItem({
     [run.title, run.summary, ...steps.map((s) => s.text), ...messages.map((m) => m.text), ...sessions.map((s) => s.purpose)],
   );
   const ownAccess = accesses.filter((login) => usedServices.some((s) => s.slug === login.slug));
-  const canStop = run.status === "running" || run.status === "queued" || run.status === "waiting_approval";
+  const summary = forPerson(run.summary);
+  const shownSteps = presentSteps(steps);
+  const canStop =
+    !run.id.startsWith("local_") &&
+    (run.status === "running" || run.status === "queued" || run.status === "waiting_approval");
   const threadBusy = runs.some(
     (r) => r.threadId === run.threadId && (r.status === "running" || r.status === "queued" || r.status === "waiting_approval"),
   );
@@ -385,8 +387,7 @@ function RunItem({
           <div className="service-chips">
             {usedServices.map((s) => (
               <span key={s.slug} className="service-chip">
-                <span>{s.name}</span>
-                <span className="badge">{KIND_LABEL[s.kind]}</span>
+                {s.name}
               </span>
             ))}
           </div>
@@ -395,15 +396,19 @@ function RunItem({
       {history.length > 0 && (
         <div className="run-block">
           <div className="run-block-label">История</div>
-          {history.map((m, i) => (
-            <div key={`${m.at}-${i}`} className="history-line">
-              <span className="history-role">{m.role === "user" ? "Вы" : "Агент"}</span>
-              <div>
-                <StepText text={m.text} />
+          {history.map((m, i) => {
+            const text = m.role === "user" ? m.text : forPerson(m.text);
+            if (!text) return null;
+            return (
+              <div key={`${m.at}-${i}`} className="history-line">
+                <span className="history-role">{m.role === "user" ? "Вы" : "Агент"}</span>
+                <div>
+                  <StepText text={text} />
+                </div>
+                <span className="faint small">{fmtTime(m.at)}</span>
               </div>
-              <span className="faint small">{fmtTime(m.at)}</span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       {ownAccess.length > 0 && (
@@ -416,9 +421,9 @@ function RunItem({
           </div>
         </div>
       )}
-      {run.summary && (
+      {summary && (
         <p className="small" style={{ margin: "10px 0 0", whiteSpace: "pre-wrap" }}>
-          <StepText text={run.summary} />
+          <StepText text={summary} />
         </p>
       )}
       <div className="steps">
@@ -428,16 +433,16 @@ function RunItem({
             <Skeleton width="56%" height={14} />
           </>
         )}
-        {steps.map((s, i) => (
-          <div key={`${s.at}-${i}`} className="step">
-            <b>{s.kind}</b> · <StepText text={s.text} />
+        {shownSteps.map((text, i) => (
+          <div key={`${text}-${i}`} className="step">
+            <StepText text={text} />
           </div>
         ))}
       </div>
       {sessions.map((s) => (
         <div key={s.id} style={{ marginTop: 12 }}>
           <div className="small muted">
-            {s.provider === "skyvern" ? "Skyvern" : "браузер"} · {s.purpose} · {fmtTime(s.startedAt)}
+            браузер · {sessionPurpose(s.purpose)} · {fmtTime(s.startedAt)}
           </div>
           {s.hasVideo ? (
             <video controls preload="none" src={`/api/agents/${agent.id}/browser-sessions/${s.id}/video`} />
@@ -458,6 +463,12 @@ function RunItem({
       ))}
     </details>
   );
+}
+
+function sessionPurpose(purpose: string): string {
+  if (purpose === "signup") return "регистрация";
+  if (purpose === "login") return "вход";
+  return purpose;
 }
 
 function needsAttention(status: Run["status"]): boolean {

@@ -3,13 +3,6 @@ import type { Agent } from "@swarm/contracts";
 import type { TenantConnection } from "@swarm/connections";
 import { AgentFace } from "./agent-avatar";
 
-const KIND_LABEL = { mcp: "MCP", api: "API", browser: "браузер" } as const;
-const KIND_HINT = {
-  mcp: "агент ходит через MCP-сервер",
-  api: "агент ходит напрямую в API",
-  browser: "агент работает через браузер",
-} as const;
-
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
@@ -33,7 +26,7 @@ export function ServicesOverview({ agents, connections }: { agents: Agent[]; con
         <div>
           <span className="kicker">Рабочее пространство</span>
           <h1>Подключённые сервисы</h1>
-          <p className="lead">Куда у ваших агентов уже есть доступ и через кого он идёт.</p>
+          <p className="lead">Куда у ваших агентов уже есть доступ.</p>
         </div>
       </div>
 
@@ -91,7 +84,7 @@ function GoogleCard({ agents }: { agents: Agent[] }) {
           </span>
           <div>
             <h2>Google Workspace</h2>
-            <span className="muted small">Почта, календарь и документы через OAuth — подключается вручную для каждого агента</span>
+            <span className="muted small">Почта, календарь и документы — подключается отдельно для каждого агента</span>
           </div>
         </div>
         <span className={`badge ${connected.length ? "badge-ok" : ""}`}>
@@ -144,14 +137,8 @@ function ServiceRow({ connection }: { connection: TenantConnection }) {
       <div className="service-main">
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           <strong>{connection.name}</strong>
-          <span className="badge badge-accent" title={KIND_HINT[connection.kind]}>
-            {KIND_LABEL[connection.kind]}
-          </span>
         </div>
-        <div className="faint small mono">
-          {connection.slug}
-          {connection.domains.length ? ` · ${connection.domains.join(", ")}` : ""}
-        </div>
+        {connection.domains.length > 0 && <div className="faint small">{connection.domains.join(", ")}</div>}
       </div>
       <div className="chips">
         {connection.agents.map((a) => (
@@ -159,9 +146,7 @@ function ServiceRow({ connection }: { connection: TenantConnection }) {
             key={a.agentId}
             href={`/agents/${a.agentId}`}
             className="chip"
-            title={`${a.agentEmail}${a.accountEmail ? ` · ${a.accountEmail}` : ""} · ${fmtDate(a.updatedAt)}${
-              a.kind !== connection.kind ? ` · ${KIND_LABEL[a.kind]}` : ""
-            }`}
+            title={`${a.agentEmail}${a.accountEmail ? ` · ${a.accountEmail}` : ""} · ${fmtDate(a.updatedAt)}`}
           >
             <span className="chip-dot" />
             {a.agentName}
