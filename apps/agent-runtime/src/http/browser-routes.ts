@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { browserTaskBlock } from "../browser/access-mode";
 import { savedBrowserSlug } from "../browser/local-session";
 import { credentialVariables, referencedVariables } from "../browser/secrets";
 import { saveTokenFromPage } from "../browser/save-token";
@@ -32,6 +33,11 @@ export function browserRoutes(rt: AgentRuntime): Hono {
     );
     const run = await rt.store.getRun(body.runId);
     if (!run) return c.json({ error: "run not found" }, 404);
+    const blocked = browserTaskBlock(await rt.store.readServices(), { slug: body.serviceSlug, url: body.url ?? null });
+    if (blocked) {
+      await rt.step(run.id, "note", blocked);
+      return c.json({ error: blocked }, 409);
+    }
     const s = await rt.browser.open(run, {
       purpose: body.purpose?.trim() || (body.serviceSlug ? `работа в ${body.serviceSlug}` : "работа в браузере"),
       serviceSlug: body.serviceSlug,
@@ -45,6 +51,8 @@ export function browserRoutes(rt: AgentRuntime): Hono {
     const body = Session.extend({ url: z.string().url() }).parse(withAliases(await c.req.json(), { ...SESSION_ALIASES, url: ["link", "href"] }));
     const s = rt.browser.sessions.get(body.sessionId);
     if (!s) return c.json({ error: "session not found" }, 404);
+    const blocked = browserTaskBlock(await rt.store.readServices(), { slug: s.serviceSlug, url: body.url });
+    if (blocked) return c.json({ error: blocked }, 409);
     await s.goto(body.url);
     return c.json({ ok: true, url: await s.currentUrl() });
   });
@@ -149,7 +157,13 @@ export function browserRoutes(rt: AgentRuntime): Hono {
       .parse({ ...raw, purpose: skyvernPurpose(raw.purpose, raw.url) });
     const run = await rt.store.getRun(body.runId);
     if (!run) return c.json({ error: "run not found" }, 404);
-    const saved = savedBrowserSlug(await rt.store.readServices(), body.url);
+    const services = await rt.store.readServices();
+    const blocked = browserTaskBlock(services, { url: body.url });
+    if (blocked) {
+      await rt.step(run.id, "note", blocked);
+      return c.json({ error: blocked }, 409);
+    }
+    const saved = savedBrowserSlug(services, body.url);
     if (saved) {
       await rt.step(run.id, "note", `Skyvern не открываю: сессия ${saved} уже в своём браузере`);
       return c.json(

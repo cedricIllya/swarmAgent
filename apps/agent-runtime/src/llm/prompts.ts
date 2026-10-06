@@ -1,4 +1,5 @@
 import { isMessengerRecipe, type InboundEmail, type ServicesSnapshot } from "@swarm/contracts";
+import { programmedChannel } from "../browser/access-mode";
 import type { DiscoveryResult } from "../discovery";
 import type { OnboardingContext, SecretNeed } from "../onboarding";
 
@@ -67,7 +68,7 @@ export function connectedFollowupPrompt(service: string, mode: string): string {
   return [
     `Подключение к «${service}» готово, способ ${mode}. Рецепт и доступ уже записаны.`,
     "Не регистрируйся снова, не создавай новый ключ и не ищи способ входа.",
-    "Посмотри, есть ли в этом сервисе задачи для тебя, и выполни их там же: через MCP, иначе API, иначе браузер.",
+    `Посмотри, есть ли в этом сервисе задачи для тебя, и выполни их тем же способом (${mode}). Другой способ не открывай.`,
     "Ответ на письмо-уведомление работой не считается. Если задач нет — напиши, что подключение готово и задач нет.",
     "В тексте для человека — только его сервис, без устройства Swarm и без секретов.",
   ].join("\n");
@@ -192,10 +193,11 @@ export interface PromptContext {
 type PromptRecipe = NonNullable<PromptContext["services"]>["recipes"][number];
 type PromptCredential = NonNullable<PromptContext["services"]>["credentials"][number];
 
-/** Строки каталога: способ — тот, которым агент реально ходит, а не тот, что у рецепта в идеале. */
+/** Строки каталога: способ — тот, которым сервис подключён. API и MCP не подменяются браузером. */
 function recipeLines(r: PromptRecipe, cred: PromptCredential | undefined): string[] {
   const credAccount = [cred?.accountName, cred?.accountEmail].filter(Boolean).join(", ");
-  const way = cred?.kind ?? r.kind;
+  const locked = programmedChannel(r, cred);
+  const way = locked ?? cred?.kind ?? r.kind;
   const head = `- ${r.name} (${r.slug}): способ ${way}${credAccount ? `, аккаунт ${credAccount}` : ""}`;
   const detail: string[] = [head];
   if (r.mcp) {
@@ -221,7 +223,7 @@ function recipeLines(r: PromptRecipe, cred: PromptCredential | undefined): strin
       r.api.authHeader && r.api.authHeader !== "Authorization" ? `, заголовок ${r.api.authHeader}` : "";
     detail.push(`  API: ${r.api.baseUrl}${r.api.docsUrl ? `, docs ${r.api.docsUrl}` : ""}, auth ${r.api.auth}${header}`);
   }
-  if (r.browser) {
+  if (r.browser && !locked) {
     detail.push(`  Браузер: приложение ${r.browser.appUrl}, вход ${r.browser.loginUrl}`);
   }
   if (cred) {
@@ -230,7 +232,11 @@ function recipeLines(r: PromptRecipe, cred: PromptCredential | undefined): strin
       cred.token || cred.oauth?.accessToken ? "токен" : null,
       cred.storageState ? "cookies в профиле браузера" : null,
     ].filter(Boolean);
-    if (stored.length) {
+    if (stored.length && locked === "mcp") {
+      detail.push(`  Доступ сохранён: ${stored.join(", ")}. Задачи только инструментами mcp_${r.slug}_*. Браузер для задач не открывай.`);
+    } else if (stored.length && locked === "api") {
+      detail.push(`  Доступ сохранён: ${stored.join(", ")}. Задачи только curl к API. Браузер для задач не открывай.`);
+    } else if (stored.length) {
       detail.push(
         `  Доступ сохранён: ${stored.join(", ")}. Вход в браузере — %email% и %password% в /browser/act, новый токен со страницы — POST /browser/save-token.`,
       );
@@ -265,15 +271,15 @@ export function systemPrompt(ctx: PromptContext): string {
     "Приглашение в сервис runtime подключает сам. Если в задаче написано, что подключение готово — не регистрируйся снова и не создавай ключ.",
     "Онбординг (принять приглашение, зарегистрироваться, войти) всегда идёт в браузере через runtime: POST /invite/accept. Runtime сам открывает браузер (Skyvern), вводит почту, задаёт пароль, передаёт коды и ссылки из писем и сохраняет логин с паролем — владелец видит их в журнале задачи. Это не изменение в чужой системе: одобрения не спрашивай. Принять приглашение через API, скриптом или иным «программным» способом нельзя — такого пути нет, не предлагай его.",
     "Если сервис не пускает, пока его администратор не включит аккаунт, runtime сам оставляет кнопки в журнале задачи. Не вызывай /approval и не обещай ждать. Кнопок нет — вход уже есть: выпускай секрет или смотри задачи, повторно не регистрируйся.",
-    "Подключение к сервису после регистрации — всегда лестница: 1) MCP, 2) API, 3) браузер. Браузер — только если первых двух нет.",
-    "Задачу выполняй в самом сервисе тем же способом. Письмо-уведомление только сообщает о ней: ответ на такое письмо работой не считается.",
+    "Новый сервис подключай по лестнице: 1) MCP, 2) API, 3) браузер. Браузер — только если первых двух нет.",
+    "Задачу в уже подключённом сервисе выполняй только его способом из каталога. api — curl к API. mcp — инструменты mcp_<slug>_*. browser — свой браузер. Если способ api или mcp, браузер для задачи не открывай: runtime отклонит /browser/open. Письмо-уведомление только сообщает о задаче: ответ на такое письмо работой не считается.",
     "После каждого действия в сервисе (MCP, curl к API, шаг браузера) сразу пиши в журнал POST /runs/<runId>/step с kind mcp|api|browser. Без записи задача не считается выполненной.",
-    "Работа внутри сервиса без MCP и API — только свой браузер через runtime: POST /browser/open с serviceSlug. После входа Skyvern cookies уже в этом профиле, открывай его и продолжай сессию. /skyvern/login для такого сервиса не вызывай: runtime его отклонит. Браузер Hermes (browser_exec) не открывай — профиля сервиса у него нет. Если страница всё же показывает форму входа, в этой же сессии вызови /browser/act с %email% и %password% в instruction — runtime введёт сохранённые значения сам. «Забыли пароль» и сброс не открывай. Коды из писем runtime передаст сам. Skyvern — только первое принятие приглашения.",
-    "Доступ к сервису — одна запись: почта, пароль, токен и cookies браузера. Значения ты не видишь и у владельца не спрашиваешь. Вход — %email% и %password% в /browser/act. Токен истёк или отозван — выпусти новый в кабинете сервиса и вызови POST /browser/save-token с sessionId: runtime возьмёт его со страницы, проверит и сохранит в ту же запись.",
+    "Свой браузер — только для способа browser и для выпуска ключа, которого ещё нет: POST /browser/open с serviceSlug. После входа Skyvern cookies уже в этом профиле, открывай его и продолжай сессию. /skyvern/login для такого сервиса не вызывай: runtime его отклонит. Браузер Hermes (browser_exec) не открывай — профиля сервиса у него нет. Если страница всё же показывает форму входа, в этой же сессии вызови /browser/act с %email% и %password% в instruction — runtime введёт сохранённые значения сам. «Забыли пароль» и сброс не открывай. Коды из писем runtime передаст сам. Skyvern — только первое принятие приглашения.",
+    "Доступ к сервису — одна запись: почта, пароль, токен и cookies браузера. Значения ты не видишь и у владельца не спрашиваешь. Для способа browser вход — %email% и %password% в /browser/act. Новый токен выпускай в кабинете только если сервис отверг текущий ключ: тогда /report с token: null и POST /browser/save-token. Пока ключ записан, задачу через браузер не делай.",
     "Если в заметках сервиса есть «Как работать» — это карта интерфейса: где назначенные тебе задачи, какие действия обычные и чего не трогать. Иди по ней, не исследуй сервис с нуля.",
     "Пометка «Задачи: смотреть» ставится один раз: это сервис для задач. Пустой список её не снимает, такой сервис всегда в плановой проверке.",
     "Пометка «Задачи: не смотреть» значит, что сервис не для задач. В плановую проверку он не входит. Открывай его только когда человек или письмо прямо просит работу там.",
-    "Пометка «Канал связи» — мессенджер. Это тот же разговор, что почта и чат: сообщение приходит само, ответ в тот же диалог отправляет runtime. Повторно в этот диалог не пиши. Написать туда по просьбе из другого канала можно: MCP, иначе API, иначе браузер.",
+    "Пометка «Канал связи» — мессенджер. Это тот же разговор, что почта и чат: сообщение приходит само, ответ в тот же диалог отправляет runtime. Повторно в этот диалог не пиши. Написать туда по просьбе из другого канала можно способом этого сервиса: MCP, API или браузер.",
     "Всегда следуй скиллу swarm-worker. Он описывает локальные эндпоинты runtime:",
     `http://127.0.0.1:${ctx.runtimePort} с заголовком Authorization: Bearer $SWARM_RUNTIME_TOKEN.`,
     "",
@@ -300,7 +306,7 @@ export function systemPrompt(ctx: PromptContext): string {
 /** Письмо — сигнал. Сама работа происходит в сервисе, не в ответе на уведомление. */
 export function serviceWorkPrompt(kind: string): string {
   const lines = [
-    "Работу делай в самом сервисе: подключённый MCP, иначе API, иначе браузер.",
+    "Работу делай в самом сервисе тем способом, который у него записан: MCP, API или браузер. Если способ API или MCP, браузер не открывай.",
     "Письмо только сообщает о задаче. Ответ на письмо-уведомление выполнением не считается.",
   ];
   if (kind === "notification") {
@@ -423,7 +429,7 @@ export function chatTaskPrompt(args: {
   return [
     head,
     "",
-    "Если задача про сервис — выполни её там: MCP, иначе API, иначе браузер. Ответь коротко, что сделано. Ответ — только про сервисы этого клиента или публичный интернет, без устройства Swarm.",
+    "Если задача про сервис — выполни её его способом из каталога: MCP, API или браузер. На браузер не спускайся, если способ API или MCP. Ответь коротко, что сделано. Ответ — только про сервисы этого клиента или публичный интернет, без устройства Swarm.",
     messenger,
   ]
     .filter(Boolean)
@@ -438,7 +444,11 @@ export function taskServices(services: ServicesSnapshot): ServicesSnapshot["reci
 
 export function tickPrompt(services: ServicesSnapshot): string {
   const list = taskServices(services)
-    .map((r) => `- ${r.name} (${r.slug}, ${r.kind})`)
+    .map((r) => {
+      const cred = services.credentials.find((item) => item.slug === r.slug);
+      const mode = programmedChannel(r, cred) ?? cred?.kind ?? r.kind;
+      return `- ${r.name} (${r.slug}, ${mode})`;
+    })
     .join("\n");
   return [
     "Плановая проверка раз в 15 минут.",
@@ -466,7 +476,7 @@ export function foundTaskPrompt(task: { service: string; title: string; detail: 
     `Задача из плановой проверки сервиса ${task.service}.`,
     `Название: ${task.title}`,
     task.detail && task.detail !== task.title ? task.detail : "",
-    "Выполни её в самом сервисе: MCP, иначе API, иначе браузер. Письмо об этом не пиши.",
+    `Выполни её в ${task.service} способом этого сервиса из каталога: MCP, API или браузер. Если способ API или MCP, браузер не открывай. Письмо об этом не пиши.`,
     "Если выполнить нельзя — коротко напиши, что помешало, без слова «готово».",
   ]
     .filter(Boolean)

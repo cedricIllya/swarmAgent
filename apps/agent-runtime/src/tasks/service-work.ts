@@ -8,7 +8,7 @@ const SERVICE_ACTION_KINDS = new Set(["tool", "mcp", "api", "browser"]);
 export const NO_SERVICE_ACTION_PROMPT = [
   "В журнале этой задачи нет вызовов сервиса (MCP, API, браузер).",
   "Нельзя писать, что готово.",
-  "Сделай работу в сервисе сейчас: инструменты mcp_*, curl к API или /browser/*.",
+  "Сделай работу способом этого сервиса: инструменты mcp_*, curl к API или /browser/*. Браузер — только если способ сервиса browser.",
   "После действия отметь шаг: POST /runs/<runId>/step с kind mcp|api|browser.",
   "Если выполнить нельзя — коротко напиши, что именно помешало, без слова «готово».",
 ].join(" ");

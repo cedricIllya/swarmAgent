@@ -70,6 +70,7 @@ describe("systemPrompt recipe details", () => {
               auth: "bearer",
               authHeader: "Authorization",
             },
+            browser: { loginUrl: "https://my.pneumatic.app/", appUrl: "https://my.pneumatic.app/" },
             notes: "Ключ: Integrations",
             discoveredBy: null,
           },
@@ -78,6 +79,11 @@ describe("systemPrompt recipe details", () => {
       },
     });
     expect(text).toContain("https://api.pneumatic.app");
+    expect(text).toContain("Pneumatic (pneumatic): способ api");
+    expect(text).toContain("Задачи только curl к API");
+    expect(text).toContain("Браузер для задач не открывай");
+    expect(text).not.toContain("Вход в браузере");
+    expect(text).not.toContain("https://my.pneumatic.app/");
     expect(text).toContain("Как работать");
     expect(text).toContain("https://api-docs.pneumatic.app/");
     expect(text).toContain("Ключ: Integrations");

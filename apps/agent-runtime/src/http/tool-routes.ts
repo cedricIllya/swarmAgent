@@ -7,6 +7,7 @@ import { noteActivity } from "../tasks/idle";
 import { redactInternal } from "../core/redact";
 import { withAliases } from "./lenient";
 import { guardCredentialReport, guardRecipeReport, mcpTokenCheck } from "../onboarding/report-guard";
+import { browserTaskBlock } from "../browser/access-mode";
 import { storedLoginAsked } from "../browser/secrets";
 
 /**
@@ -45,10 +46,18 @@ export function toolRoutes(rt: AgentRuntime): Hono {
         options: z.array(z.string()).max(6).default([]),
       })
       .parse(raw);
-    const stored = storedLoginAsked(body.question, await rt.store.readServices());
+    const services = await rt.store.readServices();
+    const stored = storedLoginAsked(body.question, services);
     if (stored) {
-      const error = `Пароль ${stored} уже сохранён в доступе — владельца не спрашивай. Открой POST /browser/open с serviceSlug "${stored}" (cookies уже там). Если просит войти — /browser/act с %email% и %password%: runtime введёт их сам. Токен со страницы сохраняй через POST /browser/save-token.`;
-      await rt.step(body.runId, "note", `вопрос о входе в ${stored} не задан: пароль уже в доступе`);
+      const viaApi = browserTaskBlock(services, { slug: stored });
+      const error =
+        viaApi ??
+        `Пароль ${stored} уже сохранён в доступе — владельца не спрашивай. Открой POST /browser/open с serviceSlug "${stored}" (cookies уже там). Если просит войти — /browser/act с %email% и %password%: runtime введёт их сам. Токен со страницы сохраняй через POST /browser/save-token.`;
+      await rt.step(
+        body.runId,
+        "note",
+        viaApi ?? `вопрос о входе в ${stored} не задан: пароль уже в доступе`,
+      );
       return c.json({ pending: false, error }, 409);
     }
     const r = await rt.approvals.ask(body.runId, body.question, body.options);
