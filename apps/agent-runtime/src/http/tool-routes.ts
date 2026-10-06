@@ -173,7 +173,7 @@ export function toolRoutes(rt: AgentRuntime): Hono {
     noteActivity();
     const raw = withAliases(await c.req.json(), {
       kind: ["type", "step", "category"],
-      text: ["message", "note", "description", "content", "summary", "step_text"],
+      text: ["message", "note", "description", "content", "summary", "step_text", "detail"],
       data: ["meta", "details"],
     });
     const body = z
