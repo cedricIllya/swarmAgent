@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeCredential, type ServiceRecipe } from "@swarm/contracts";
+import { keepWatchesTasks, mergeCredential, type ServiceRecipe } from "@swarm/contracts";
 import { guardCredentialReport, guardRecipeReport, mcpTokenCheck } from "../../src/onboarding/report-guard";
 
 const gensite: ServiceRecipe = {
@@ -69,6 +69,35 @@ describe("guardRecipeReport", () => {
     expect(r.value.watchesTasks).toBe(false);
     expect(r.value.notes).toContain("Канал связи:");
     expect(r.value.notes).not.toContain("Как работать:");
+  });
+
+  it("не даёт модели снять сервис с обхода пустым заходом", () => {
+    const linear: ServiceRecipe = {
+      slug: "linear",
+      name: "Linear",
+      kind: "mcp",
+      domains: ["linear.app"],
+      notes: "Как работать: объекты — задача.",
+      discoveredBy: null,
+      watchesTasks: true,
+    };
+    const again = guardRecipeReport(linear, { ...linear, watchesTasks: false, notes: "задач нет" });
+    expect(again.ok).toBe(true);
+    if (again.ok) expect(again.value.watchesTasks).toBe(true);
+
+    const first = guardRecipeReport(null, { ...linear, watchesTasks: false });
+    expect(first.ok).toBe(true);
+    if (first.ok) expect(first.value.watchesTasks ?? null).toBeNull();
+  });
+});
+
+describe("keepWatchesTasks", () => {
+  it("один раз поставленное «для задач» не снимается", () => {
+    expect(keepWatchesTasks(true, false)).toBe(true);
+    expect(keepWatchesTasks(true, null)).toBe(true);
+    expect(keepWatchesTasks(null, true)).toBe(true);
+    expect(keepWatchesTasks(null, false)).toBe(false);
+    expect(keepWatchesTasks(false, true)).toBe(true);
   });
 });
 

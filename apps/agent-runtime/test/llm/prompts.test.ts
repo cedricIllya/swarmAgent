@@ -177,6 +177,7 @@ describe("tick only opens services that have assigned work", () => {
     expect(text).toMatch(/не открывай/);
     expect(text).toMatch(/Не выполняй/);
     expect(text).toContain("/tasks/found");
+    expect(text).toMatch(/из обхода не убирает/);
     expect(text).not.toMatch(/Выполни найденное/);
     const shown = systemPrompt({
       agentName: "Бот",

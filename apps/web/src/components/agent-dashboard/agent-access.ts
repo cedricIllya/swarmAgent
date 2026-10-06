@@ -41,7 +41,7 @@ export function taskWatchLabel(
     return { text: "задачи", title: "Агент проверяет здесь назначенные задачи", ok: true };
   }
   if (watchesTasks === false) {
-    return { text: "без задач", title: "Назначенной работы нет. Агент заходит только по прямой просьбе", ok: false };
+    return { text: "без задач", title: "Сервис не для задач. Агент заходит только по прямой просьбе", ok: false };
   }
   return { text: "не ясно", title: "Ещё не выяснили, есть ли здесь назначенные задачи", ok: false };
 }

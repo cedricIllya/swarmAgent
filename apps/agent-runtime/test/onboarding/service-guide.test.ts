@@ -221,7 +221,108 @@ describe("ensureWorkGuides", () => {
     }
     expect(saved).toHaveLength(1);
     expect(saved[0]?.watchesTasks).toBe(false);
-    expect(saved[0]?.notes).toContain("назначенных задач нет");
+    expect(saved[0]?.notes).toContain("не сервис для задач");
     expect(saved[0]?.notes).not.toMatch(/Смотри страницу/);
+  });
+
+  it("оставляет сервис для задач в обходе, даже если разбор не увидел задач", async () => {
+    const snap: ServicesSnapshot = {
+      generatedAt: "t",
+      recipes: [recipe({ slug: "notion", name: "Notion", kind: "browser", domains: ["notion.so"], watchesTasks: true, notes: "Вход по паролю." })],
+      credentials: [{ slug: "notion", kind: "browser", password: "pw" }],
+    };
+    const saved: ServiceRecipe[] = [];
+    const chat = vi.fn(async () => ({
+      text: JSON.stringify({ watchesTasks: false, objects: "", myWork: "", actions: "", avoid: "" }),
+      promptTokens: 1,
+      completionTokens: 1,
+      costUsd: 0,
+      model: "m",
+      citations: [{ url: "https://notion.so/help/getting-started", title: "Start", content: "страницы и базы" }],
+    }));
+    const fetchImpl = vi.fn(async () => {
+      return new Response("<html><title>Start</title><body><p>Notion хранит страницы и базы. Назначенных задач на странице справки не показано, список может быть пуст.</p></body></html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      });
+    }) as unknown as typeof fetch;
+    const host = {
+      model: "m",
+      openRouter: { chat } as unknown as OpenRouterClient,
+      store: { readServices: async () => snap, addUsage: vi.fn() },
+      services: {
+        applyReport: async (input: { type: string; recipe?: ServiceRecipe }) => {
+          if (input.type === "recipe" && input.recipe) saved.push(input.recipe);
+        },
+      },
+      step: async () => undefined,
+      taskRef: () => ({ taskId: "run-1", taskTitle: "Задача" }),
+    } as unknown as WorkGuideHost;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchImpl;
+    try {
+      await ensureWorkGuides(host, { id: "run-1" } as Run);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.watchesTasks).toBe(true);
+    expect(saved[0]?.notes).toContain("Смотри страницу сервиса");
+    expect(saved[0]?.notes).not.toContain("не сервис для задач");
+  });
+
+  it("заново смотрит сервис, который сняли с обхода из-за пустого списка", async () => {
+    const snap: ServicesSnapshot = {
+      generatedAt: "t",
+      recipes: [
+        recipe({
+          slug: "jira",
+          name: "Jira",
+          kind: "api",
+          domains: ["atlassian.net"],
+          watchesTasks: false,
+          notes: "Как работать: назначенных задач нет. По расписанию сюда не заходить.",
+        }),
+      ],
+      credentials: [{ slug: "jira", kind: "api", token: "tok" }],
+    };
+    const saved: ServiceRecipe[] = [];
+    const chat = vi.fn(async (_m: unknown, opts: { webSearch?: unknown }) => ({
+      text: opts.webSearch ? "справка" : guideJson,
+      promptTokens: 1,
+      completionTokens: 1,
+      costUsd: 0,
+      model: "m",
+      citations: opts.webSearch ? [{ url: "https://support.atlassian.com/jira-software/getting-started", title: "Start", content: "задачи и доски" }] : [],
+    }));
+    const fetchImpl = vi.fn(async () => {
+      return new Response("<html><title>Start</title><body><p>Jira — это задачи и доски. Назначенные вам карточки лежат в меню слева, их можно открыть и перенести.</p></body></html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      });
+    }) as unknown as typeof fetch;
+    const host = {
+      model: "m",
+      openRouter: { chat } as unknown as OpenRouterClient,
+      store: { readServices: async () => snap, addUsage: vi.fn() },
+      services: {
+        applyReport: async (input: { type: string; recipe?: ServiceRecipe }) => {
+          if (input.type === "recipe" && input.recipe) saved.push(input.recipe);
+        },
+      },
+      step: async () => undefined,
+      taskRef: () => ({ taskId: "run-1", taskTitle: "Задача" }),
+    } as unknown as WorkGuideHost;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchImpl;
+    try {
+      await ensureWorkGuides(host, { id: "run-1" } as Run);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.watchesTasks).toBe(true);
+    expect(saved[0]?.notes).not.toContain("назначенных задач нет");
+    expect(saved[0]?.notes).toContain("Мои карточки");
   });
 });

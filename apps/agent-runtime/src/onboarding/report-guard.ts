@@ -32,7 +32,8 @@ export function guardRecipeReport(existing: ServiceRecipe | null, incoming: Serv
       reason: `адреса ${foreign.join(", ")} не принадлежат ${domains.join(", ")}: это другой сайт, в рецепт ${incoming.slug} он не пойдёт`,
     };
   }
-  if (!existing) return { ok: true, value: messengerPatch(incoming), note: null };
+  // Пометку «сервис для задач» ставит разбор документации, не отчёт модели с пустого захода.
+  if (!existing) return { ok: true, value: messengerPatch({ ...incoming, watchesTasks: null }), note: null };
 
   const browser = incoming.browser ?? existing.browser;
   const merged: ServiceRecipe = {

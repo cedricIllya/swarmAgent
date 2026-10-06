@@ -15,9 +15,15 @@ export const WORK_GUIDE_MARK = "Как работать:";
 const UNKNOWN_GUIDE =
   "Как работать: публичная документация не описала, где лежат назначенные задачи. Смотри страницу сервиса.";
 
-/** Сервис без входящих: плановая проверка его не открывает. */
+/** Сервис не для задач: плановая проверка его не открывает. */
 export const NO_TASKS_GUIDE =
-  "Как работать: назначенных задач нет. По расписанию сюда не заходить — только если человек или письмо прямо просит работу в этом сервисе.";
+  "Как работать: это не сервис для задач. По расписанию сюда не заходить — только если человек или письмо прямо просит работу в этом сервисе.";
+
+/**
+ * Старая пометка решала по пустому списку и снимала сервис с обхода.
+ * Такой рецепт классифицируем ещё раз — уже по тому, чем сервис занимается.
+ */
+const STALE_EMPTY_GUIDE = "назначенных задач нет";
 
 const GUIDE_SCHEMA = {
   type: "object",
@@ -27,7 +33,7 @@ const GUIDE_SCHEMA = {
     watchesTasks: {
       type: "boolean",
       description:
-        "true, только если у текущего пользователя есть назначенная работа: задачи, карточки, тикеты, упоминания. false для оплаты, ключей, хостинга, аналитики, рассылок и идентификации",
+        "true, если сервис для задач: доски, карточки, тикеты, issues, назначенная работа. Пустой список сейчас не делает его false. false — только если сервис про другое: оплата, ключи, хостинг, аналитика, рассылки, идентификация",
     },
     objects: { type: "string", description: "Как называются рабочие объекты: доска, задача, сообщение. Пусто, если назначенной работы нет" },
     myWork: { type: "string", description: "Где лежит работа, назначенная текущему пользователю, и как туда попасть. Пусто, если её нет" },
@@ -173,9 +179,9 @@ export type GuideOutcome =
 
 function searchPrompt(service: string, domain: string): string {
   return [
-    `Официальная документация сервиса «${service}» (${domain}): как в нём работать человеку.`,
-    "Нужно понять, есть ли у пользователя назначенная работа (задачи, карточки, тикеты, упоминания) или это сервис без входящих: оплата, ключи, хостинг, аналитика.",
-    "Если работа есть — getting started или help: как называются объекты и где их видеть.",
+    `Официальная документация сервиса «${service}» (${domain}): чем он занимается и как в нём работать человеку.`,
+    "Нужно понять назначение сервиса. Сервис для задач — доски, карточки, тикеты, issues, назначенная работа. Не для задач — оплата, ключи, хостинг, аналитика, рассылки, идентификация.",
+    "Пустой список задач сейчас не важен. Если это сервис для задач — getting started или help: как называются объекты и где их видеть.",
     "Не страница ключей. Верни короткий ответ со ссылками на источники.",
   ].join(" ");
 }
@@ -183,9 +189,10 @@ function searchPrompt(service: string, domain: string): string {
 function extractPrompt(service: string, domain: string, pages: Array<{ url: string; title: string; text: string }>): string {
   const body = pages.map((page) => `### ${page.title || page.url}\nURL: ${page.url}\n${page.text}`).join("\n\n");
   return [
-    `Сервис «${service}» (${domain}). Ниже страницы о том, как в нём работать.`,
-    "Сначала реши watchesTasks: true, только если в тексте есть работа, назначенная текущему пользователю (задачи, карточки, тикеты, упоминания).",
-    "false — если это оплата, ключи, хостинг, аналитика, рассылка или идентификация и назначенной работы нет.",
+    `Сервис «${service}» (${domain}). Ниже страницы о том, чем он занимается и как в нём работать.`,
+    "Сначала реши watchesTasks по назначению сервиса, не по тому, есть ли задачи прямо сейчас.",
+    "true — это сервис для задач: доски, карточки, тикеты, issues, назначенная работа, упоминания в работе. Пустой список сейчас всё равно true.",
+    "false — только если сервис про другое: оплата, ключи, хостинг, аналитика, рассылка или идентификация.",
     "При false объекты и myWork оставь пустыми.",
     "При true: objects — как называются рабочие объекты; myWork — где лежит назначенная работа и как туда попасть;",
     "actions — обычные действия; avoid — чего не делать (оплата, участники, удаление пространства).",
@@ -281,22 +288,29 @@ function cooledDown(slug: string): boolean {
   return at !== undefined && Date.now() - at < RETRY_MS;
 }
 
+function staleEmptyGuide(recipe: ServiceRecipe): boolean {
+  return recipe.notes.includes(STALE_EMPTY_GUIDE);
+}
+
 /** Классификация ещё не записана и пауза после сбоя уже прошла. */
 export function classificationPending(recipe: ServiceRecipe): boolean {
+  if (staleEmptyGuide(recipe)) return !cooledDown(recipe.slug);
   if (recipe.watchesTasks === true || recipe.watchesTasks === false) return false;
   return !cooledDown(recipe.slug);
 }
 
 function shouldLearn(recipe: ServiceRecipe, credKind: string): boolean {
   if (cooledDown(recipe.slug)) return false;
+  if (staleEmptyGuide(recipe)) return true;
   if (recipe.watchesTasks == null) return true;
   return recipe.watchesTasks === true && credKind === "browser" && !hasWorkGuide(recipe.notes);
 }
 
 /**
  * Перед ходом модели: у подключённого сервиса без классификации один раз
- * читаем документацию. Есть назначенная работа — карта в заметки и тик её смотрит.
- * Нет — пометка, и плановая проверка этот сервис пропускает.
+ * читаем документацию и смотрим, чем сервис занимается.
+ * Сервис для задач помечается один раз: тик его смотрит всегда, даже если сейчас пусто.
+ * Не для задач — пометка, и плановая проверка этот сервис пропускает.
  */
 export async function ensureWorkGuides(host: WorkGuideHost, run: Run): Promise<void> {
   const snap: ServicesSnapshot | null = await host.store.readServices();
@@ -338,13 +352,16 @@ async function learnAndStore(host: WorkGuideHost, run: Run, recipe: ServiceRecip
       failedAt.set(recipe.slug, Date.now());
       return;
     }
-    const base = outcome.watchesTasks ? recipe.notes : stripWorkGuide(recipe.notes);
-    const notes = appendWorkGuide(base, outcome.text);
-    const next: ServiceRecipe = { ...recipe, notes, watchesTasks: outcome.watchesTasks };
+    // Уже помечен как сервис для задач — пустой заход и повторный разбор это не снимают.
+    const watchesTasks = recipe.watchesTasks === true || outcome.watchesTasks;
+    const guide = watchesTasks && !outcome.watchesTasks ? UNKNOWN_GUIDE : outcome.text;
+    const base = watchesTasks && !staleEmptyGuide(recipe) && hasWorkGuide(recipe.notes) ? recipe.notes : stripWorkGuide(recipe.notes);
+    const notes = appendWorkGuide(base, guide);
+    const next: ServiceRecipe = { ...recipe, notes, watchesTasks };
     await host.services.applyReport({ type: "recipe", recipe: next, runId: run.id }, { quiet: true });
     recipe.notes = notes;
-    recipe.watchesTasks = outcome.watchesTasks;
-    await host.step(run.id, "note", `как работать в ${recipe.name}: ${outcome.text}`.slice(0, 400));
+    recipe.watchesTasks = watchesTasks;
+    await host.step(run.id, "note", `как работать в ${recipe.name}: ${guide}`.slice(0, 400));
   } catch (e) {
     failedAt.set(recipe.slug, Date.now());
     warn("guide", "карта сервиса не записана", { slug: recipe.slug, error: String(e) });
