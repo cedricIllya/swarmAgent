@@ -5,7 +5,7 @@ import {
   ServiceRecipeSchema,
   ServicesSnapshotSchema,
 } from "./services";
-import { UsageSummarySchema } from "./usage";
+import { UsageSummarySchema, UsageTotalsSchema } from "./usage";
 
 /**
  * HTTP между control plane и agent-runtime на машине агента.
@@ -206,3 +206,14 @@ export const RuntimeReportSchema = z.discriminatedUnion("type", [
 ]);
 
 export type RuntimeReport = z.infer<typeof RuntimeReportSchema>;
+
+/**
+ * Просьба усыпить машину: `POST /api/runtime/suspend`. Вместе с ней runtime
+ * отдаёт итоги `usage.jsonl`, чтобы расходы спящего агента были видны без пробуждения.
+ * Старый runtime шлёт пустое тело.
+ */
+export const SuspendRequestSchema = z.object({
+  usage: UsageTotalsSchema.optional(),
+});
+
+export type SuspendRequest = z.infer<typeof SuspendRequestSchema>;

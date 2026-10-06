@@ -1,6 +1,6 @@
-import type { Agent, AgentStatus } from "@swarm/contracts";
+import type { Agent, AgentStatus, UsageTotals } from "@swarm/contracts";
 import { decryptString, encryptString, randomToken } from "@swarm/crypto";
-import { and, desc, eq, newId, schema, type Db } from "@swarm/db";
+import { and, desc, eq, isNull, lte, newId, or, schema, sql, type Db } from "@swarm/db";
 
 type Row = typeof schema.agents.$inferSelect;
 
@@ -28,13 +28,17 @@ export function toAgentView(row: Row): Agent {
   };
 }
 
-export async function listAgents(db: Db, tenantId: string): Promise<Agent[]> {
-  const rows = await db
+/** Строки целиком, с зашифрованными токенами: для вызовов в runtime. В браузер не отдавать. */
+export async function listAgentRows(db: Db, tenantId: string): Promise<Row[]> {
+  return db
     .select()
     .from(schema.agents)
     .where(eq(schema.agents.tenantId, tenantId))
     .orderBy(desc(schema.agents.createdAt));
-  return rows.map(toAgentView);
+}
+
+export async function listAgents(db: Db, tenantId: string): Promise<Agent[]> {
+  return (await listAgentRows(db, tenantId)).map(toAgentView);
 }
 
 export async function getAgent(db: Db, tenantId: string, agentId: string): Promise<Row | null> {
@@ -122,6 +126,31 @@ export async function updateAgent(
     values.googleRefreshTokenEnc = googleRefreshToken ? encryptString(googleRefreshToken) : null;
   }
   await db.update(schema.agents).set(values).where(eq(schema.agents.id, agentId));
+}
+
+/**
+ * Запомнить итоги `usage.jsonl` агента. Журнал только растёт, поэтому отчёт,
+ * пришедший позже, но снятый раньше (меньше токенов), сохранённый не затирает.
+ */
+export async function rememberAgentUsage(db: Db, agentId: string, totals: UsageTotals): Promise<void> {
+  const tokens = totals.totalPromptTokens + totals.totalCompletionTokens;
+  await db
+    .update(schema.agents)
+    .set({
+      usageCostUsd: totals.totalCostUsd,
+      usagePromptTokens: totals.totalPromptTokens,
+      usageCompletionTokens: totals.totalCompletionTokens,
+      usageAt: new Date(),
+    })
+    .where(
+      and(
+        eq(schema.agents.id, agentId),
+        or(
+          isNull(schema.agents.usagePromptTokens),
+          lte(sql`${schema.agents.usagePromptTokens} + coalesce(${schema.agents.usageCompletionTokens}, 0)`, tokens),
+        ),
+      ),
+    );
 }
 
 export async function deleteAgent(db: Db, agentId: string): Promise<void> {

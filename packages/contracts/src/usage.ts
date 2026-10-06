@@ -48,6 +48,14 @@ export const UsageSummarySchema = z.object({
   tasks: z.array(UsageByTaskSchema),
 });
 
+/** Итоги без разбивки по задачам: их runtime отдаёт control plane перед сном. */
+export const UsageTotalsSchema = UsageSummarySchema.pick({
+  totalCostUsd: true,
+  totalPromptTokens: true,
+  totalCompletionTokens: true,
+});
+
 export type UsageByAction = z.infer<typeof UsageByActionSchema>;
 export type UsageByTask = z.infer<typeof UsageByTaskSchema>;
 export type UsageSummary = z.infer<typeof UsageSummarySchema>;
+export type UsageTotals = z.infer<typeof UsageTotalsSchema>;

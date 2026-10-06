@@ -1,5 +1,7 @@
 import {
+  bigint,
   boolean,
+  doublePrecision,
   index,
   jsonb,
   pgEnum,
@@ -146,6 +148,14 @@ export const agents = pgTable(
     googleEmail: text("google_email"),
     /** Аватар: `nice:` и JSON конфига конструктора. Пусто — инициалы. */
     avatar: text("avatar"),
+    /**
+     * Итоги `usage.jsonl` на момент, когда машина последний раз отчиталась
+     * (перед сном или когда control plane читал `/state`). Пусто — ещё ни разу.
+     */
+    usageCostUsd: doublePrecision("usage_cost_usd"),
+    usagePromptTokens: bigint("usage_prompt_tokens", { mode: "number" }),
+    usageCompletionTokens: bigint("usage_completion_tokens", { mode: "number" }),
+    usageAt: timestamp("usage_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

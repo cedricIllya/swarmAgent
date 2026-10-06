@@ -1,14 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Agent } from "@swarm/contracts";
 import { StatusBadge } from "./status-badge";
 import { CreateAgentForm } from "./create-agent-form";
 import { AgentFace } from "./agent-avatar";
 import { personStatus } from "./agent-dashboard/present-steps";
 
-export function AgentsHome({ initialAgents, ownerLogin }: { initialAgents: Agent[]; ownerLogin: string }) {
+export function AgentsHome({
+  initialAgents,
+  ownerLogin,
+  usage,
+}: {
+  initialAgents: Agent[];
+  ownerLogin: string;
+  /** Серверный блок расходов по всем агентам; его нет, когда агентов ещё нет. */
+  usage?: ReactNode;
+}) {
   const [agents, setAgents] = useState(initialAgents);
   const [open, setOpen] = useState(initialAgents.length === 0);
 
@@ -61,31 +70,34 @@ export function AgentsHome({ initialAgents, ownerLogin }: { initialAgents: Agent
           </p>
         </div>
       ) : (
-        <div className="grid grid-2">
-          {agents.map((a) => (
-            <Link key={a.id} href={`/agents/${a.id}`} className="card card-link">
-              <div className="card-head" style={{ marginBottom: 10 }}>
-                <div className="row" style={{ gap: 10, minWidth: 0 }}>
-                  <AgentFace agent={a} />
-                  <h2>{a.name}</h2>
+        <>
+          {usage}
+          <div className="grid grid-2">
+            {agents.map((a) => (
+              <Link key={a.id} href={`/agents/${a.id}`} className="card card-link">
+                <div className="card-head" style={{ marginBottom: 10 }}>
+                  <div className="row" style={{ gap: 10, minWidth: 0 }}>
+                    <AgentFace agent={a} />
+                    <h2>{a.name}</h2>
+                  </div>
+                  <StatusBadge status={a.status} />
                 </div>
-                <StatusBadge status={a.status} />
-              </div>
-              <div className="mono muted agent-card-email" title={a.email}>
-                {a.email}
-              </div>
-              {a.statusMessage && (
-                <div className="small" style={{ marginTop: 8, color: a.status === "failed" ? "var(--danger)" : "var(--text-muted)" }}>
-                  {personStatus(a.statusMessage, a.status)}
+                <div className="mono muted agent-card-email" title={a.email}>
+                  {a.email}
                 </div>
-              )}
-              <div className="card-foot">
-                <span className="faint small">{a.model}</span>
-                {a.googleConnected && <span className="badge badge-ok">Google</span>}
-              </div>
-            </Link>
-          ))}
-        </div>
+                {a.statusMessage && (
+                  <div className="small" style={{ marginTop: 8, color: a.status === "failed" ? "var(--danger)" : "var(--text-muted)" }}>
+                    {personStatus(a.statusMessage, a.status)}
+                  </div>
+                )}
+                <div className="card-foot">
+                  <span className="faint small">{a.model}</span>
+                  {a.googleConnected && <span className="badge badge-ok">Google</span>}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </>
       )}
     </>
   );

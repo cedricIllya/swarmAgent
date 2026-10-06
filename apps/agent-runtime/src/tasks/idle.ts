@@ -1,3 +1,4 @@
+import type { UsageTotals } from "@swarm/contracts";
 import { tick } from "./cron";
 import { closeAllStreams } from "../core/events";
 import type { AgentRuntime } from "../runtime";
@@ -28,6 +29,17 @@ export async function machineIsIdle(rt: AgentRuntime): Promise<boolean> {
   return !runs.some((r) => r.status === "running" || r.status === "queued");
 }
 
+/** Без итогов усыпить всё равно надо: сломанный журнал не должен держать машину. */
+async function usageTotals(rt: AgentRuntime): Promise<UsageTotals | undefined> {
+  try {
+    const { totalCostUsd, totalPromptTokens, totalCompletionTokens } = await rt.store.usageSummary();
+    return { totalCostUsd, totalPromptTokens, totalCompletionTokens };
+  } catch (e) {
+    warn("idle", "не удалось снять итоги usage", { error: String(e) });
+    return undefined;
+  }
+}
+
 async function maybeSuspend(rt: AgentRuntime): Promise<void> {
   if (suspending) return;
   if (Date.now() - lastActivity < IDLE_MS) return;
@@ -40,7 +52,7 @@ async function maybeSuspend(rt: AgentRuntime): Promise<void> {
   try {
     closeAllStreams();
     await new Promise((r) => setTimeout(r, 40));
-    await rt.controlPlane.requestSuspend();
+    await rt.controlPlane.requestSuspend(await usageTotals(rt));
   } catch (e) {
     warn("idle", "не удалось уснуть", { error: String(e) });
   } finally {

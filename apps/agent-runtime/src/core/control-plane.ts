@@ -1,4 +1,4 @@
-import type { OutboundEmail, RuntimeReport } from "@swarm/contracts";
+import type { OutboundEmail, RuntimeReport, SuspendRequest, UsageTotals } from "@swarm/contracts";
 import { warn } from "./log";
 
 /**
@@ -45,11 +45,15 @@ export class ControlPlaneClient {
     }
   }
 
-  /** Control plane может спать: будим его этим запросом и просим усыпить нашу машину. */
-  async requestSuspend(): Promise<void> {
+  /**
+   * Control plane может спать: будим его этим запросом и просим усыпить нашу машину.
+   * Итоги usage уходят вместе с просьбой: во сне `/state` недоступен, а расходы на главной нужны.
+   */
+  async requestSuspend(usage?: UsageTotals): Promise<void> {
     if (!this.enabled) return;
     try {
-      await this.post("/api/runtime/suspend", {}, 60_000);
+      const body: SuspendRequest = usage ? { usage } : {};
+      await this.post("/api/runtime/suspend", body, 60_000);
     } catch (e) {
       warn("control-plane", "не удалось уснуть", { error: String(e) });
     }

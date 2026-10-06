@@ -3,7 +3,7 @@ import postgres from "postgres";
 import * as schema from "./schema";
 
 export * as schema from "./schema";
-export { eq, ne, and, or, desc, asc, sql, inArray, isNull } from "drizzle-orm";
+export { eq, ne, and, or, desc, asc, sql, inArray, isNull, lte } from "drizzle-orm";
 
 export type Db = PostgresJsDatabase<typeof schema>;
 

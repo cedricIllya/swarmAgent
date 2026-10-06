@@ -166,6 +166,14 @@ export function HomeSkeleton() {
     <div aria-busy="true">
       <span className="sr-only">Загрузка</span>
       <PageHeadSkeleton kicker={172} title={118} lead={460} action={156} />
+      <div className="stats">
+        {["потрачено всеми агентами", "токенов на вход", "токенов на выход"].map((label) => (
+          <div key={label} className="stat-card">
+            <Skeleton width={96} height={36} />
+            <span className="stat-label">{label}</span>
+          </div>
+        ))}
+      </div>
       <div className="grid grid-2">
         {[0, 1].map((i) => (
           <div key={i} className="card">
