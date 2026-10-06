@@ -1033,7 +1033,7 @@ html[data-theme="dark"] .theme-toggle .theme-icon-moon {
 .run-title {
   font-weight: 600;
   letter-spacing: -0.011em;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 .run-body {
   padding: 0 14px 12px 31px;
@@ -1941,6 +1941,17 @@ details summary::-webkit-details-marker {
   .page-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+  .run-summary {
+    flex-wrap: wrap;
+  }
+  .run-summary-main {
+    flex: 1 1 calc(100% - 22px);
+  }
+  .run-summary-side {
+    flex: 1 1 100%;
+    margin-left: 17px;
+    justify-content: flex-start;
   }
   .avatar-studio {
     grid-template-columns: 1fr;
