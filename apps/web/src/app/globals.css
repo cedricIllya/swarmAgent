@@ -994,6 +994,12 @@ html[data-theme="dark"] .theme-toggle .theme-icon-moon {
 .list-item.run-row {
   display: block;
   padding: 0;
+  /* Обновление шагов не должно становиться якорем прокрутки: иначе страница прыгает. */
+  overflow-anchor: none;
+}
+.run-body,
+.run-body * {
+  overflow-anchor: none;
 }
 .run-summary {
   display: flex;

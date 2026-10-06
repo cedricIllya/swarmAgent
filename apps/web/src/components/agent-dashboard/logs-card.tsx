@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useState, type MouseEvent } from "react";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import type { Agent, BrowserSession, ChatMessage, PendingApproval, Run, RunStep, RuntimeState, UserQuestion } from "@swarm/contracts";
 import { parseUserQuestion } from "@swarm/contracts";
 import { ApprovalRow, QuestionCard } from "./approval-bubbles";
@@ -13,6 +13,7 @@ import { accessKindLabel, type AgentAccess } from "./agent-access";
 import { presentSteps, forPerson } from "./present-steps";
 import { servicesForRun } from "./task-services";
 import { ListSkeleton, Skeleton } from "../skeleton";
+import { partitionTaskLog, type TaskLogTone } from "./task-log-list";
 
 const STATUS_LABEL: Record<Run["status"], { text: string; cls: string }> = {
   queued: { text: "в очереди", cls: "" },
@@ -64,6 +65,7 @@ export function LogsCard({
   pending,
   accesses,
   accessReady,
+  runKey,
 }: {
   agent: Agent;
   state: RuntimeState | null;
@@ -72,6 +74,7 @@ export function LogsCard({
   pending: boolean;
   accesses: AgentAccess[];
   accessReady: boolean;
+  runKey: (id: string) => string;
 }) {
   const runs = state?.runs ?? [];
   const approvals = state?.pendingApprovals ?? [];
@@ -79,9 +82,51 @@ export function LogsCard({
     run,
     tone: runTone(run, runs, approvals, messagesByRun[run.id] ?? []),
   }));
-  const openRuns = [...ranked.filter((item) => item.tone === "attention"), ...ranked.filter((item) => item.tone === "live")];
-  const settledRuns = ranked.filter((item) => item.tone === "settled");
+  const openIds = useRef(new Set<string>());
+  const pinned = useRef(new Map<string, "attention" | "live">());
+  const rows = useRef(new Map<string, HTMLDetailsElement>());
+  const scrollAnchor = useRef<{ key: string; top: number } | null>(null);
+  const [, setOpenVersion] = useState(0);
+  const onOpenChange = useCallback((key: string, open: boolean) => {
+    const ids = openIds.current;
+    if (ids.has(key) === open) return;
+    if (open) ids.add(key);
+    else ids.delete(key);
+    setOpenVersion((version) => version + 1);
+  }, []);
+  const registerRow = useCallback((key: string, node: HTMLDetailsElement | null) => {
+    if (node) rows.current.set(key, node);
+    else rows.current.delete(key);
+  }, []);
+  const { top: openRuns, archive: settledRuns } = partitionTaskLog(
+    ranked.map((item) => ({ key: runKey(item.run.id), tone: item.tone, value: item })),
+    (key) => openIds.current.has(key),
+    pinned.current,
+  );
   const openNeedsPerson = openRuns.some((item) => item.tone === "attention");
+
+  useEffect(() => {
+    const remember = () => {
+      scrollAnchor.current = visibleOpenRow(rows.current);
+    };
+    window.addEventListener("scroll", remember, { passive: true });
+    return () => window.removeEventListener("scroll", remember);
+  }, []);
+
+  useLayoutEffect(() => {
+    const prev = scrollAnchor.current;
+    const next = visibleOpenRow(rows.current);
+    if (prev && next && prev.key === next.key) {
+      const delta = next.top - prev.top;
+      if (Math.abs(delta) > 1) {
+        window.scrollBy(0, delta);
+        const top = rows.current.get(prev.key)?.getBoundingClientRect().top;
+        scrollAnchor.current = { key: prev.key, top: top ?? next.top - delta };
+        return;
+      }
+    }
+    scrollAnchor.current = next;
+  });
   const [deciding, setDeciding] = useState<string | null>(null);
   const sessionsByRun = new Map<string, BrowserSession[]>();
   for (const s of state?.browserSessions ?? []) {
@@ -118,9 +163,10 @@ export function LogsCard({
   }
 
   function renderRun(run: Run, tone: RunTone) {
+    const key = runKey(run.id);
     return (
       <Suspense
-        key={run.id}
+        key={key}
         fallback={
           <div className="list-item">
             <Skeleton width="52%" height={16} />
@@ -132,6 +178,8 @@ export function LogsCard({
           run={run}
           runs={runs}
           tone={tone}
+          listKey={key}
+          initiallyOpen={openIds.current.has(key) || tone === "attention"}
           sessions={sessionsByRun.get(run.id) ?? []}
           liveSteps={stepsByRun[run.id] ?? []}
           liveMessages={messagesByRun[run.id] ?? []}
@@ -140,6 +188,8 @@ export function LogsCard({
           deciding={deciding}
           onDecide={(id, approved) => void decide(id, approved)}
           onAnswer={(id, text) => answer(id, text)}
+          onOpenChange={(open) => onOpenChange(key, open)}
+          registerRow={registerRow}
         />
       </Suspense>
     );
@@ -250,6 +300,8 @@ function RunItem({
   run,
   runs,
   tone,
+  listKey,
+  initiallyOpen,
   sessions,
   liveSteps,
   liveMessages,
@@ -258,11 +310,15 @@ function RunItem({
   deciding,
   onDecide,
   onAnswer,
+  onOpenChange,
+  registerRow,
 }: {
   agent: Agent;
   run: Run;
   runs: Run[];
   tone: RunTone;
+  listKey: string;
+  initiallyOpen: boolean;
   sessions: BrowserSession[];
   liveSteps: RunStep[];
   liveMessages: ChatMessage[];
@@ -271,14 +327,37 @@ function RunItem({
   deciding: string | null;
   onDecide: (id: string, approved: boolean) => void;
   onAnswer: (id: string, text: string) => Promise<void>;
+  onOpenChange: (open: boolean) => void;
+  registerRow: (key: string, node: HTMLDetailsElement | null) => void;
 }) {
   const [loaded, setLoaded] = useState<RunStep[] | null>(null);
   const [loadedMessages, setLoadedMessages] = useState<ChatMessage[]>([]);
-  const [open, setOpen] = useState(tone === "attention");
   const [stopping, setStopping] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [replying, setReplying] = useState(false);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const openRef = useRef(initiallyOpen);
+  const suppressToggle = useRef(false);
+  const commitPhase = useRef(true);
+  const onOpenChangeRef = useRef(onOpenChange);
+  const listKeyRef = useRef(listKey);
+  onOpenChangeRef.current = onOpenChange;
+  listKeyRef.current = listKey;
+  commitPhase.current = true;
+
+  const setDetailsRef = useCallback(
+    (node: HTMLDetailsElement | null) => {
+      detailsRef.current = node;
+      if (node && node.open !== openRef.current) {
+        suppressToggle.current = true;
+        node.open = openRef.current;
+        suppressToggle.current = false;
+      }
+      registerRow(listKeyRef.current, node);
+    },
+    [registerRow],
+  );
 
   async function load() {
     if (run.id.startsWith("local_")) return;
@@ -386,12 +465,28 @@ function RunItem({
 
   const toneNow: RunTone = pendingQuestion || followup ? "attention" : tone;
 
-  useEffect(() => {
-    if (toneNow === "attention") {
-      setOpen(true);
-      void load();
-      void loadHistory();
+  useLayoutEffect(() => {
+    const node = detailsRef.current;
+    if (node && openRef.current && !node.open) {
+      suppressToggle.current = true;
+      node.open = true;
+      suppressToggle.current = false;
     }
+    commitPhase.current = false;
+  });
+
+  useEffect(() => {
+    if (toneNow !== "attention") return;
+    openRef.current = true;
+    const node = detailsRef.current;
+    if (node && !node.open) {
+      suppressToggle.current = true;
+      node.open = true;
+      suppressToggle.current = false;
+    }
+    onOpenChangeRef.current(true);
+    void load();
+    void loadHistory();
     // load зависит от run.id, который стабилен для этого элемента.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.status, run.id, followup?.prompt, toneNow]);
@@ -421,13 +516,15 @@ function RunItem({
   return (
     <details
       className={`list-item run-row run-${toneNow}`}
-      open={open}
-      onToggle={(e) => {
-        e.stopPropagation();
-        if (e.target !== e.currentTarget) return;
-        const o = (e.target as HTMLDetailsElement).open;
-        setOpen(o);
-        if (o) {
+      ref={setDetailsRef}
+      onToggle={(event) => {
+        event.stopPropagation();
+        if (event.target !== event.currentTarget) return;
+        if (commitPhase.current || suppressToggle.current) return;
+        const node = event.currentTarget;
+        openRef.current = node.open;
+        onOpenChangeRef.current(node.open);
+        if (node.open) {
           void load();
           void loadHistory();
         }
@@ -612,7 +709,20 @@ function sessionPurpose(purpose: string): string {
   return purpose;
 }
 
-type RunTone = "attention" | "live" | "settled";
+type RunTone = TaskLogTone;
+
+function visibleOpenRow(rows: Map<string, HTMLDetailsElement>): { key: string; top: number } | null {
+  const mid = window.innerHeight / 2;
+  let best: { key: string; top: number; dist: number } | null = null;
+  for (const [key, node] of rows) {
+    if (!node.isConnected || !node.open) continue;
+    const rect = node.getBoundingClientRect();
+    if (rect.bottom <= 0 || rect.top >= window.innerHeight) continue;
+    const dist = Math.abs(rect.top - mid);
+    if (!best || dist < best.dist) best = { key, top: rect.top, dist };
+  }
+  return best ? { key: best.key, top: best.top } : null;
+}
 
 function runTone(run: Run, runs: Run[], approvals: PendingApproval[], messages: ChatMessage[]): RunTone {
   if (approvals.some((item) => item.runId === run.id) || run.status === "waiting_approval" || run.status === "escalated") {

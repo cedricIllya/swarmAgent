@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Agent, ChatMessage, Run, RunStep, RuntimeEvent, RuntimeState } from "@swarm/contracts";
 import { adoptStagedRun, mergeLiveRun } from "./stage-run";
+import { runListKey, transferRunKey } from "./task-log-list";
 
 export interface Detail {
   agent: Agent;
@@ -29,6 +30,8 @@ export function useAgentLive(initialAgent: Agent) {
   const snapshotAt = useRef<number | null>(null);
   const onChatMessage = useRef<(event: ChatMessageEvent) => void>(() => {});
   const pendingLocal = useRef(new Map<string, Run>());
+  const stableKeys = useRef(new Map<string, string>());
+  const runKey = useCallback((id: string) => runListKey(stableKeys.current, id), []);
 
   const refresh = useCallback(async (wake = false) => {
     try {
@@ -90,7 +93,10 @@ export function useAgentLive(initialAgent: Agent) {
       if (event.type !== "run") return;
       patch((state) => {
         const merged = mergeLiveRun(state.runs, event.run, new Set(pendingLocal.current.keys()));
-        if (merged.droppedId) pendingLocal.current.delete(merged.droppedId);
+        if (merged.droppedId) {
+          transferRunKey(stableKeys.current, merged.droppedId, event.run.id);
+          pendingLocal.current.delete(merged.droppedId);
+        }
         return { ...state, runs: merged.runs };
       });
     });
@@ -203,6 +209,7 @@ export function useAgentLive(initialAgent: Agent) {
       threadId: id,
     };
     pendingLocal.current.set(run.id, run);
+    stableKeys.current.set(run.id, run.id);
     setDetail((prev) => {
       if (!prev.state) return prev;
       const runs = [run, ...prev.state.runs.filter((r) => r.id !== run.id)];
@@ -215,11 +222,12 @@ export function useAgentLive(initialAgent: Agent) {
         setDetail((prev) => (prev.state ? { ...prev, state: { ...prev.state, runs: prev.state.runs.filter((r) => r.id !== run.id) } } : prev));
       },
       adopt(runId: string) {
+        transferRunKey(stableKeys.current, run.id, runId);
         pendingLocal.current.delete(run.id);
         setDetail((prev) => (prev.state ? { ...prev, state: { ...prev.state, runs: adoptStagedRun(prev.state.runs, run.id, runId) } } : prev));
       },
     };
   }, []);
 
-  return { detail, stepsByRun, messagesByRun, actionsBySession, onChatMessage, livePending, patchAgent, stageChatTask };
+  return { detail, stepsByRun, messagesByRun, actionsBySession, onChatMessage, livePending, patchAgent, stageChatTask, runKey };
 }

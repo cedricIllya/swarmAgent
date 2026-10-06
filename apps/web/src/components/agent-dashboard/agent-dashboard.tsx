@@ -18,7 +18,7 @@ import { useAgentAccess } from "./use-agent-access";
 import { useAgentLive } from "./use-agent-live";
 
 export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
-  const { detail, stepsByRun, messagesByRun, livePending, patchAgent, stageChatTask } = useAgentLive(initialAgent);
+  const { detail, stepsByRun, messagesByRun, livePending, patchAgent, stageChatTask, runKey } = useAgentLive(initialAgent);
   const router = useRouter();
   const confirm = useConfirm();
   const [removing, setRemoving] = useState(false);
@@ -104,6 +104,7 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
         pending={livePending}
         accesses={accesses}
         accessReady={accessReady}
+        runKey={runKey}
       />
       <UsageCard state={state} pending={livePending} />
     </>
