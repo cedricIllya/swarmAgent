@@ -15,6 +15,8 @@ import type { AgentRuntime } from "./index";
  */
 export class BrowserControl {
   readonly sessions = new Map<string, ManagedBrowserSession>();
+  /** Открытие ещё не попало в sessions: второй запрос того же профиля иначе ждёт замок и падает. */
+  private readonly opening = new Map<string, Promise<ManagedBrowserSession>>();
 
   constructor(private readonly rt: AgentRuntime) {}
 
@@ -41,18 +43,32 @@ export class BrowserControl {
 
   async open(run: Run, args: { purpose: string; serviceSlug: string | null; url?: string }): Promise<ManagedBrowserSession> {
     const { rt } = this;
+    const reuse = async (s: ManagedBrowserSession) => {
+      if (args.url) await s.goto(args.url);
+      return s;
+    };
     if (args.serviceSlug) {
       for (const open of this.sessions.values()) {
         if (open.serviceSlug !== args.serviceSlug) continue;
-        if (args.url) await open.goto(args.url);
-        return open;
+        return reuse(open);
       }
+      const pending = this.opening.get(args.serviceSlug);
+      if (pending) return reuse(await pending);
     }
-    const s = await ManagedBrowserSession.open(this.deps(), rt.taskRef(run), { runId: run.id, ...args });
-    this.sessions.set(s.id, s);
-    await rt.step(run.id, "browser", `открыт браузер: ${args.purpose}`, { sessionId: s.id });
-    await rt.announceBrowser(run, s.meta);
-    return s;
+    const slug = args.serviceSlug;
+    const job = (async () => {
+      const s = await ManagedBrowserSession.open(this.deps(), rt.taskRef(run), { runId: run.id, ...args });
+      this.sessions.set(s.id, s);
+      await rt.step(run.id, "browser", `открыт браузер: ${args.purpose}`, { sessionId: s.id });
+      await rt.announceBrowser(run, s.meta);
+      return s;
+    })();
+    if (slug) this.opening.set(slug, job);
+    try {
+      return await job;
+    } finally {
+      if (slug && this.opening.get(slug) === job) this.opening.delete(slug);
+    }
   }
 
   async close(sessionId: string): Promise<void> {

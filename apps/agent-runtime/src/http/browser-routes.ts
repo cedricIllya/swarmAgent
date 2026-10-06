@@ -9,7 +9,7 @@ import { INSTRUCTION_ALIASES, SESSION_ALIASES, skyvernPurpose, withAliases } fro
 
 const BrowserOpen = z.object({
   runId: z.string(),
-  purpose: z.string(),
+  purpose: z.string().optional(),
   serviceSlug: z.string().nullable().default(null),
   url: z.string().url().optional(),
 });
@@ -33,7 +33,7 @@ export function browserRoutes(rt: AgentRuntime): Hono {
     const run = await rt.store.getRun(body.runId);
     if (!run) return c.json({ error: "run not found" }, 404);
     const s = await rt.browser.open(run, {
-      purpose: body.purpose,
+      purpose: body.purpose?.trim() || (body.serviceSlug ? `работа в ${body.serviceSlug}` : "работа в браузере"),
       serviceSlug: body.serviceSlug,
       ...(body.url ? { url: body.url } : {}),
     });
