@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { partitionTaskLog, runListKey, transferRunKey, type TaskLogTone } from "./task-log-list";
+import { partitionTaskLog, runListKey, transferRunKey, waitingOnPerson, type TaskLogTone } from "./task-log-list";
 
 function item(key: string, tone: TaskLogTone) {
   return { key, tone, value: key };
@@ -13,6 +13,17 @@ describe("ключ строки журнала", () => {
     transferRunKey(keys, "local_a", "run_1");
     expect(runListKey(keys, "run_1")).toBe("local_a");
     expect(keys.has("local_a")).toBe(false);
+  });
+});
+
+describe("ожидание человека", () => {
+  it("считает задачу в работе, пока человек не решил", () => {
+    expect(waitingOnPerson("escalated", false)).toBe(true);
+    expect(waitingOnPerson("waiting_approval", false)).toBe(true);
+    expect(waitingOnPerson("done", true)).toBe(true);
+    expect(waitingOnPerson("done", false)).toBe(false);
+    expect(waitingOnPerson("failed", false)).toBe(false);
+    expect(waitingOnPerson("running", false)).toBe(false);
   });
 });
 

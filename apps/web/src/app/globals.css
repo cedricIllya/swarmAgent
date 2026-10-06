@@ -973,7 +973,7 @@ html[data-theme="dark"] .theme-toggle .theme-icon-moon {
   background: var(--warn-soft);
 }
 
-/* Журнал: открытые задачи читаются раньше архива. */
+/* Журнал: задачи в работе читаются раньше архива. */
 .run-section {
   display: flex;
   flex-direction: column;

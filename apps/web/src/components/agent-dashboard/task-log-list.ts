@@ -1,5 +1,13 @@
 export type TaskLogTone = "attention" | "live" | "settled";
 
+/**
+ * Задача ещё в работе, даже если без человека её не продолжить.
+ * В архив она попадает только после решения: одобрения, ответа или остановки.
+ */
+export function waitingOnPerson(status: string, pendingDecision: boolean): boolean {
+  return pendingDecision || status === "waiting_approval" || status === "escalated";
+}
+
 /** Ключ строки журнала не меняется, когда заготовка local_* становится настоящим прогоном. */
 export function transferRunKey(keys: Map<string, string>, fromId: string, toId: string): void {
   if (fromId === toId) return;

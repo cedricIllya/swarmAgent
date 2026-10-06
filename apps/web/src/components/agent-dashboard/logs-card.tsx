@@ -13,7 +13,7 @@ import { accessKindLabel, type AgentAccess } from "./agent-access";
 import { presentSteps, forPerson } from "./present-steps";
 import { servicesForRun } from "./task-services";
 import { ListSkeleton, Skeleton } from "../skeleton";
-import { partitionTaskLog, type TaskLogTone } from "./task-log-list";
+import { partitionTaskLog, waitingOnPerson, type TaskLogTone } from "./task-log-list";
 
 const STATUS_LABEL: Record<Run["status"], { text: string; cls: string }> = {
   queued: { text: "в очереди", cls: "" },
@@ -205,7 +205,7 @@ export function LogsCard({
           <div className="row" style={{ gap: 8 }}>
             {openRuns.length > 0 && (
               <span className={`badge ${openNeedsPerson ? "badge-warn" : "badge-accent"}`}>
-                {plural(openRuns.length, "открытая", "открытые", "открытых")}
+                {openRuns.length} в работе
               </span>
             )}
             <span className="muted small">{plural(runs.length, "задача", "задачи", "задач")}</span>
@@ -223,7 +223,7 @@ export function LogsCard({
           {openRuns.length > 0 && (
             <div className="run-section">
               <div className="run-section-label">
-                <span>Открытые</span>
+                <span>В работе</span>
                 <span>{openRuns.length}</span>
               </div>
               <div className="list">{openRuns.map(({ run, tone }) => renderRun(run, tone))}</div>
@@ -461,7 +461,8 @@ function RunItem({
     (run.status === "done" || run.status === "failed" || run.status === "escalated")
       ? questionInRun(run.summary, history)
       : null;
-  const st = pendingQuestion || followup ? { text: "ждёт ответа", cls: "badge-warn" } : STATUS_LABEL[run.status];
+  const awaitsPerson = waitingOnPerson(run.status, pendingQuestion || Boolean(followup) || approvals.length > 0);
+  const st = awaitsPerson ? { text: "в работе", cls: "badge-warn" } : STATUS_LABEL[run.status];
 
   const toneNow: RunTone = pendingQuestion || followup ? "attention" : tone;
 
@@ -507,10 +508,10 @@ function RunItem({
     (run.status === "failed" || run.status === "canceled" || run.status === "escalated") &&
     approvals.length === 0 &&
     !threadBusy;
-  // «Нужен человек» без карточки с кнопками: человек пишет, что сделал, и агент продолжает эту же задачу.
+  // Задача ещё в работе: без карточки с кнопками человек пишет решение, и агент продолжает её же.
   const escalation =
     run.status === "escalated" && !local && agent.status === "running" && approvals.length === 0 && !followup && !threadBusy
-      ? summary || "Задача остановилась: нужен человек."
+      ? summary || "Задача в работе и ждёт вашего решения."
       : null;
 
   return (
@@ -536,7 +537,7 @@ function RunItem({
           <div className="faint small">
             {fmtTime(run.startedAt)} · {TRIGGER_LABEL[run.trigger]}
             {sessions.length ? ` · браузер ×${sessions.length}` : ""}
-            {approvals.length ? (pendingQuestion ? " · ждёт ответа" : " · ждёт человека") : followup ? " · ждёт ответа" : ""}
+            {waitNote(run, approvals.length > 0, pendingQuestion, Boolean(followup))}
             {usedServices.length ? ` · ${usedServices.map((s) => s.name).join(", ")}` : ""}
           </div>
         </div>
@@ -552,7 +553,7 @@ function RunItem({
             </button>
           )}
           <span className={`badge ${st.cls}`}>
-            {run.status === "running" && toneNow === "live" && <span className="badge-dot pulse" />}
+            {(awaitsPerson || (run.status === "running" && toneNow === "live")) && <span className="badge-dot pulse" />}
             {st.text}
           </span>
         </div>
@@ -724,8 +725,16 @@ function visibleOpenRow(rows: Map<string, HTMLDetailsElement>): { key: string; t
   return best ? { key: best.key, top: best.top } : null;
 }
 
+function waitNote(run: Run, hasApproval: boolean, pendingQuestion: boolean, followup: boolean): string {
+  if (hasApproval) return pendingQuestion ? " · ждёт ответа" : " · ждёт человека";
+  if (followup) return " · ждёт ответа";
+  if (run.status === "escalated") return " · ждёт решения";
+  if (run.status === "waiting_approval") return " · ждёт одобрения";
+  return "";
+}
+
 function runTone(run: Run, runs: Run[], approvals: PendingApproval[], messages: ChatMessage[]): RunTone {
-  if (approvals.some((item) => item.runId === run.id) || run.status === "waiting_approval" || run.status === "escalated") {
+  if (waitingOnPerson(run.status, approvals.some((item) => item.runId === run.id))) {
     return "attention";
   }
   if (run.status === "running" || run.status === "queued") return "live";
