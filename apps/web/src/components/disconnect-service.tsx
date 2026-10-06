@@ -115,3 +115,58 @@ export function DisconnectServiceButton({
     </button>
   );
 }
+
+export function DisconnectGoogleButton({
+  agentId,
+  agentName,
+  onRemoved,
+  onFailed,
+}: {
+  agentId: string;
+  agentName?: string;
+  onRemoved?: () => void;
+  onFailed?: (message: string | null) => void;
+}) {
+  const confirm = useConfirm();
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function remove() {
+    if (busy) return;
+    const where = agentName ? ` у агента ${agentName}` : "";
+    const ok = await confirm({
+      title: `Отключить Google${where}?`,
+      body: "Доступ к почте, календарю и документам будет отозван. Чтобы вернуть его, потребуется снова войти в Google.",
+      confirmLabel: "Отключить",
+    });
+    if (!ok) return;
+
+    setBusy(true);
+    setError(null);
+    onFailed?.(null);
+    try {
+      const res = await fetch(`/api/agents/${agentId}/google`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        const message = body?.error ?? "Не получилось отключить Google";
+        setError(message);
+        onFailed?.(message);
+        return;
+      }
+      onRemoved?.();
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button type="button" className="btn btn-sm btn-ghost" disabled={busy} onClick={() => void remove()}>
+        {busy ? "Отключаем…" : "Отключить"}
+      </button>
+      {error && !onFailed && <span className="faint small">{error}</span>}
+    </>
+  );
+}

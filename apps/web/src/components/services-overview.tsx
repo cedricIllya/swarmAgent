@@ -4,7 +4,7 @@ import type { TenantConnection } from "@swarm/connections";
 import { accessKindLabel } from "./agent-dashboard/agent-access";
 import { TaskWatchTag } from "./task-watch-tag";
 import { AgentFace } from "./agent-avatar";
-import { ServiceAgentChips } from "./disconnect-service";
+import { DisconnectGoogleButton, ServiceAgentChips } from "./disconnect-service";
 
 function initials(name: string): string {
   return name.trim().slice(0, 1).toUpperCase() || "?";
@@ -104,9 +104,12 @@ function GoogleCard({ agents }: { agents: Agent[] }) {
                 {a.name}
               </Link>
               <span className="agent-link-meta mono">{a.googleEmail ?? "аккаунт Google"}</span>
-              <a className="btn btn-sm btn-ghost" href={`/api/agents/${a.id}/google`}>
-                Переподключить
-              </a>
+              <div className="row" style={{ gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                <a className="btn btn-sm btn-ghost" href={`/api/agents/${a.id}/google`}>
+                  Переподключить
+                </a>
+                <DisconnectGoogleButton agentId={a.id} agentName={a.name} />
+              </div>
             </div>
           ))}
           {rest.map((a) => (

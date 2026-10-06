@@ -93,6 +93,19 @@ export async function refreshAccessToken(
   };
 }
 
+/** Отозвать refresh token, чтобы сохранённые копии больше не давали доступ к Google. */
+export async function revokeToken(token: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const res = await fetchImpl("https://oauth2.googleapis.com/revoke", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token }),
+  });
+  // Google отвечает 400, если токен уже недействителен — желаемое состояние достигнуто.
+  if (!res.ok && res.status !== 400) {
+    throw new Error(`Google token revoke failed: ${res.status} ${await res.text()}`);
+  }
+}
+
 function emailFromIdToken(idToken: string): string | null {
   const payload = idToken.split(".")[1];
   if (!payload) return null;

@@ -198,6 +198,12 @@ export class Store {
     await writeFile(this.dir("google_token.json"), JSON.stringify(token), { mode: 0o644 });
   }
 
+  async deleteGoogleToken(): Promise<void> {
+    await unlink(this.dir("google_token.json")).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+
   hasGoogleToken(): boolean {
     return existsSync(this.dir("google_token.json"));
   }

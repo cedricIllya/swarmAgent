@@ -102,6 +102,12 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
     return c.json({ ok: true });
   });
 
+  app.delete("/google-token", async (c) => {
+    noteActivity();
+    await rt.store.deleteGoogleToken();
+    return c.json({ ok: true });
+  });
+
   app.post("/approvals/:id", async (c) => {
     noteActivity();
     const body = z

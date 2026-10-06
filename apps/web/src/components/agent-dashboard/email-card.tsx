@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { Agent } from "@swarm/contracts";
-import { DisconnectServiceButton } from "../disconnect-service";
+import { DisconnectGoogleButton, DisconnectServiceButton } from "../disconnect-service";
 import { TaskWatchTag } from "../task-watch-tag";
 import { accessKindLabel, type AgentAccess } from "./agent-access";
 import { ListSkeleton } from "../skeleton";
@@ -74,9 +74,12 @@ export function EmailCard({
             <span className="badge">не подключён</span>
           )}
         </span>
-        <a className="btn btn-sm" href={`/api/agents/${agent.id}/google`}>
-          {agent.googleConnected ? "Переподключить Google" : "Подключить Google"}
-        </a>
+        <div className="row" style={{ gap: 8 }}>
+          <a className="btn btn-sm" href={`/api/agents/${agent.id}/google`}>
+            {agent.googleConnected ? "Переподключить Google" : "Подключить Google"}
+          </a>
+          {agent.googleConnected && <DisconnectGoogleButton agentId={agent.id} onFailed={setError} />}
+        </div>
       </div>
     </section>
   );

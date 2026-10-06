@@ -145,6 +145,10 @@ export class RuntimeClient {
     return this.call("POST", "/google-token", body);
   }
 
+  deleteGoogleToken(): Promise<{ ok: boolean }> {
+    return this.call("DELETE", "/google-token");
+  }
+
   resolveApproval(id: string, decision: { approved: boolean } | { answer: string }): Promise<{ runId: string }> {
     return this.call("POST", `/approvals/${id}`, decision, 30_000);
   }
