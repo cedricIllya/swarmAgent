@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Agent } from "@swarm/contracts";
 import type { TenantConnection } from "@swarm/connections";
+import { AgentFace } from "./agent-avatar";
 
 const KIND_LABEL = { mcp: "MCP", api: "API", browser: "браузер" } as const;
 const KIND_HINT = {
@@ -107,6 +108,7 @@ function GoogleCard({ agents }: { agents: Agent[] }) {
           {connected.map((a) => (
             <div key={a.id} className="agent-link">
               <Link href={`/agents/${a.id}`} className="agent-link-name">
+                <AgentFace agent={a} size="sm" />
                 {a.name}
               </Link>
               <span className="agent-link-meta mono">{a.googleEmail ?? "аккаунт Google"}</span>
@@ -118,6 +120,7 @@ function GoogleCard({ agents }: { agents: Agent[] }) {
           {rest.map((a) => (
             <div key={a.id} className="agent-link agent-link-off">
               <Link href={`/agents/${a.id}`} className="agent-link-name">
+                <AgentFace agent={a} size="sm" />
                 {a.name}
               </Link>
               <span className="agent-link-meta">не подключён</span>

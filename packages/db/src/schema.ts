@@ -144,6 +144,8 @@ export const agents = pgTable(
     /** Google refresh token этого агента. Зашифрован. */
     googleRefreshTokenEnc: text("google_refresh_token_enc"),
     googleEmail: text("google_email"),
+    /** Аватар: `nice:` и JSON конфига конструктора. Пусто — инициалы. */
+    avatar: text("avatar"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

@@ -12,6 +12,7 @@ import { LogsCard } from "./logs-card";
 import { TaskComposer } from "./task-composer";
 import { UsageCard } from "./usage-card";
 import { AgentModelControl } from "./agent-model-control";
+import { AgentAvatarControl } from "../agent-avatar";
 import { useAgentLive } from "./use-agent-live";
 
 export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
@@ -45,24 +46,27 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
   return (
     <>
       <div className="page-head">
-        <div>
-          <Link href="/" className="kicker">
-            ← Все агенты
-          </Link>
-          <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
-            <h1>{agent.name}</h1>
-            <StatusBadge status={agent.status} />
-            {asleep && <span className="badge">спит</span>}
-            {waking && <span className="badge">просыпается</span>}
-            {state?.busyInBrowser && <span className="badge badge-warn"><span className="badge-dot pulse" />в браузере</span>}
-          </div>
-          <AgentEmail email={agent.email} />
-          {agent.statusMessage && (
-            <div className="faint small" style={{ marginTop: 4 }}>
-              {agent.statusMessage}
+        <div className="agent-head">
+          <AgentAvatarControl agent={agent} onUpdated={patchAgent} />
+          <div>
+            <Link href="/" className="kicker">
+              ← Все агенты
+            </Link>
+            <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+              <h1>{agent.name}</h1>
+              <StatusBadge status={agent.status} />
+              {asleep && <span className="badge">спит</span>}
+              {waking && <span className="badge">просыпается</span>}
+              {state?.busyInBrowser && <span className="badge badge-warn"><span className="badge-dot pulse" />в браузере</span>}
             </div>
-          )}
-          <AgentModelControl agent={agent} onUpdated={patchAgent} />
+            <AgentEmail email={agent.email} />
+            {agent.statusMessage && (
+              <div className="faint small" style={{ marginTop: 4 }}>
+                {agent.statusMessage}
+              </div>
+            )}
+            <AgentModelControl agent={agent} onUpdated={patchAgent} />
+          </div>
         </div>
         <button className="btn btn-sm btn-danger" type="button" onClick={remove} disabled={removing}>
           {removing ? "Удаляем…" : "Удалить"}

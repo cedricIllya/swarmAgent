@@ -23,6 +23,7 @@ export function toAgentView(row: Row): Agent {
     runtimeUrl: row.runtimeUrl,
     googleConnected: Boolean(row.googleRefreshTokenEnc),
     googleEmail: row.googleRefreshTokenEnc ? row.googleEmail : null,
+    avatar: row.avatar,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -112,6 +113,7 @@ export async function updateAgent(
     runtimeRelease: string | null;
     googleRefreshToken: string | null;
     googleEmail: string | null;
+    avatar: string | null;
   }>,
 ): Promise<void> {
   const { googleRefreshToken, ...rest } = patch;

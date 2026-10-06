@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { Agent } from "@swarm/contracts";
 import { StatusBadge } from "./status-badge";
 import { CreateAgentForm } from "./create-agent-form";
+import { AgentFace } from "./agent-avatar";
 
 export function AgentsHome({ initialAgents, ownerLogin }: { initialAgents: Agent[]; ownerLogin: string }) {
   const [agents, setAgents] = useState(initialAgents);
@@ -63,7 +64,10 @@ export function AgentsHome({ initialAgents, ownerLogin }: { initialAgents: Agent
           {agents.map((a) => (
             <Link key={a.id} href={`/agents/${a.id}`} className="card card-link">
               <div className="card-head" style={{ marginBottom: 10 }}>
-                <h2>{a.name}</h2>
+                <div className="row" style={{ gap: 10, minWidth: 0 }}>
+                  <AgentFace agent={a} />
+                  <h2>{a.name}</h2>
+                </div>
                 <StatusBadge status={a.status} />
               </div>
               <div className="mono muted">{a.email}</div>

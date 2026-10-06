@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getAgent, toAgentView, updateAgent } from "@swarm/agents";
-import type { RuntimeState } from "@swarm/contracts";
+import { AgentAvatarSchema, type RuntimeState } from "@swarm/contracts";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
 import { RuntimeClient, awakeRuntime } from "@/lib/runtime-client";
@@ -45,6 +45,7 @@ const Patch = z.object({
   autonomous: z.boolean().optional(),
   model: z.string().min(1).optional(),
   name: z.string().min(1).max(80).optional(),
+  avatar: AgentAvatarSchema.nullable().optional(),
 });
 
 export async function PATCH(req: Request, { params }: Params): Promise<Response> {
@@ -59,18 +60,22 @@ export async function PATCH(req: Request, { params }: Params): Promise<Response>
   const patch: Parameters<typeof updateAgent>[2] = {};
   if (parsed.data.autonomous !== undefined) patch.autonomous = parsed.data.autonomous;
   if (parsed.data.model) patch.model = parsed.data.model;
+  if (parsed.data.avatar !== undefined) patch.avatar = parsed.data.avatar;
   await updateAgent(db(), agent.id, patch);
 
-  try {
-    const client = await awakeRuntime(agent);
-    if (client) {
-      await client.updateSettings({
-        ...(parsed.data.autonomous !== undefined ? { autonomous: parsed.data.autonomous } : {}),
-        ...(parsed.data.model ? { model: parsed.data.model } : {}),
-      });
+  const touchesRuntime = parsed.data.autonomous !== undefined || parsed.data.model !== undefined;
+  if (touchesRuntime) {
+    try {
+      const client = await awakeRuntime(agent);
+      if (client) {
+        await client.updateSettings({
+          ...(parsed.data.autonomous !== undefined ? { autonomous: parsed.data.autonomous } : {}),
+          ...(parsed.data.model ? { model: parsed.data.model } : {}),
+        });
+      }
+    } catch (e) {
+      console.warn(`[agents] runtime settings: ${String(e)}`);
     }
-  } catch (e) {
-    console.warn(`[agents] runtime settings: ${String(e)}`);
   }
   // Смена модели переписывает config.yaml Hermes и перезапускает машину.
   if (parsed.data.model && parsed.data.model !== agent.model) {
