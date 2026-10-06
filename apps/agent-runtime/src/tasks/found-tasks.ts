@@ -75,8 +75,8 @@ export function selectNewTasks(
 
 /** Итог проверки для журнала: список очереди, а не сырой JSON модели. */
 export function surveySummary(reply: string, queuedTitles: string[], alreadyTitles: string[]): string {
-  if (queuedTitles.length) return `В очередь: ${queuedTitles.join("; ")}`.slice(0, 2000);
-  if (alreadyTitles.length) return `Уже в очереди: ${alreadyTitles.join("; ")}`.slice(0, 2000);
+  if (queuedTitles.length) return `В работе: ${queuedTitles.join("; ")}`.slice(0, 2000);
+  if (alreadyTitles.length) return `Уже в работе: ${alreadyTitles.join("; ")}`.slice(0, 2000);
   if (/"tasks"\s*:\s*\[\s*\]/.test(reply)) return "пусто";
   return reply;
 }

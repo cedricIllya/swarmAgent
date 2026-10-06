@@ -7,13 +7,36 @@ import { parseFoundTasks, selectNewTasks, surveySummary, taskRunTitle, type Foun
 import { finishServiceThink } from "./service-work";
 import { log, warn } from "../core/log";
 
+export const CHECK_TITLE = "Плановая проверка сервисов";
+const MAX_FOUND = 8;
+
+/** Названия, уже принятые в этом проходе. Остаются до конца тика, даже если задача успела закрыться. */
+const taken = new Set<string>();
+const startedTitles: string[] = [];
+const alreadyTitles: string[] = [];
+let work: Promise<void> = Promise.resolve();
+
+function resetFound(): void {
+  taken.clear();
+  startedTitles.length = 0;
+  alreadyTitles.length = 0;
+}
+
+async function waitFoundWork(): Promise<void> {
+  let seen = Promise.resolve();
+  while (seen !== work) {
+    seen = work;
+    await seen;
+  }
+}
+
 let running = false;
 
 /**
  * Тик раз в 15 минут. Новая почта сюда не поллится — она приходит вебхуком.
  * Здесь: отложенные письма (если браузер освободился) и просмотр сервисов,
- * где есть назначенная работа. Найденные задачи ставятся в очередь и выполняются
- * отдельными прогонами. Оплата, ключи и прочие сервисы без входящих не открываются.
+ * где есть назначенная работа. Найденная задача сразу идёт отдельным прогоном,
+ * проверка в это время смотрит дальше. Оплата, ключи и прочие сервисы без входящих не открываются.
  */
 export async function tick(rt: AgentRuntime): Promise<{ deferred: number; checkedServices: boolean }> {
   if (running) return { deferred: 0, checkedServices: false };
@@ -45,7 +68,8 @@ export async function tick(rt: AgentRuntime): Promise<{ deferred: number; checke
       return { deferred, checkedServices: false };
     }
 
-    const run = await rt.createRun("cron", "Плановая проверка сервисов", null);
+    resetFound();
+    const run = await rt.createRun("cron", CHECK_TITLE, null);
     try {
       await ensureWorkGuides(rt, run);
       if (await rt.isCanceled(run.id)) return { deferred, checkedServices: true };
@@ -57,23 +81,18 @@ export async function tick(rt: AgentRuntime): Promise<{ deferred: number; checke
       const turn = await rt.think(run, tickPrompt(fresh), "hermes.tick");
       const { text, status } = await finishServiceThink(rt, run, turn, { retryPrompt: TICK_RETRY_PROMPT });
       if (await rt.isCanceled(run.id)) return { deferred, checkedServices: true };
-      if (status === "waiting_approval") return { deferred, checkedServices: true };
-      const queued = status === "done" ? await queueFoundTasks(rt, text) : { runs: [], already: [] };
-      if (queued.runs.length) {
-        await rt.step(run.id, "note", `В очередь: ${queued.runs.map((item) => item.run.title).join("; ")}`);
-      }
-      await rt.finishRun(run, status, surveySummary(text, queued.runs.map((item) => item.run.title), queued.already));
-      for (const item of queued.runs) {
-        try {
-          await runFoundTask(rt, item.run, item.task);
-        } catch (e) {
-          warn("cron", "задача из проверки упала", { id: item.run.id, error: String(e) });
+      if (status !== "waiting_approval") {
+        if (status === "done") {
+          for (const task of parseFoundTasks(text)) await acceptFoundTask(rt, run.id, task);
         }
+        await rt.finishRun(run, status, surveySummary(text, startedTitles, alreadyTitles));
       }
     } catch (e) {
       if (await rt.isCanceled(run.id)) return { deferred, checkedServices: true };
       await rt.step(run.id, "error", String(e));
       await rt.finishRun(run, "failed", String(e));
+    } finally {
+      await waitFoundWork();
     }
     return { deferred, checkedServices: true };
   } finally {
@@ -81,31 +100,59 @@ export async function tick(rt: AgentRuntime): Promise<{ deferred: number; checke
   }
 }
 
-/** Ставит найденное отдельными задачами. Уже идущие с тем же названием пропускает. */
-async function queueFoundTasks(
+export type AcceptedTask =
+  | { ok: true; started: true; runId: string; title: string }
+  | { ok: true; started: false; title: string }
+  | { ok: false; error: string };
+
+/**
+ * Плановая проверка нашла задачу. Прогон создаётся сразу, работа начинается
+ * не дожидаясь конца проверки. Повтор с тем же названием не стартует второй раз.
+ */
+export async function acceptFoundTask(
   rt: AgentRuntime,
-  text: string,
-): Promise<{ runs: { run: Run; task: FoundTask }[]; already: string[] }> {
-  const found = parseFoundTasks(text);
-  if (!found.length) return { runs: [], already: [] };
+  sourceRunId: string,
+  input: { service: string; title: string; detail?: string },
+): Promise<AcceptedTask> {
+  const source = await rt.store.getRun(sourceRunId);
+  if (!source) return { ok: false, error: "run not found" };
+  if (source.title !== CHECK_TITLE || (source.status !== "running" && source.status !== "queued")) {
+    return { ok: false, error: "задача ставится только из плановой проверки" };
+  }
+  const task: FoundTask = {
+    service: input.service.trim().slice(0, 80),
+    title: input.title.replace(/\s+/g, " ").trim().slice(0, 120),
+    detail: (input.detail ?? "").replace(/\s+/g, " ").trim().slice(0, 2000) || input.title.trim(),
+  };
+  if (!task.service || !task.title) return { ok: false, error: "нужны service и title" };
+  const title = taskRunTitle(task);
+  const key = title.toLowerCase();
+  if (taken.has(key) || startedTitles.length >= MAX_FOUND) {
+    return { ok: true, started: false, title };
+  }
   const open = (await rt.store.listRuns(200)).filter(
     (r) => r.status === "queued" || r.status === "running" || r.status === "waiting_approval",
   );
-  const { fresh, already } = selectNewTasks(
-    found,
-    open.map((r) => r.title),
-  );
-  const runs: { run: Run; task: FoundTask }[] = [];
-  for (const task of fresh) {
-    const run = await rt.createRun("cron", taskRunTitle(task), null, "queued");
-    await rt.step(run.id, "note", `${task.service}: ${task.detail}`);
-    runs.push({ run, task });
+  const { fresh } = selectNewTasks([task], open.map((r) => r.title));
+  taken.add(key);
+  if (!fresh.length) {
+    alreadyTitles.push(title);
+    return { ok: true, started: false, title };
   }
-  if (runs.length) log("cron", "задачи в очереди", { count: runs.length });
-  return { runs, already };
+  const run = await rt.createRun("cron", title, null, "queued");
+  await rt.step(run.id, "note", `${task.service}: ${task.detail}`);
+  await rt.step(source.id, "note", `В работе: ${run.title}`);
+  startedTitles.push(run.title);
+  log("cron", "задача начата", { id: run.id, title: run.title });
+  // Цепочка стартует на ближайшем шаге цикла, не дожидаясь конца проверки.
+  // Следующая найденная задача ждёт, пока предыдущая освободит браузер.
+  work = work.then(() => runFoundTask(rt, run, task)).catch((e) => {
+    warn("cron", "задача из проверки упала", { id: run.id, error: String(e) });
+  });
+  return { ok: true, started: true, runId: run.id, title: run.title };
 }
 
-/** Ход Hermes уже у отдельной задачи, после того как проверка закрыта. */
+/** Ход Hermes у отдельной задачи. Вызов не ждёт конца плановой проверки. */
 async function runFoundTask(rt: AgentRuntime, run: Run, task: FoundTask): Promise<void> {
   if (await rt.isCanceled(run.id)) return;
   const current = (await rt.store.getRun(run.id)) ?? run;

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { RuntimeReportSchema, type RuntimeReport, type ServiceCredential, type ServiceRecipe } from "@swarm/contracts";
 import type { AgentRuntime } from "../runtime";
+import { acceptFoundTask } from "../tasks/cron";
 import { noteActivity } from "../tasks/idle";
 import { redactInternal } from "../core/redact";
 import { withAliases } from "./lenient";
@@ -144,6 +145,28 @@ export function toolRoutes(rt: AgentRuntime): Hono {
     await rt.store.rememberSent(messageId, { runId, to: mail.to, approvalId: null });
     await rt.step(runId, "email", `письмо отправлено ${mail.to}`, { messageId });
     return c.json({ messageId });
+  });
+
+  app.post("/tasks/found", async (c) => {
+    noteActivity();
+    const body = z
+      .object({
+        runId: z.string(),
+        service: z.string().min(1),
+        title: z.string().min(1),
+        detail: z.string().default(""),
+      })
+      .parse(
+        withAliases(await c.req.json(), {
+          runId: ["run_id", "run"],
+          service: ["slug", "serviceSlug"],
+          title: ["name", "task"],
+          detail: ["text", "description", "summary"],
+        }),
+      );
+    const result = await acceptFoundTask(rt, body.runId, body);
+    if (!result.ok) return c.json({ error: result.error }, result.error === "run not found" ? 404 : 409);
+    return c.json({ started: result.started, runId: result.started ? result.runId : null, title: result.title });
   });
 
   app.post("/runs/:id/step", async (c) => {
