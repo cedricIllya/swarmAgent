@@ -2,6 +2,7 @@ import { getAgentById } from "@swarm/agents";
 import { agentIdsWithCredentials } from "@swarm/connections";
 import { eq, schema } from "@swarm/db";
 import { rolloutAgents } from "@/lib/agent-rollout";
+import { reconcileProvisioning } from "@/lib/create-agent";
 import { db } from "@/lib/db";
 import { awakeRuntime } from "@/lib/runtime-client";
 
@@ -22,6 +23,16 @@ async function runRollout(): Promise<void> {
   }
 }
 
+/** Машины, чей первый старт пережил ожидание или перезапуск control plane. */
+async function runReconcile(): Promise<void> {
+  try {
+    const r = await reconcileProvisioning();
+    if (r.recovered || r.booting) console.log(`[provision] запустились ${r.recovered}, ещё поднимаются ${r.booting}`);
+  } catch (e) {
+    console.warn(`[provision] проверка не вышла: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 /**
  * Пока сайт не спит — раз в 15 минут. После suspend таймеры замирают;
  * большой разрыв в пульсе значит, что Fly только что разбудил процесс,
@@ -33,6 +44,7 @@ async function runTicks(): Promise<void> {
   if (ticking) return;
   ticking = true;
   try {
+    await runReconcile();
     await runRollout();
     const database = db();
     const [agents, withCreds] = await Promise.all([
@@ -68,6 +80,9 @@ export function startAgentClock(): void {
     if (gap > 30_000) void runTicks();
   }, 5_000);
   setInterval(() => void runTicks(), 15 * 60 * 1000);
+  // Пока чья-то машина поднимается впервые, статус должен обновиться за минуту, а не за четверть часа.
+  // Без застрявших агентов это один запрос к базе и ни одного к Fly.
+  setInterval(() => void runReconcile(), 60_000);
   // Новый процесс — это чаще всего новая выкладка: агентов надо перевести на её образ сразу.
   setTimeout(() => void runTicks(), 20_000);
   console.log("[clock] проверка агентов раз в 15 минут, пока этот процесс не спит");

@@ -55,12 +55,17 @@ export async function wakeAgent(agent: AgentRow, holdMs = 30_000): Promise<boole
   const machine = await client.getMachine(agent.flyAppName, agent.flyMachineId);
   if (!machine) throw new Error("Машина агента не найдена");
   if (machine.state === "started") return false;
-  if (machine.state !== "starting") {
+  if (!isWakingState(machine.state)) {
     await client.startMachine(agent.flyAppName, agent.flyMachineId);
   }
-  await client.waitForState(agent.flyAppName, agent.flyMachineId, "started", 90);
+  // `created` — машина ещё ни разу не стартовала: Fly тянет образы, на новом хосте это минуты.
+  const waitSec = machine.state === "created" ? FIRST_BOOT_WAIT_SEC : WAKE_WAIT_SEC;
+  await client.waitForState(agent.flyAppName, agent.flyMachineId, "started", waitSec);
   return true;
 }
+
+const WAKE_WAIT_SEC = 90;
+const FIRST_BOOT_WAIT_SEC = 300;
 
 /** Усыпить, если после wake не пришла новая работа. Идемпотентно. */
 export async function suspendAgent(agent: AgentRow): Promise<"suspended" | "skipped"> {

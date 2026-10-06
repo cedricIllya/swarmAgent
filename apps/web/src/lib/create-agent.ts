@@ -13,12 +13,14 @@ import {
   type AgentRow,
 } from "@swarm/agents";
 import { buildSnapshot } from "@swarm/connections";
-import { AGENT_VOLUME_GB, FlyClient, appNameFor, buildAgentMachineConfig, runtimeUrlFor } from "@swarm/fly";
+import { inArray, schema } from "@swarm/db";
+import { AGENT_VOLUME_GB, FlyClient, FlyError, appNameFor, buildAgentMachineConfig, runtimeUrlFor } from "@swarm/fly";
 import { renderAllFiles } from "@swarm/hermes-config";
 import { allocateLocalPart, localPartForOwner } from "@swarm/mail";
 import type { TenantView } from "@swarm/identity";
 import { env } from "@/env";
 import { db } from "./db";
+import { provisionVerdict } from "./provision-verdict";
 import { awakeRuntime } from "./runtime-client";
 
 /**
@@ -151,15 +153,68 @@ async function provision(agent: AgentRow, runtimeToken: string, ownerEmail: stri
   await updateAgent(database, agent.id, { statusMessage: "Запускаем Hermes и runtime" });
   const config = await machineConfigFor(agent, runtimeToken, ownerEmail, volume.id);
   const machine = await fly.createMachine(appName, { name: appName, config });
-  await updateAgent(database, agent.id, { flyMachineId: machine.id });
-  await fly.waitForState(appName, machine.id, "started", 180);
+  await updateAgent(database, agent.id, { flyMachineId: machine.id, statusMessage: BOOTING_MESSAGE });
+  try {
+    await fly.waitForState(appName, machine.id, "started", FIRST_BOOT_WAIT_SEC);
+  } catch (e) {
+    // Первый запуск тянет образы Hermes и runtime на новый хост: бывает дольше любого ожидания.
+    // Машина создана и дойдёт сама; статус «запускается» дочинит reconcileProvisioning.
+    if (e instanceof FlyError && e.status === 408) {
+      await updateAgent(database, agent.id, { status: "provisioning", statusMessage: BOOTING_MESSAGE });
+      return;
+    }
+    throw e;
+  }
+  await markRunning(agent.id, appName);
+}
 
-  await updateAgent(database, agent.id, {
+/** Первый старт машины: Fly готовит два образа, на новом хосте это минуты, а не секунды. */
+const FIRST_BOOT_WAIT_SEC = 600;
+const BOOTING_MESSAGE = "Машина создана, Fly готовит образы Hermes и runtime — обычно 1–5 минут";
+
+async function markRunning(agentId: string, appName: string): Promise<void> {
+  await updateAgent(db(), agentId, {
     status: "running",
     statusMessage: null,
     runtimeUrl: runtimeUrlFor(appName),
     runtimeRelease: env.release ?? null,
   });
+}
+
+/**
+ * Агенты, чья машина уже создана, но статус застрял: ожидание первого старта вышло, или
+ * control plane перезапустили посреди provision и промис пропал. Машина стартовала — агент
+ * работает; всё ещё поднимается — так и пишем; машины нет — ошибка остаётся.
+ */
+export async function reconcileProvisioning(): Promise<{ recovered: number; booting: number }> {
+  const database = db();
+  const rows: AgentRow[] = await database
+    .select()
+    .from(schema.agents)
+    .where(inArray(schema.agents.status, ["provisioning", "failed"]));
+  const stuck = rows.filter((a) => a.flyAppName && a.flyMachineId);
+  if (!stuck.length) return { recovered: 0, booting: 0 };
+  const fly = flyClient();
+  let recovered = 0;
+  let booting = 0;
+  for (const agent of stuck) {
+    try {
+      const machine = await fly.getMachine(agent.flyAppName!, agent.flyMachineId!);
+      const verdict = provisionVerdict(agent.status, machine?.state ?? null);
+      if (verdict === "running") {
+        await markRunning(agent.id, agent.flyAppName!);
+        recovered += 1;
+      } else if (verdict === "booting") {
+        booting += 1;
+        if (agent.status !== "provisioning" || agent.statusMessage !== BOOTING_MESSAGE) {
+          await updateAgent(database, agent.id, { status: "provisioning", statusMessage: BOOTING_MESSAGE });
+        }
+      }
+    } catch (e) {
+      console.warn(`[provision] ${agent.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { recovered, booting };
 }
 
 /**
