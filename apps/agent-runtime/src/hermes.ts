@@ -7,6 +7,8 @@ export interface HermesClientOptions {
   apiKey: string;
   fallback: OpenRouterClient;
   fetchImpl?: typeof fetch;
+  /** Сколько ждать поднятия api_server после рестарта, прежде чем ответить без инструментов. */
+  readyWaitMs?: number;
 }
 
 /**
@@ -52,14 +54,36 @@ export class HermesClient {
     this.f = opts.fetchImpl ?? fetch;
   }
 
+  /**
+   * После рестарта машины control plane присылает тик раньше, чем контейнер Hermes поднял
+   * api_server: первый же ход уходил в OpenRouter без инструментов и задача падала.
+   * Любой HTTP-ответ — сервер слушает; ждём только сетевой отказ, и недолго.
+   */
+  private async awaitReady(signal: AbortSignal): Promise<boolean> {
+    const waitMs = this.opts.readyWaitMs ?? 90_000;
+    if (waitMs <= 0) return false;
+    const until = Date.now() + waitMs;
+    for (;;) {
+      if (signal.aborted || Date.now() >= until) return false;
+      await new Promise((r) => setTimeout(r, 2_000));
+      try {
+        const res = await this.f(`${this.opts.apiUrl}/models`, { signal: AbortSignal.any([signal, AbortSignal.timeout(3_000)]) });
+        await res.body?.cancel().catch(() => undefined);
+        return true;
+      } catch {
+        // ещё не слушает
+      }
+    }
+  }
+
   async run(
     prompt: string,
     args: { sessionId: string; system?: string; model: string; signal?: AbortSignal },
   ): Promise<ChatResult> {
     const timeout = AbortSignal.timeout(20 * 60 * 1000);
     const signal = args.signal ? AbortSignal.any([timeout, args.signal]) : timeout;
-    try {
-      const res = await this.f(`${this.opts.apiUrl}/chat/completions`, {
+    const post = () =>
+      this.f(`${this.opts.apiUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -76,6 +100,16 @@ export class HermesClient {
         }),
         signal,
       });
+    try {
+      let res: Response;
+      try {
+        res = await post();
+      } catch (e) {
+        // Сетевой отказ — сервер ещё поднимается после рестарта: дождаться и повторить один раз.
+        if (signal.aborted) throw e;
+        if (!(await this.awaitReady(signal))) throw e;
+        res = await post();
+      }
       if (!res.ok) throw new Error(`Hermes ${res.status}: ${await res.text()}`);
       const json = (await res.json()) as {
         model?: string;

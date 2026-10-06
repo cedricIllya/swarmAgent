@@ -79,10 +79,35 @@ describe("HermesClient cost", () => {
       fetchImpl: vi.fn(async () => {
         throw new Error("ECONNREFUSED");
       }) as unknown as typeof fetch,
+      readyWaitMs: 0,
     });
     const r = await c.run("привет", { sessionId: "run_1", model: "m" });
     expect(r.text).toBe("без инструментов");
     expect(r.usedFallback).toBe(true);
+  });
+
+  it("после рестарта ждёт api_server и повторяет ход, а не уходит в OpenRouter", async () => {
+    vi.useFakeTimers();
+    try {
+      const fallback = { chat: vi.fn() } as unknown as OpenRouterClient;
+      let up = false;
+      const fetchImpl = vi.fn(async (url: string) => {
+        if (!up) throw new Error("ECONNREFUSED");
+        if (String(url).endsWith("/models")) return json({ data: [] });
+        return json({ model: "m", choices: [{ message: { content: "с инструментами" } }], usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0.01 } });
+      });
+      const c = new HermesClient({ apiUrl: "http://127.0.0.1:8642/v1", apiKey: "rt", fallback, fetchImpl: fetchImpl as unknown as typeof fetch, readyWaitMs: 30_000 });
+      const pending = c.run("привет", { sessionId: "run_1", model: "m" });
+      await vi.advanceTimersByTimeAsync(2_100);
+      up = true;
+      await vi.advanceTimersByTimeAsync(2_100);
+      const r = await pending;
+      expect(r.text).toBe("с инструментами");
+      expect(r.usedFallback).toBe(false);
+      expect(fallback.chat).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not fall back when the caller aborts the turn", async () => {
