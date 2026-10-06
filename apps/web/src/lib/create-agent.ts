@@ -40,12 +40,17 @@ export async function createAgent(
     localPart = input.localPart.toLowerCase();
     if (await isAddressTaken(database, localPart, domain)) throw new Error(`Адрес ${localPart}@${domain} занят`);
   } else {
-    localPart = await allocateLocalPart(localPartForOwner(owner.email, input.name), (c) => isAddressTaken(database, c, domain));
+    localPart = await allocateLocalPart(
+      localPartForOwner(owner.email, `${input.firstName} ${input.lastName}`),
+      (c) => isAddressTaken(database, c, domain),
+    );
   }
 
   const { row, runtimeToken } = await insertAgent(database, {
     tenantId: tenant.id,
-    name: input.name,
+    name: `${input.firstName} ${input.lastName}`,
+    firstName: input.firstName,
+    lastName: input.lastName,
     model: input.model,
     localPart,
     domain,
@@ -114,6 +119,8 @@ async function machineConfigFor(agent: AgentRow, runtimeToken: string, ownerEmai
   const machineEnv: Record<string, string> = {
     AGENT_ID: agent.id,
     AGENT_NAME: agent.name,
+    ...(agent.firstName ? { AGENT_FIRST_NAME: agent.firstName } : {}),
+    ...(agent.lastName ? { AGENT_LAST_NAME: agent.lastName } : {}),
     AGENT_EMAIL: email,
     AGENT_MODEL: agent.model,
     AGENT_AUTONOMOUS: String(agent.autonomous),

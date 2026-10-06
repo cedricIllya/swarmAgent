@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { registrationNameLine } from "./person-name";
 
 /**
  * Принять приглашение в сервис и зарегистрироваться под почтой агента.
@@ -74,6 +75,8 @@ export interface AcceptInviteArgs {
   url: string;
   service: string;
   agentName: string;
+  firstName?: string | null;
+  lastName?: string | null;
   email: string;
   /** Пароль этого прогона. Для нового аккаунта его задают при регистрации и им же входят сразу после. */
   password?: string | null;
@@ -212,7 +215,7 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
         await browser.act(
           [
             `Введи адрес ${args.email} в поле почты.`,
-            `Если на странице всё же есть имя, first name, last name или username — введи «${args.agentName}» сам, до отправки (одно слово — в оба поля).`,
+            `Если на странице всё же есть имя — ${registrationNameLine(args.agentName, args.firstName, args.lastName)}`,
             password
               ? `Если есть пароль или его подтверждение — введи ${password}. Форму с пустым именем или паролем не отправляй.`
               : "Поля пароля здесь быть не должно: если оно есть, не отправляй форму.",
@@ -235,8 +238,8 @@ export async function acceptInvite(browser: InviteBrowser, args: AcceptInviteArg
         passwordCreated = true;
         await browser.act(
           [
-            `Заполни форму регистрации сам, до отправки: имя «${args.agentName}», адрес ${args.email}, пароль ${password}`,
-            "(и подтверждение пароля, если есть). Одно слово имени — и в имя, и в фамилию. Пустыми имя и пароль не оставляй.",
+            `Заполни форму регистрации сам, до отправки. ${registrationNameLine(args.agentName, args.firstName, args.lastName)}`,
+            `Адрес ${args.email}, пароль ${password} (и подтверждение пароля, если есть). Пустыми имя и пароль не оставляй.`,
             "Отметь согласие с условиями, если просят. Отправь форму только после этого.",
             "Если на этой же странице есть ссылка «уже есть аккаунт» или «войти» — не нажимай её: сначала регистрация.",
           ].join(" "),

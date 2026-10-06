@@ -559,6 +559,11 @@ code {
   gap: 6px;
   margin-bottom: 14px;
 }
+.name-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
 .label {
   font-size: 13px;
   font-weight: 600;
@@ -630,21 +635,93 @@ code {
 
 /* ---------- почта и подключение ---------- */
 
-.email-box {
+.agent-email {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  background: var(--bg-elev);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-sm);
-  padding: 12px 14px;
+  gap: 6px;
+  margin-top: 4px;
+  min-height: 28px;
 }
-.email-box code {
-  font-size: 15px;
-  color: var(--text);
+.agent-email-value {
+  font-size: 14px;
+  color: var(--text-muted);
   background: none;
   padding: 0;
+  word-break: break-all;
+}
+.agent-email-copied {
+  font-size: 12px;
+  color: var(--ok);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.agent-email-copied.show {
+  opacity: 1;
+}
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.icon-btn:hover {
+  background: var(--ink-soft);
+  color: var(--text);
+}
+
+.model-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.model-chip:hover {
+  background: var(--bg-elev);
+  border-color: var(--border-strong);
+}
+.model-chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.model-chip-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.model-control-select {
+  width: auto;
+  min-width: 260px;
+  max-width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
 }
 
 /* ---------- чат ---------- */
@@ -902,6 +979,107 @@ code {
 .step b {
   color: var(--text);
   font-weight: 600;
+}
+
+.run-block {
+  margin-top: 14px;
+}
+.run-block-label {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.history-line {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.history-role {
+  color: var(--text-faint);
+  font-size: 12px;
+  padding-top: 1px;
+}
+.access-row {
+  align-items: flex-start;
+}
+.service-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.service-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 10px;
+  border-radius: 999px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  font-size: 13px;
+}
+.service-chip .badge {
+  padding: 1px 7px;
+}
+
+/* Пароль и код: тёмная плашка, чтобы секрет читался отдельно от журнала. */
+.secret {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
+  margin: 2px 0;
+  padding: 6px 8px 6px 10px;
+  border-radius: 10px;
+  background: #1d1d1f;
+  color: #f6f1e4;
+  box-shadow: inset 3px 0 0 #7eb6ff;
+  vertical-align: middle;
+}
+.secret-password {
+  box-shadow: inset 3px 0 0 var(--accent-bright);
+}
+.secret-kicker {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9cc4ff;
+}
+.secret-password .secret-kicker {
+  color: var(--accent-bright);
+}
+.secret-value {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: inherit;
+  background: none;
+  padding: 0;
+  word-break: break-all;
+}
+.secret-copy {
+  flex: none;
+  margin-left: auto;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  border-radius: 8px;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.secret-copy:hover {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 /* ---------- вход ---------- */
@@ -1340,6 +1518,15 @@ details summary::-webkit-details-marker {
   .chat-layout {
     grid-template-columns: 1fr;
   }
+  .name-fields {
+    grid-template-columns: 1fr;
+  }
+  .history-line {
+    grid-template-columns: 1fr auto;
+  }
+  .history-role {
+    grid-column: 1 / -1;
+  }
   .stats {
     gap: 8px;
   }
@@ -1380,6 +1567,25 @@ details summary::-webkit-details-marker {
 }
 
 @media (prefers-color-scheme: dark) {
+  .secret {
+    background: #f6f1e4;
+    color: #1d1d1f;
+  }
+  .secret-kicker {
+    color: #1d4f8a;
+  }
+  .secret-password .secret-kicker {
+    color: #7a4e08;
+  }
+  .secret-copy {
+    border-color: rgba(29, 29, 31, 0.22);
+    background: rgba(29, 29, 31, 0.06);
+    color: #1d1d1f;
+  }
+  .secret-copy:hover {
+    background: rgba(29, 29, 31, 0.12);
+  }
+
   :root {
     color-scheme: dark;
 

@@ -62,7 +62,15 @@ export function ApprovalBubble({
 }
 
 /** Ожидание, у которого нет своей карточки в ленте: показывается над чатом. */
-export function ApprovalRow({ approval, onDecide }: { approval: PendingApproval; onDecide: (approved: boolean) => void }) {
+export function ApprovalRow({
+  approval,
+  busy = false,
+  onDecide,
+}: {
+  approval: PendingApproval;
+  busy?: boolean;
+  onDecide: (approved: boolean) => void;
+}) {
   const handoff = approval.kind === "handoff";
   const labels = approval.serviceWait ? SERVICE_WAIT : handoff ? HANDOFF : APPROVAL;
   return (
@@ -73,8 +81,8 @@ export function ApprovalRow({ approval, onDecide }: { approval: PendingApproval;
       </div>
       <div className="row">
         {handoff && !approval.serviceWait && <LiveLink url={approval.liveUrl} />}
-        <button className="btn btn-sm btn-primary" onClick={() => onDecide(true)}>{labels.yes}</button>
-        <button className="btn btn-sm" onClick={() => onDecide(false)}>{labels.no}</button>
+        <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => onDecide(true)}>{labels.yes}</button>
+        <button className="btn btn-sm" disabled={busy} onClick={() => onDecide(false)}>{labels.no}</button>
       </div>
     </div>
   );

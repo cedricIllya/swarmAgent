@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Agent, RunStep, RuntimeEvent, RuntimeState } from "@swarm/contracts";
+import type { Agent, ChatMessage, RunStep, RuntimeEvent, RuntimeState } from "@swarm/contracts";
 
 export interface Detail {
   agent: Agent;
@@ -22,6 +22,7 @@ export function useAgentLive(initialAgent: Agent) {
   const [detail, setDetail] = useState<Detail>({ agent: initialAgent, state: null, runtimeError: null });
   const [settled, setSettled] = useState(false);
   const [stepsByRun, setStepsByRun] = useState<Record<string, RunStep[]>>({});
+  const [messagesByRun, setMessagesByRun] = useState<Record<string, ChatMessage[]>>({});
   const [actionsBySession, setActionsBySession] = useState<LiveActions>({});
   const sseAlive = useRef(false);
   const onChatMessage = useRef<(event: ChatMessageEvent) => void>(() => {});
@@ -87,6 +88,14 @@ export function useAgentLive(initialAgent: Agent) {
     });
     on("chatMessage", (event) => {
       if (event.type !== "chatMessage") return;
+      const runId = event.message.runId;
+      if (runId) {
+        setMessagesByRun((prev) => {
+          const list = prev[runId] ?? [];
+          if (list.some((m) => m.at === event.message.at && m.role === event.message.role && m.text === event.message.text)) return prev;
+          return { ...prev, [runId]: [...list, event.message] };
+        });
+      }
       onChatMessage.current(event);
     });
     on("chats", (event) => {
@@ -139,5 +148,5 @@ export function useAgentLive(initialAgent: Agent) {
     setDetail((prev) => ({ ...prev, agent }));
   }, []);
 
-  return { detail, stepsByRun, actionsBySession, onChatMessage, livePending, patchAgent };
+  return { detail, stepsByRun, messagesByRun, actionsBySession, onChatMessage, livePending, patchAgent };
 }

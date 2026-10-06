@@ -133,6 +133,8 @@ export class BrowserControl {
           url: args.url,
           service: args.service,
           agentName: rt.cfg.agentName,
+          firstName: rt.cfg.agentFirstName,
+          lastName: rt.cfg.agentLastName,
           email: rt.cfg.email,
           password: existing?.password ?? null,
           existing: accountKnown,
@@ -227,7 +229,7 @@ export class BrowserControl {
       ...(storageState !== undefined ? { storageState } : {}),
     };
     await rt.services.applyReport({ type: "credential", runId: run.id, credential });
-    await rt.step(run.id, "note", `аккаунт ${result.accountEmail} в ${args.service} сохранён${result.password ? ", пароль в карточке агента" : ""}`);
+    await rt.step(run.id, "note", `аккаунт ${result.accountEmail} в ${args.service} сохранён${result.password ? ", пароль в журнале задачи" : ""}`);
     return result;
   }
 
@@ -245,6 +247,8 @@ export class BrowserControl {
         url: args.url,
         service: args.service,
         agentName: rt.cfg.agentName,
+        firstName: rt.cfg.agentFirstName,
+        lastName: rt.cfg.agentLastName,
         email: rt.cfg.email,
         password: existing?.password ?? null,
         existing: accountKnown,

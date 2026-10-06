@@ -5,7 +5,7 @@ import type { Agent } from "@swarm/contracts";
 import { ModelSelect } from "../model-select";
 
 /**
- * Смена модели у уже созданного агента.
+ * Модель агента: название как кнопка, по клику — селект без поиска.
  * PATCH обновляет БД и runtime; при смене Hermes переписывается и машина перезапускается.
  */
 export function AgentModelControl({
@@ -16,6 +16,7 @@ export function AgentModelControl({
   onUpdated: (agent: Agent) => void;
 }) {
   const [model, setModel] = useState(agent.model);
+  const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -25,6 +26,7 @@ export function AgentModelControl({
   }, [agent.model]);
 
   async function save(next: string) {
+    setEditing(false);
     if (next === agent.model || busy) {
       setModel(next);
       return;
@@ -50,14 +52,36 @@ export function AgentModelControl({
   }
 
   return (
-    <div className="field" style={{ marginTop: 12, marginBottom: 0, maxWidth: 420 }}>
-      <label className="label" htmlFor={`agent-model-${agent.id}`}>
-        Модель
-      </label>
-      <ModelSelect id={`agent-model-${agent.id}`} value={model} onChange={(v) => void save(v)} disabled={busy} />
+    <div className="model-control">
+      {editing ? (
+        <ModelSelect
+          id={`agent-model-${agent.id}`}
+          className="model-control-select"
+          value={model}
+          onChange={(v) => void save(v)}
+          onBlur={() => setEditing(false)}
+          disabled={busy}
+          autoFocus
+        />
+      ) : (
+        <button
+          type="button"
+          className="model-chip"
+          title="Сменить модель"
+          disabled={busy}
+          onClick={() => {
+            setError(null);
+            setNote(null);
+            setEditing(true);
+          }}
+        >
+          <span className="model-chip-label">модель</span>
+          <span className="mono">{model}</span>
+        </button>
+      )}
       {busy && <span className="faint small">Сохраняем…</span>}
       {note && !error && <span className="faint small">{note}</span>}
-      {error && <p className="error">{error}</p>}
+      {error && <span className="small" style={{ color: "var(--danger)" }}>{error}</span>}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import type { Store } from "../store";
 import { downloadUrlTo } from "./recordings";
 import { blockerKind, looksLikeServiceApprovalWait } from "../connect";
 import { generatePassword, type AcceptInviteResult } from "./invite";
+import { registrationNameLine } from "./person-name";
 import { currentUrlFromCdp, exportStorageFromCdp, type BrowserStorageState } from "./session-transfer";
 import { log, warn } from "../log";
 
@@ -144,6 +145,8 @@ export interface SkyvernInviteArgs {
   url: string;
   service: string;
   agentName: string;
+  firstName?: string | null;
+  lastName?: string | null;
   email: string;
   /** Пароль, если у агента уже есть аккаунт в сервисе. Иначе придумаем свой. */
   password?: string | null;
@@ -217,12 +220,14 @@ interface TotpOffer {
 export function inviteTaskPrompt(args: {
   service: string;
   agentName: string;
+  firstName?: string | null;
+  lastName?: string | null;
   email: string;
   password: string;
   existing?: boolean;
 }): string {
   const identity = [
-    `Имя вводи сам, до кнопки отправки: в name, full name, first name, last name, display name и username — «${args.agentName}». Одно слово — и в имя, и в фамилию. Пустым имя не оставляй. Адрес электронной почты — только ${args.email}.`,
+    `${registrationNameLine(args.agentName, args.firstName, args.lastName)} Адрес электронной почты — только ${args.email}.`,
     "Способ входа — только почта (Continue with email). Google, Microsoft, GitHub, Apple и SSO не выбирай, если есть обычный путь.",
     TOTP_WAIT,
     "Капча решается сама. Подожди и продолжи. outcome=blocked и blocker_kind=captcha — только если после ожидания страница всё ещё не пускает.",
@@ -507,6 +512,8 @@ export class SkyvernClient {
       const prompt = inviteTaskPrompt({
         service: args.service,
         agentName: args.agentName,
+        firstName: args.firstName ?? null,
+        lastName: args.lastName ?? null,
         email: args.email,
         password,
         existing,

@@ -9,6 +9,8 @@ export function toAgentView(row: Row): Agent {
     id: row.id,
     tenantId: row.tenantId,
     name: row.name,
+    firstName: row.firstName,
+    lastName: row.lastName,
     model: row.model,
     localPart: row.localPart,
     domain: row.domain,
@@ -65,6 +67,8 @@ export async function isAddressTaken(db: Db, localPart: string, domain: string):
 export interface NewAgentRecord {
   tenantId: string;
   name: string;
+  firstName: string;
+  lastName: string;
   model: string;
   localPart: string;
   domain: string;
@@ -80,6 +84,8 @@ export async function insertAgent(db: Db, input: NewAgentRecord): Promise<{ row:
       id,
       tenantId: input.tenantId,
       name: input.name,
+      firstName: input.firstName,
+      lastName: input.lastName,
       model: input.model,
       localPart: input.localPart.toLowerCase(),
       domain: input.domain.toLowerCase(),

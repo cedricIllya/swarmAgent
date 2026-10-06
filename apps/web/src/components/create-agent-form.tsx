@@ -7,7 +7,8 @@ import { ModelSelect } from "./model-select";
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4.5";
 
 export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string; onCreated: (a: Agent) => void }) {
-  const [name, setName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [localPart, setLocalPart] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +21,7 @@ export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string;
     const res = await fetch("/api/agents", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, model, ...(localPart ? { localPart } : {}) }),
+      body: JSON.stringify({ firstName: firstName.trim(), lastName: lastName.trim(), model, ...(localPart ? { localPart } : {}) }),
     });
     const json = (await res.json()) as { agent?: Agent; error?: string };
     setBusy(false);
@@ -34,11 +35,35 @@ export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string;
   return (
     <form onSubmit={submit}>
       <h2 style={{ marginBottom: 14 }}>Новый агент</h2>
-      <div className="field">
-        <label className="label">Имя</label>
-        <input className="input" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder="Например, Владимир Ленин" />
-        <span className="faint small">Адрес соберётся из вашего логина и имени: Владимир Ленин → {ownerLogin}.vladimir.lenin@…</span>
+      <div className="name-fields">
+        <div className="field">
+          <label className="label">Имя</label>
+          <input
+            className="input"
+            required
+            maxLength={40}
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+            placeholder="Владимир"
+            autoComplete="given-name"
+          />
+        </div>
+        <div className="field">
+          <label className="label">Фамилия</label>
+          <input
+            className="input"
+            required
+            maxLength={40}
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            placeholder="Ленин"
+            autoComplete="family-name"
+          />
+        </div>
       </div>
+      <p className="faint small" style={{ margin: "-6px 0 14px" }}>
+        Адрес соберётся из вашего логина, имени и фамилии: Владимир Ленин → {ownerLogin}.vladimir.lenin@…
+      </p>
       <div className="field">
         <label className="label">Адрес вручную (необязательно)</label>
         <input
@@ -55,7 +80,7 @@ export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string;
       </div>
       {error && <p className="error">{error}</p>}
       <div className="row" style={{ justifyContent: "flex-end" }}>
-        <button className="btn btn-primary" type="submit" disabled={busy || !name}>
+        <button className="btn btn-primary" type="submit" disabled={busy || !firstName.trim() || !lastName.trim()}>
           {busy ? "Создаём…" : "Создать"}
         </button>
       </div>

@@ -9,6 +9,9 @@ export interface RuntimeConfig {
   dataDir: string;
   agentId: string;
   agentName: string;
+  /** Задаются при создании. Пусто — имя и фамилия выводятся из `agentName`. */
+  agentFirstName: string | null;
+  agentLastName: string | null;
   email: string;
   ownerEmail: string | null;
   model: string;
@@ -30,6 +33,8 @@ export function loadConfig(): RuntimeConfig {
     dataDir: process.env.DATA_DIR ?? "/opt/data",
     agentId: need("AGENT_ID"),
     agentName: process.env.AGENT_NAME ?? "Agent",
+    agentFirstName: process.env.AGENT_FIRST_NAME?.trim() || null,
+    agentLastName: process.env.AGENT_LAST_NAME?.trim() || null,
     email: need("AGENT_EMAIL"),
     ownerEmail: process.env.OWNER_EMAIL ?? null,
     model: process.env.AGENT_MODEL ?? "openai/gpt-4.1-mini",

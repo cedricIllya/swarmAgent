@@ -121,6 +121,10 @@ export const agents = pgTable(
       .notNull()
       .references(() => tenants.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    /** Имя, которым агент заполняет first name. У старых агентов пусто — берётся из `name`. */
+    firstName: text("first_name"),
+    /** Фамилия для last name. У старых агентов пусто. */
+    lastName: text("last_name"),
     model: text("model").notNull(),
     /** Голая локальная часть без плюс-тега, нижний регистр. */
     localPart: text("local_part").notNull(),

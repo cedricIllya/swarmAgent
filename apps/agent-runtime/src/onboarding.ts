@@ -295,7 +295,7 @@ async function connectInvite(
       const reason = serviceWait
         ? `Заявка на регистрацию в ${args.service} отправлена с ${rt.cfg.email}. Одобрите её в сервисе. Когда одобрите — нажмите «Одобрил, продолжай»: я войду и подключусь. Письмо сервиса на эту почту продолжит вход само.`
         : page
-          ? `${decision.reason} Откройте страницу и доделайте шаг за ${rt.cfg.email}: ${page} Что агент уже видел — скриншотами в карточке браузера выше.`
+          ? `${decision.reason} Откройте страницу и доделайте шаг за ${rt.cfg.email}: ${page} Что агент уже видел — скриншотами в журнале этой задачи.`
           : decision.reason;
       const pending = await rt.handoffs.open(
         run,
@@ -351,6 +351,8 @@ async function connectInvite(
         url: args.url,
         service: args.service,
         agentName: rt.cfg.agentName,
+        firstName: rt.cfg.agentFirstName,
+        lastName: rt.cfg.agentLastName,
         email: rt.cfg.email,
         password: typed,
         existing,

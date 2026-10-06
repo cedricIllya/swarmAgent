@@ -55,7 +55,7 @@ export function AgentsHome({ initialAgents, ownerLogin }: { initialAgents: Agent
           </div>
           <h2>Агентов пока нет</h2>
           <p className="muted" style={{ margin: "6px 0 0" }}>
-            Создайте первого — он получит адрес вида <code>{ownerLogin}.имя@домен</code>.
+            Создайте первого — он получит адрес вида <code>{ownerLogin}.имя.фамилия@домен</code>.
           </p>
         </div>
       ) : (

@@ -205,9 +205,9 @@ function EmptyState({ agents }: { agents: Agent[] }) {
         <div className="how">
           <span className="how-num">2</span>
           <div>
-            <strong>Ссылка и ключ в чате</strong>
+            <strong>Ссылка и ключ в задаче</strong>
             <p className="muted small" style={{ margin: "2px 0 0" }}>
-              Вставьте в чат агента ссылку на сервис и API-ключ или токен. Он разберётся, как войти.
+              Вставьте агенту ссылку на сервис и API-ключ или токен. Он разберётся, как войти.
             </p>
           </div>
         </div>

@@ -14,6 +14,10 @@ export const AgentSchema = z.object({
   id: z.string(),
   tenantId: z.string(),
   name: z.string(),
+  /** Имя для форм регистрации. Пусто у агентов, созданных одним полем. */
+  firstName: z.string().nullable(),
+  /** Фамилия для форм регистрации. Пусто у агентов, созданных одним полем. */
+  lastName: z.string().nullable(),
   model: z.string(),
   localPart: z.string(),
   domain: z.string(),
@@ -35,7 +39,8 @@ export const AgentSchema = z.object({
 export type Agent = z.infer<typeof AgentSchema>;
 
 export const CreateAgentInputSchema = z.object({
-  name: z.string().min(1).max(80),
+  firstName: z.string().trim().min(1).max(40),
+  lastName: z.string().trim().min(1).max(40),
   model: z.string().min(1),
   localPart: z
     .string()

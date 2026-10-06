@@ -59,49 +59,6 @@ export function ListSkeleton({ count = 2 }: { count?: number }) {
   );
 }
 
-export function ChatListSkeleton() {
-  return (
-    <div className="chat-list" aria-hidden>
-      <Skeleton height={34} className="skeleton-pill" />
-      <Skeleton height={68} className="skeleton-block" />
-      <Skeleton height={68} className="skeleton-block" />
-      <Skeleton height={54} className="skeleton-block" />
-    </div>
-  );
-}
-
-export function ChatPaneSkeleton() {
-  return (
-    <div className="chat" aria-busy="true">
-      <span className="sr-only">Загрузка сообщений</span>
-      <Skeleton className="skeleton-bubble" width="46%" />
-      <Skeleton className="skeleton-bubble skeleton-bubble-end" width="62%" />
-      <Skeleton className="skeleton-bubble" width="38%" height={72} />
-      <Skeleton className="skeleton-bubble skeleton-bubble-end" width="54%" />
-    </div>
-  );
-}
-
-/** Список, лента и поле ввода — та же сетка, что у открытого чата. */
-export function ChatWorkspaceSkeleton() {
-  return (
-    <div className="chat-layout" aria-busy="true">
-      <span className="sr-only">Загрузка чата</span>
-      <ChatListSkeleton />
-      <div>
-        <div className="chat-toolbar">
-          <Skeleton width={140} height={18} />
-        </div>
-        <ChatPaneSkeleton />
-        <div className="row" style={{ marginTop: 12, alignItems: "flex-end" }}>
-          <Skeleton className="skeleton-input" />
-          <Skeleton width={118} height={40} className="skeleton-pill" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
 const USAGE_LABELS = ["всего", "токенов на вход", "токенов на выход"] as const;
 
 export function UsageBodySkeleton() {
@@ -171,11 +128,7 @@ export function DashboardSkeleton() {
           <Skeleton width={210} height={26} />
           <Skeleton width={280} height={14} />
         </div>
-        <div className="email-box">
-          <Skeleton width={260} height={18} />
-          <Skeleton width={108} height={32} className="skeleton-pill" />
-        </div>
-        <div className="row" style={{ marginTop: 12, justifyContent: "space-between" }}>
+        <div className="row" style={{ justifyContent: "space-between" }}>
           <Skeleton width={180} height={24} className="skeleton-pill" />
           <Skeleton width={168} height={32} className="skeleton-pill" />
         </div>
@@ -189,18 +142,10 @@ export function DashboardSkeleton() {
           </div>
           <Skeleton width={280} height={26} className="skeleton-pill" />
         </div>
-        <ChatWorkspaceSkeleton />
-      </section>
-
-      <section className="card">
-        <div className="card-head">
-          <div>
-            <Skeleton width={210} height={28} />
-            <Skeleton width={260} height={20} />
-          </div>
-          <Skeleton width={96} height={14} />
+        <div className="row" style={{ alignItems: "flex-end" }}>
+          <Skeleton className="skeleton-input" />
+          <Skeleton width={118} height={40} className="skeleton-pill" />
         </div>
-        <ListSkeleton />
       </section>
 
       <section className="card">

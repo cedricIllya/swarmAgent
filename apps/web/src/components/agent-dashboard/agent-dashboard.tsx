@@ -6,16 +6,16 @@ import { useState } from "react";
 import type { Agent } from "@swarm/contracts";
 import { useConfirm } from "../confirm-dialog";
 import { StatusBadge } from "../status-badge";
-import { ChatCard } from "./chat-card";
+import { AgentEmail } from "./agent-email";
 import { EmailCard } from "./email-card";
 import { LogsCard } from "./logs-card";
-import { ServicesCard } from "./services-card";
+import { TaskComposer } from "./task-composer";
 import { UsageCard } from "./usage-card";
 import { AgentModelControl } from "./agent-model-control";
 import { useAgentLive } from "./use-agent-live";
 
 export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
-  const { detail, stepsByRun, actionsBySession, onChatMessage, livePending, patchAgent } = useAgentLive(initialAgent);
+  const { detail, stepsByRun, messagesByRun, livePending, patchAgent } = useAgentLive(initialAgent);
   const router = useRouter();
   const confirm = useConfirm();
   const [removing, setRemoving] = useState(false);
@@ -56,9 +56,12 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
             {waking && <span className="badge">просыпается</span>}
             {state?.busyInBrowser && <span className="badge badge-warn"><span className="badge-dot pulse" />в браузере</span>}
           </div>
-          <div className="faint small" style={{ marginTop: 4 }}>
-            {agent.statusMessage ?? ""}
-          </div>
+          <AgentEmail email={agent.email} />
+          {agent.statusMessage && (
+            <div className="faint small" style={{ marginTop: 4 }}>
+              {agent.statusMessage}
+            </div>
+          )}
           <AgentModelControl agent={agent} onUpdated={patchAgent} />
         </div>
         <button className="btn btn-sm btn-danger" type="button" onClick={remove} disabled={removing}>
@@ -74,7 +77,7 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
 
       {asleep && (
         <div className="notice" style={{ marginBottom: 16 }}>
-          Агент спит: процессор и память Fly не тарифицирует. Диск считается и во сне. Письмо, чат и одобрение будят машину.
+          Агент спит: процессор и память Fly не тарифицирует. Диск считается и во сне. Письмо, задача и одобрение будят машину.
         </div>
       )}
 
@@ -85,16 +88,14 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
       )}
 
       <EmailCard agent={agent} />
-      <ChatCard
+      <TaskComposer agent={agent} />
+      <LogsCard
         agent={agent}
         state={state}
-        livePending={livePending}
-        onChatMessage={onChatMessage}
-        actionsBySession={actionsBySession}
         stepsByRun={stepsByRun}
+        messagesByRun={messagesByRun}
+        pending={livePending}
       />
-      <ServicesCard agent={agent} state={state} pending={livePending} />
-      <LogsCard agent={agent} state={state} stepsByRun={stepsByRun} pending={livePending} />
       <UsageCard state={state} pending={livePending} />
     </>
   );
