@@ -13,7 +13,7 @@ const HEADERS = {
 };
 
 /** Одно событие и пауза перед повтором. Машину не будим. */
-function once(type: "asleep" | "waking"): Response {
+function once(type: "asleep" | "waking" | "unreachable"): Response {
   const body = `event: ${type}\ndata: ${JSON.stringify({ type })}\nretry: 15000\n\n`;
   return new Response(body, { headers: HEADERS });
 }
@@ -32,12 +32,21 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const client = RuntimeClient.for(agent);
   if (!client || agent.status !== "running") return once("asleep");
 
+  // Машина не спит, а поток не открылся: runtime завис. «Спит» здесь прятало бы, что агент не отвечает.
   let upstream: Response;
   try {
     upstream = await client.events(req.signal);
-  } catch {
-    return once("asleep");
+  } catch (e) {
+    // #region agent log
+    console.log(`[debug-105c57] events ${agent.id} unreachable fly=${flyState}: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`);
+    // #endregion
+    return once("unreachable");
   }
-  if (!upstream.ok || !upstream.body) return once("asleep");
+  if (!upstream.ok || !upstream.body) {
+    // #region agent log
+    console.log(`[debug-105c57] events ${agent.id} bad upstream fly=${flyState} http=${upstream.status}`);
+    // #endregion
+    return once("unreachable");
+  }
   return new Response(upstream.body, { headers: HEADERS });
 }

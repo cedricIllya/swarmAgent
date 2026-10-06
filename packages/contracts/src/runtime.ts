@@ -168,7 +168,8 @@ export const RuntimeStateSchema = z.object({
 });
 
 /**
- * События `GET /events`. `asleep` и `waking` шлёт control plane, не будя машину.
+ * События `GET /events`. `asleep`, `waking` и `unreachable` шлёт control plane, не будя машину.
+ * `unreachable` — машина запущена, но runtime не отвечает.
  */
 export const RuntimeEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("snapshot"), state: RuntimeStateSchema }),
@@ -183,6 +184,7 @@ export const RuntimeEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("sleeping") }),
   z.object({ type: z.literal("asleep") }),
   z.object({ type: z.literal("waking") }),
+  z.object({ type: z.literal("unreachable") }),
 ]);
 
 export type DeliverEmailRequest = z.infer<typeof DeliverEmailRequestSchema>;

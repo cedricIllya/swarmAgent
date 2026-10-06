@@ -235,8 +235,17 @@ export class ManagedBrowserSession {
       liveUrl: null,
     });
     await deps.store.saveBrowserSession(s.meta);
-    await s.connect();
-    if (args.url) await s.goto(args.url);
+    try {
+      await s.connect();
+      if (args.url) await s.goto(args.url);
+    } catch (e) {
+      // Сессия ещё не в реестре runtime: без закрытия здесь Chromium и замок профиля живут до рестарта машины.
+      // #region agent log
+      console.log(`[debug-105c57] browser open failed, closing ${id}: ${String(e).slice(0, 160)}`);
+      // #endregion
+      await s.close().catch(() => undefined);
+      throw e;
+    }
     return s;
   }
 

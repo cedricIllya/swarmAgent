@@ -26,6 +26,7 @@ export function useAgentLive(initialAgent: Agent) {
   const [messagesByRun, setMessagesByRun] = useState<Record<string, ChatMessage[]>>({});
   const [actionsBySession, setActionsBySession] = useState<LiveActions>({});
   const sseAlive = useRef(false);
+  const snapshotAt = useRef<number | null>(null);
   const onChatMessage = useRef<(event: ChatMessageEvent) => void>(() => {});
   const pendingLocal = useRef(new Map<string, Run>());
 
@@ -35,7 +36,13 @@ export function useAgentLive(initialAgent: Agent) {
       if (!res.ok) return;
       const next = (await res.json()) as Detail;
       setDetail((prev) => {
-        const keepState = sseAlive.current || (next.asleep && !next.state);
+        // Спящая и зависшая машина состояния не отдают: последний журнал остаётся на экране.
+        const keepState = sseAlive.current || (!next.state && (next.asleep || Boolean(next.runtimeError)));
+        const prevRuns = prev.state?.runs.length ?? null;
+        const nextRuns = next.state?.runs.length ?? null;
+        // #region agent log
+        fetch("http://127.0.0.1:7513/ingest/c400658e-f748-4bbd-a80b-12efc8082a6f",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"105c57"},body:JSON.stringify({sessionId:"105c57",runId:"pre",hypothesisId:"A",location:"use-agent-live.ts:refresh",message:"poll merge",data:{wake,keepState,sseAlive:sseAlive.current,asleep:Boolean(next.asleep),waking:Boolean(next.waking),prevRuns,nextRuns,prevAsleep:Boolean(prev.asleep),runtimeError:next.runtimeError?String(next.runtimeError).slice(0,160):null},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         const base = keepState ? (prev.state ?? next.state) : next.state;
         if (!base) return { ...next, state: null };
         const locals = [...pendingLocal.current.values()].filter((local) => !base.runs.some((r) => r.id === local.id));
@@ -70,6 +77,7 @@ export function useAgentLive(initialAgent: Agent) {
     on("snapshot", (event) => {
       if (event.type !== "snapshot") return;
       sseAlive.current = true;
+      snapshotAt.current = Date.now();
       setSettled(true);
       setDetail((prev) => {
         const locals = [...pendingLocal.current.values()].filter((local) => !event.state.runs.some((r) => r.id === local.id));
@@ -135,15 +143,41 @@ export function useAgentLive(initialAgent: Agent) {
     });
     on("sleeping", () => {
       sseAlive.current = false;
-      setDetail((prev) => ({ ...prev, asleep: true }));
+      const msSinceSnapshot = snapshotAt.current ? Date.now() - snapshotAt.current : null;
+      setDetail((prev) => {
+        // #region agent log
+        fetch("http://127.0.0.1:7513/ingest/c400658e-f748-4bbd-a80b-12efc8082a6f",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"105c57"},body:JSON.stringify({sessionId:"105c57",runId:"pre",hypothesisId:"C",location:"use-agent-live.ts:sleeping",message:"runtime sleeping",data:{prevRuns:prev.state?.runs.length??null,hadState:Boolean(prev.state),msSinceSnapshot},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        return { ...prev, asleep: true };
+      });
     });
     on("asleep", () => {
       sseAlive.current = false;
       setSettled(true);
-      setDetail((prev) => ({ ...prev, asleep: true, waking: false }));
+      setDetail((prev) => {
+        // #region agent log
+        fetch("http://127.0.0.1:7513/ingest/c400658e-f748-4bbd-a80b-12efc8082a6f",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"105c57"},body:JSON.stringify({sessionId:"105c57",runId:"pre",hypothesisId:"B",location:"use-agent-live.ts:asleep",message:"control plane asleep",data:{prevRuns:prev.state?.runs.length??null,hadState:Boolean(prev.state),settled:true},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        return { ...prev, asleep: true, waking: false };
+      });
     });
     on("waking", () => {
-      setDetail((prev) => ({ ...prev, waking: true, asleep: false }));
+      setDetail((prev) => {
+        // #region agent log
+        fetch("http://127.0.0.1:7513/ingest/c400658e-f748-4bbd-a80b-12efc8082a6f",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"105c57"},body:JSON.stringify({sessionId:"105c57",runId:"pre",hypothesisId:"E",location:"use-agent-live.ts:waking",message:"control plane waking",data:{prevRuns:prev.state?.runs.length??null,hadState:Boolean(prev.state)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        return { ...prev, waking: true, asleep: false };
+      });
+    });
+    on("unreachable", () => {
+      sseAlive.current = false;
+      setSettled(true);
+      setDetail((prev) => {
+        // #region agent log
+        fetch("http://127.0.0.1:7513/ingest/c400658e-f748-4bbd-a80b-12efc8082a6f",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"105c57"},body:JSON.stringify({sessionId:"105c57",runId:"post-fix",hypothesisId:"B",location:"use-agent-live.ts:unreachable",message:"runtime unreachable",data:{prevRuns:prev.state?.runs.length??null,hadState:Boolean(prev.state)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        return { ...prev, asleep: false, waking: false, runtimeError: prev.runtimeError ?? "runtime не отвечает" };
+      });
     });
     source.onerror = () => {
       sseAlive.current = false;

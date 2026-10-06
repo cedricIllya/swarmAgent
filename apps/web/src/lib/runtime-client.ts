@@ -116,11 +116,21 @@ export class RuntimeClient {
     return this.call("DELETE", `/chats/${id}`);
   }
 
-  events(signal: AbortSignal): Promise<Response> {
-    return fetch(`${this.baseUrl}/events`, {
-      headers: { Authorization: `Bearer ${this.token}`, Accept: "text/event-stream" },
-      signal,
-    });
+  /** Таймаут только на ответ: сам поток живёт, пока его держит браузер. */
+  async events(signal: AbortSignal, headersTimeoutMs = 15_000): Promise<Response> {
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal.reason);
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(() => controller.abort(new Error(`нет ответа за ${headersTimeoutMs / 1000}с`)), headersTimeoutMs);
+    try {
+      return await fetch(`${this.baseUrl}/events`, {
+        headers: { Authorization: `Bearer ${this.token}`, Accept: "text/event-stream" },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   updateSettings(body: UpdateSettingsRequest): Promise<{ ok: boolean }> {

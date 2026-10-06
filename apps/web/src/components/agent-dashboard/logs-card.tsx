@@ -237,8 +237,24 @@ function RunItem({
 
   async function load() {
     if (run.id.startsWith("local_")) return;
-    const res = await fetch(`/api/agents/${agent.id}/runs/${run.id}`);
-    if (res.ok) setLoaded(((await res.json()) as { steps: RunStep[] }).steps);
+    try {
+      const res = await fetch(`/api/agents/${agent.id}/runs/${run.id}`);
+      if (!res.ok) {
+        // #region agent log
+        fetch("http://127.0.0.1:7513/ingest/c400658e-f748-4bbd-a80b-12efc8082a6f",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"105c57"},body:JSON.stringify({sessionId:"105c57",runId:"pre",hypothesisId:"D",location:"logs-card.tsx:load",message:"run steps failed",data:{status:res.status,runStatus:run.status},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        return;
+      }
+      const steps = ((await res.json()) as { steps: RunStep[] }).steps;
+      setLoaded(steps);
+      // #region agent log
+      fetch("http://127.0.0.1:7513/ingest/c400658e-f748-4bbd-a80b-12efc8082a6f",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"105c57"},body:JSON.stringify({sessionId:"105c57",runId:"pre",hypothesisId:"D",location:"logs-card.tsx:load",message:"run steps loaded",data:{status:res.status,runStatus:run.status,steps:steps.length,liveSteps:liveSteps.length},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+    } catch (e) {
+      // #region agent log
+      fetch("http://127.0.0.1:7513/ingest/c400658e-f748-4bbd-a80b-12efc8082a6f",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"105c57"},body:JSON.stringify({sessionId:"105c57",runId:"pre",hypothesisId:"D",location:"logs-card.tsx:load",message:"run steps threw",data:{error:String(e instanceof Error?e.message:e).slice(0,160),runStatus:run.status},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+    }
   }
 
   async function loadHistory() {

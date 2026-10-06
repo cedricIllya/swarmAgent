@@ -21,6 +21,7 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
   let runtimeError: string | null = null;
   let asleep = false;
   let waking = false;
+  let flyState: string | null = null;
   const client = RuntimeClient.for(agent);
   const wake = new URL(req.url).searchParams.get("wake") === "1";
   if (client && agent.status === "running") {
@@ -29,7 +30,7 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
         await awakeRuntime(agent, 45_000);
         state = await client.state();
       } else {
-        const flyState = await machineState(agent);
+        flyState = await machineState(agent);
         if (isAsleepState(flyState)) asleep = true;
         else if (isWakingState(flyState)) waking = true;
         else state = await client.state();
@@ -38,6 +39,9 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
       runtimeError = String(e instanceof Error ? e.message : e);
     }
   }
+  // #region agent log
+  if (runtimeError || asleep) console.log(`[debug-105c57] detail ${agent.id} wake=${wake} fly=${flyState} asleep=${asleep} error=${runtimeError?.slice(0, 160) ?? ""}`);
+  // #endregion
   return NextResponse.json({ agent: toAgentView(agent), state, runtimeError, asleep, waking });
 }
 
