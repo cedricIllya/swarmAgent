@@ -136,7 +136,7 @@ export class RuntimeClient {
   }
 
   resolveApproval(id: string, decision: { approved: boolean } | { answer: string }): Promise<{ runId: string }> {
-    return this.call("POST", `/approvals/${id}`, decision);
+    return this.call("POST", `/approvals/${id}`, decision, 30_000);
   }
 
   run(id: string): Promise<{ run: unknown; steps: unknown[] }> {

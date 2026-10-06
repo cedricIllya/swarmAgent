@@ -6,11 +6,24 @@ import { warn } from "../log";
 import { newId } from "./ids";
 import type { AgentRuntime } from "./index";
 
+/** Карточка снята и ответ человека записан. Ход модели ещё впереди. */
+interface AcceptedReply {
+  pending: PendingApproval;
+  run: Run;
+  chatId: string;
+  question: boolean;
+  handoff: boolean;
+  answer: string;
+}
+
 /**
  * Одобрение человеком: вопрос уходит письмом владельцу и карточкой в чат,
  * задача замирает в `waiting_approval`, а решение возвращает её модели.
  */
 export class Approvals {
+  /** Решение уже принято: повторный клик не запускает второй ход. */
+  private readonly inflight = new Set<string>();
+
   constructor(private readonly rt: AgentRuntime) {}
 
   async request(runId: string, description: string): Promise<{ approved: boolean; pending: PendingApproval | null }> {
@@ -134,51 +147,92 @@ export class Approvals {
   }
 
   async resolve(approvalId: string, approved: boolean, opts?: { announce?: boolean; answer?: string }): Promise<Run | null> {
+    const accepted = await this.accept(approvalId, approved, opts);
+    if (!accepted) return null;
+    return this.continueAfter(accepted, approved);
+  }
+
+  /**
+   * Снять карточку и записать ответ. Ход модели сюда не входит:
+   * журнал может ответить человеку, не дожидаясь продолжения.
+   */
+  async accept(approvalId: string, approved: boolean, opts?: { announce?: boolean; answer?: string }): Promise<AcceptedReply | null> {
+    if (this.inflight.has(approvalId)) return null;
+    this.inflight.add(approvalId);
     const { rt } = this;
-    const list = await rt.store.listApprovals();
-    const pending = list.find((p) => p.id === approvalId);
-    if (!pending) return null;
-    const question = pending.kind === "question";
-    const answer = opts?.answer?.trim() ?? "";
-    if (question && !answer) return null;
-    await rt.store.saveApprovals(list.filter((p) => p.id !== approvalId));
-    const run = await rt.store.getRun(pending.runId);
-    if (!run) return null;
-    const chatId = pending.chatId ?? (await rt.store.chats.ensureSystem()).id;
-    const handoff = pending.kind === "handoff";
-    if (opts?.announce !== false) {
-      await rt.addChat({
-        role: "user",
-        kind: "approval",
-        approvalId,
-        handoff,
-        ...(question ? {} : { decision: approved ? ("approved" as const) : ("rejected" as const) }),
-        text: question ? answer : handoff ? (approved ? "Я доделал" : "Отменить") : approved ? "Да" : "Нет",
-        runId: run.id,
-        chatId,
-      });
+    try {
+      const list = await rt.store.listApprovals();
+      const pending = list.find((p) => p.id === approvalId);
+      const question = pending?.kind === "question";
+      const answer = opts?.answer?.trim() ?? "";
+      if (!pending || (question && !answer)) {
+        this.inflight.delete(approvalId);
+        return null;
+      }
+      await rt.store.saveApprovals(list.filter((p) => p.id !== approvalId));
+      const run = await rt.store.getRun(pending.runId);
+      if (!run) {
+        this.inflight.delete(approvalId);
+        return null;
+      }
+      const chatId = pending.chatId ?? (await rt.store.chats.ensureSystem()).id;
+      const handoff = pending.kind === "handoff";
+      if (opts?.announce !== false) {
+        await rt.addChat({
+          role: "user",
+          kind: "approval",
+          approvalId,
+          handoff,
+          ...(question ? {} : { decision: approved ? ("approved" as const) : ("rejected" as const) }),
+          text: question ? answer : handoff ? (approved ? "Я доделал" : "Отменить") : approved ? "Да" : "Нет",
+          runId: run.id,
+          chatId,
+        });
+      }
+      return { pending, run, chatId, question: Boolean(question), handoff, answer };
+    } catch (e) {
+      this.inflight.delete(approvalId);
+      throw e;
     }
-    if (handoff) return rt.handoffs.resolve(pending, approved, chatId);
-    if (await rt.isCanceled(run.id)) return run;
-    run.status = "running";
-    await rt.store.saveRun(run);
-    await rt.step(run.id, "note", question ? "ответ человека получен" : approved ? "одобрено человеком" : "отклонено человеком");
-    const turn = await rt.think(
-      run,
-      question ? questionContinuationPrompt(pending.description, answer) : approvalContinuationPrompt(pending.description, approved),
-      question ? "hermes.question" : "hermes.approval",
-    );
-    // Отказ — делать в сервисе нечего; одобрение и ответ на вопрос — нужна реальная работа.
-    const { text, status } =
-      question || approved
-        ? await finishServiceThink(rt, run, turn, { allowIdle: false })
-        : { text: turn.text, status: "done" as const };
-    if (await rt.isCanceled(run.id)) return run;
-    if (status !== "waiting_approval") {
-      await rt.finishRun(run, status, text);
-      await rt.addChat({ role: "agent", text, runId: run.id, chatId });
+  }
+
+  /** Продолжить задачу после уже записанного ответа. Ошибка хода не отменяет сам ответ. */
+  async continueAfter(accepted: AcceptedReply, approved: boolean): Promise<Run> {
+    const { rt } = this;
+    const { pending, run, chatId, question, handoff, answer } = accepted;
+    try {
+      if (handoff) return await rt.handoffs.resolve(pending, approved, chatId);
+      if (await rt.isCanceled(run.id)) return run;
+      run.status = "running";
+      await rt.store.saveRun(run);
+      await rt.step(run.id, "note", question ? "ответ человека получен" : approved ? "одобрено человеком" : "отклонено человеком");
+      try {
+        const turn = await rt.think(
+          run,
+          question ? questionContinuationPrompt(pending.description, answer) : approvalContinuationPrompt(pending.description, approved),
+          question ? "hermes.question" : "hermes.approval",
+        );
+        // Отказ — делать в сервисе нечего; одобрение и ответ на вопрос — нужна реальная работа.
+        const { text, status } =
+          question || approved
+            ? await finishServiceThink(rt, run, turn, { allowIdle: false })
+            : { text: turn.text, status: "done" as const };
+        if (await rt.isCanceled(run.id)) return run;
+        if (status !== "waiting_approval") {
+          await rt.finishRun(run, status, text);
+          await rt.addChat({ role: "agent", text, runId: run.id, chatId });
+        }
+      } catch (e) {
+        if (await rt.isCanceled(run.id)) return run;
+        warn("approval", "продолжение упало", { error: String(e) });
+        await rt.step(run.id, "error", String(e));
+        await rt.finishRun(run, "failed", String(e));
+        await rt.addChat({ role: "agent", text: redactInternal(`Не получилось: ${String(e)}`), runId: run.id, chatId });
+      }
+      return run;
+    } finally {
+      this.inflight.delete(pending.id);
     }
-    return run;
   }
 
   /** Самое старое ожидание в ветке письма — то, на которое отвечают «да». */

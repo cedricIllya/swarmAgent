@@ -108,8 +108,14 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
       .parse(await c.req.json());
     const answer = body.answer?.trim() ?? "";
     if (!answer && typeof body.approved !== "boolean") return c.json({ error: "bad input" }, 400);
-    const run = await rt.approvals.resolve(c.req.param("id"), body.approved ?? true, answer ? { answer } : undefined);
-    return run ? c.json({ runId: run.id, status: run.status }) : c.json({ error: "not found" }, 404);
+    const accepted = await rt.approvals.accept(c.req.param("id"), body.approved ?? true, answer ? { answer } : undefined);
+    if (!accepted) return c.json({ error: "not found" }, 404);
+    // Ход модели длинный. Ответ человеку уже записан — продолжение не держит запрос,
+    // иначе клиент обрывает его по таймауту и показывает «не удалось отправить».
+    void rt.approvals.continueAfter(accepted, body.approved ?? true).catch((e) => {
+      warn("approval", "продолжение после ответа упало", { error: String(e) });
+    });
+    return c.json({ runId: accepted.run.id, status: "running" }, 202);
   });
 
   app.post("/tick", async (c) => {
