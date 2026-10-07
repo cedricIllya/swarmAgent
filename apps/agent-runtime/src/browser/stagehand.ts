@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -108,6 +108,33 @@ export async function settlePage(page: SettlePage, opts: { network: boolean; bud
     if (Date.now() >= until) return;
     await page.waitForTimeout(TEXT_POLL_MS);
   }
+}
+
+/** Закрытие Stagehand зависло: процесс Chromium с этим профилем ещё жив и держит единственное ядро. */
+function killProfileBrowser(profile: string): number {
+  let n = 0;
+  let pids: string[] = [];
+  try {
+    pids = readdirSync("/proc").filter((name) => /^\d+$/.test(name));
+  } catch {
+    return 0;
+  }
+  for (const pid of pids) {
+    let cmd = "";
+    try {
+      cmd = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    } catch {
+      continue;
+    }
+    if (!cmd.includes(profile)) continue;
+    try {
+      process.kill(Number(pid), "SIGKILL");
+      n += 1;
+    } catch {
+      // уже завершился
+    }
+  }
+  return n;
 }
 
 async function withTimeout<T>(what: string, ms: number, p: Promise<T>): Promise<T> {
@@ -480,15 +507,23 @@ export class ManagedBrowserSession {
       this.waiter.resolve({ kind: "code", value: "" });
     }
     // Зависший шаг не должен держать и закрытие: иначе остановка задачи никогда не завершится.
+    let stuck = false;
     try {
       if (this.stagehand) await withTimeout("stagehand.close", CLOSE_TIMEOUT_MS, this.stagehand.close());
     } catch (e) {
+      stuck = true;
       warn("browser", "stagehand.close", { error: String(e) });
     }
     try {
       if (this.browser) await withTimeout("browser.close", CLOSE_TIMEOUT_MS, this.browser.close());
     } catch {
-      // процесс Chrome уже мог завершиться
+      stuck = true;
+    }
+    if (stuck) {
+      const killed = killProfileBrowser(this.profile);
+      // #region agent log
+      console.log(`[debug-105c57] killed stuck chromium ${this.id} n=${killed}`);
+      // #endregion
     }
     this.releaseProfile?.();
     this.releaseProfile = null;
