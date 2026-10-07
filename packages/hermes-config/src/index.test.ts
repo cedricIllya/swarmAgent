@@ -1,6 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { renderAllFiles, renderConfigYaml, replaceMcpServers } from "./index";
+import { OPENROUTER_USAGE_PROXY, renderAllFiles, renderConfigYaml, replaceMcpServers, useOpenRouterUsageProxy } from "./index";
+
+describe("useOpenRouterUsageProxy", () => {
+  it("перенаправляет уже записанный config.yaml на прокси стоимости и второй раз не переписывает", () => {
+    const yaml = renderConfigYaml({
+      agentId: "agt_1",
+      agentName: "Ops",
+      email: "ops@agents.test",
+      model: "m",
+      autonomous: false,
+      skyvern: { enabled: false },
+      services: { generatedAt: "t", recipes: [], credentials: [] },
+    }).replace(OPENROUTER_USAGE_PROXY, "https://openrouter.ai/api/v1");
+    const next = useOpenRouterUsageProxy(yaml);
+    expect((parse(next) as { model: { base_url: string } }).model.base_url).toBe(OPENROUTER_USAGE_PROXY);
+    expect(useOpenRouterUsageProxy(next)).toBe(next);
+  });
+});
 
 describe("renderConfigYaml", () => {
   it("puts openrouter model and mcp servers with tenant token", () => {
@@ -38,6 +55,7 @@ describe("renderConfigYaml", () => {
     };
     expect(doc.model.provider).toBe("openrouter");
     expect(doc.model.default).toBe("anthropic/claude-sonnet-4");
+    expect((doc.model as { base_url?: string }).base_url).toBe(OPENROUTER_USAGE_PROXY);
     expect(doc.mcp_servers["skyvern"]).toBeUndefined();
     expect(doc.mcp_servers["linear"]?.url).toBe("https://mcp.linear.app/mcp");
     expect(doc.mcp_servers["linear"]?.headers?.["Authorization"]).toBe("Bearer lin_xxx");

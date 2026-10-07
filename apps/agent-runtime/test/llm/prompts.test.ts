@@ -227,4 +227,76 @@ describe("tick only opens services that have assigned work", () => {
     expect(shown).toContain("Канал связи, как почта и чат.");
     expect(shown).not.toMatch(/Slack[\s\S]*Задачи: смотреть/);
   });
+
+  it("не просит искать список, если страница задач уже сохранена", () => {
+    const withTrello = {
+      ...services,
+      recipes: [
+        ...services.recipes,
+        {
+          slug: "trello",
+          name: "Trello",
+          kind: "browser" as const,
+          domains: ["trello.com"],
+          notes: "Как работать: карточки на доске.",
+          discoveredBy: null,
+          watchesTasks: true,
+          browser: { loginUrl: "https://trello.com/login", appUrl: "https://trello.com/" },
+        },
+      ],
+      credentials: [
+        ...services.credentials,
+        { slug: "trello", kind: "browser" as const, tasksUrl: "https://trello.com/u/me/cards", password: "pw" },
+      ],
+    };
+    const text = tickPrompt(withTrello);
+    expect(text).toContain("Linear");
+    expect(text).not.toContain("trello, browser");
+    expect(text).toMatch(/runtime откроет её сам: Trello/);
+    expect(text).not.toMatch(/В браузере эти сервисы не ищи[\s\S]*trello, browser/);
+    const shown = systemPrompt({
+      agentName: "Бот",
+      email: "bot@example.com",
+      ownerEmail: null,
+      autonomous: true,
+      runtimePort: 8787,
+      services: withTrello,
+    });
+    expect(shown).toContain("Страница задач: https://trello.com/u/me/cards");
+  });
+
+  it("asks to remember an API list once and then skips that service", () => {
+    const api = {
+      generatedAt: "t",
+      recipes: [
+        {
+          slug: "linear",
+          name: "Linear",
+          kind: "api" as const,
+          domains: ["linear.app"],
+          notes: "",
+          discoveredBy: null,
+          watchesTasks: true,
+          api: { baseUrl: "https://api.linear.app", auth: "bearer" as const, authHeader: "Authorization" },
+        },
+      ],
+      credentials: [{ slug: "linear", kind: "api" as const, token: "lin" }],
+    };
+    expect(tickPrompt(api)).toMatch(/Для API или MCP/);
+    const remembered = {
+      ...api,
+      credentials: [
+        {
+          slug: "linear",
+          kind: "api" as const,
+          token: "lin",
+          tasksCall: { kind: "api" as const, method: "GET" as const, url: "https://api.linear.app/issues" },
+        },
+      ],
+    };
+    const text = tickPrompt(remembered);
+    expect(text).toMatch(/runtime выполнит его сам: Linear/);
+    expect(text).not.toMatch(/Для API или MCP/);
+    expect(text).toContain("сервисов с задачами нет");
+  });
 });

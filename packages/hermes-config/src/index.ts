@@ -4,6 +4,8 @@ import { Document, parse, Scalar } from "yaml";
 /** Где на машине агента живёт всё его состояние. */
 export const HERMES_HOME = "/opt/data";
 export const RUNTIME_PORT = 8787;
+/** Hermes шлёт вызовы модели сюда, runtime пишет `usage.cost` OpenRouter. */
+export const OPENROUTER_USAGE_PROXY = `http://127.0.0.1:${RUNTIME_PORT}/openrouter/v1`;
 
 export interface HermesConfigInput {
   agentId: string;
@@ -65,6 +67,17 @@ export function replaceMcpServers(configYaml: string, services: ServicesSnapshot
   return configYamlText(next);
 }
 
+/** Уже выписанный config.yaml: модель Hermes идёт в локальный прокси стоимости. */
+export function useOpenRouterUsageProxy(configYaml: string): string {
+  const doc = parse(configYaml);
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return configYaml;
+  const model = (doc as Record<string, unknown>)["model"];
+  if (!model || typeof model !== "object" || Array.isArray(model)) return configYaml;
+  if ((model as Record<string, unknown>)["base_url"] === OPENROUTER_USAGE_PROXY) return configYaml;
+  (model as Record<string, unknown>)["base_url"] = OPENROUTER_USAGE_PROXY;
+  return configYamlText(doc as Record<string, unknown>);
+}
+
 /**
  * Hermes читает YAML как 1.1: голое `off` для него — булево false, и режим одобрений
  * слетает в значение по умолчанию. Строковые режимы пишем в кавычках.
@@ -84,17 +97,18 @@ function configYamlText(doc: Record<string, unknown>): string {
 /**
  * `config.yaml` Hermes: провайдер OpenRouter, модель агента, MCP-серверы из
  * общего каталога с секретами тенанта.
+ * `max_turns` — 20: более длинный ход копит ответы инструментов в промпт.
  */
 export function renderConfigYaml(input: HermesConfigInput): string {
   const doc = {
     model: {
       provider: "openrouter",
       default: input.model,
-      base_url: "https://openrouter.ai/api/v1",
+      base_url: OPENROUTER_USAGE_PROXY,
     },
     agent: {
       name: input.agentName,
-      max_turns: 60,
+      max_turns: 20,
     },
     display: { show_reasoning: false },
     memory: { enabled: true },

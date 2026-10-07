@@ -96,4 +96,25 @@ describe("holdWork", () => {
     });
     expect(linear.ok).toBe(true);
   });
+
+  it("treats a bare id and a link to the same card as one task", async () => {
+    const { rt, runs, steps } = runtime();
+    runs.set("run_old", run("run_old", "pneumatic: First Step"));
+    steps.set("run_old", [
+      {
+        at: "t",
+        kind: "note",
+        text: "карточка",
+        data: { service: "pneumatic", workMarks: ["card:pneumatic:198035"] },
+      },
+    ]);
+    const again = await holdWork(rt, {
+      service: "pneumatic",
+      title: "Sep 18, 2026 — New Template",
+      texts: ["summary статьи"],
+      key: "https://my.pneumatic.app/tasks/198035",
+      broad: false,
+    });
+    expect(again).toMatchObject({ ok: false, runId: "run_old" });
+  });
 });

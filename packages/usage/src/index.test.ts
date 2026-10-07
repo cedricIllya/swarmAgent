@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseOpenRouterUsage, parseUsageJsonl, summarizeUsage } from "./index";
+import { openRouterCostUsd, parseOpenRouterUsage, parseUsageJsonl, summarizeUsage } from "./index";
 
 describe("usage", () => {
   it("parses openrouter usage", () => {
@@ -9,6 +9,23 @@ describe("usage", () => {
       costUsd: 0.001,
     });
     expect(parseOpenRouterUsage(null)).toEqual({ promptTokens: 0, completionTokens: 0, costUsd: 0 });
+  });
+
+  it("берёт списание OpenRouter, а не оценку upstream, когда пришли оба", () => {
+    expect(
+      openRouterCostUsd({
+        usage: { cost: 1.5, cost_details: { upstream_inference_cost: 1.2 } },
+      }),
+    ).toBe(1.5);
+    expect(openRouterCostUsd({ usage: { prompt_tokens: 4, cost_details: { upstream_inference_cost: 0.4 } } })).toBe(0.4);
+    expect(openRouterCostUsd({ usage: { cost: 0 } })).toBe(0);
+    expect(openRouterCostUsd({ id: "gen-1", usage: { prompt_tokens: 8 } })).toBeNull();
+    expect(openRouterCostUsd({ data: { total_cost: 2.25, tokens_prompt: 9, tokens_completion: 3 } })).toBe(2.25);
+    expect(parseOpenRouterUsage({ data: { total_cost: 2.25, tokens_prompt: 9, tokens_completion: 3 } })).toEqual({
+      promptTokens: 9,
+      completionTokens: 3,
+      costUsd: 2.25,
+    });
   });
 
   it("aggregates by task and action", () => {

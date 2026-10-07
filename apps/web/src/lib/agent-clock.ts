@@ -1,4 +1,4 @@
-import { getAgentById } from "@swarm/agents";
+import { getAgentById, rememberTickQuiet } from "@swarm/agents";
 import { agentIdsWithCredentials } from "@swarm/connections";
 import { eq, schema } from "@swarm/db";
 import { rolloutAgents } from "@/lib/agent-rollout";
@@ -50,18 +50,29 @@ async function runTicks(): Promise<void> {
     await runReconcile();
     await runRollout();
     const database = db();
+    const now = Date.now();
     const [agents, withCreds] = await Promise.all([
-      database.select({ id: schema.agents.id }).from(schema.agents).where(eq(schema.agents.status, "running")),
+      database
+        .select({ id: schema.agents.id, tickQuietUntil: schema.agents.tickQuietUntil })
+        .from(schema.agents)
+        .where(eq(schema.agents.status, "running")),
       agentIdsWithCredentials(database),
     ]);
     for (const row of agents) {
       if (!withCreds.has(row.id)) continue;
+      if (row.tickQuietUntil && row.tickQuietUntil.getTime() > now) continue;
       try {
         const agent = await getAgentById(database, row.id);
         if (!agent) continue;
         const client = await awakeRuntime(agent, 15_000);
         if (!client) continue;
-        await client.tick();
+        const result = await client.tick();
+        if (result.quiet === "until" && result.quietUntil) {
+          const until = new Date(result.quietUntil);
+          if (!Number.isNaN(until.getTime())) await rememberTickQuiet(database, row.id, until);
+        } else if (result.quiet === "clear" && row.tickQuietUntil) {
+          await rememberTickQuiet(database, row.id, null);
+        }
       } catch (e) {
         console.warn(`[clock] ${row.id}: ${e instanceof Error ? e.message : String(e)}`);
       }

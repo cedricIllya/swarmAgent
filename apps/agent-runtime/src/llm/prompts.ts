@@ -1,5 +1,6 @@
 import { isMessengerRecipe, type InboundEmail, type ServicesSnapshot } from "@swarm/contracts";
 import { programmedChannel } from "../browser/access-mode";
+import { splitTaskSurvey, usesBrowser } from "../tasks/watch-page";
 import type { DiscoveryResult } from "../discovery";
 import type { OnboardingContext, SecretNeed } from "../onboarding";
 
@@ -226,6 +227,9 @@ function recipeLines(r: PromptRecipe, cred: PromptCredential | undefined): strin
   if (r.browser && !locked) {
     detail.push(`  Браузер: приложение ${r.browser.appUrl}, вход ${r.browser.loginUrl}`);
   }
+  if (cred?.tasksUrl && !locked) {
+    detail.push(`  Страница задач: ${cred.tasksUrl}. Плановая проверка открывает только её.`);
+  }
   if (cred) {
     const stored = [
       cred.accountEmail && cred.password ? "почта и пароль" : null,
@@ -443,24 +447,41 @@ export function taskServices(services: ServicesSnapshot): ServicesSnapshot["reci
 }
 
 export function tickPrompt(services: ServicesSnapshot): string {
-  const list = taskServices(services)
+  const { saved, calls, rest } = splitTaskSurvey(services);
+  const list = rest
     .map((r) => {
       const cred = services.credentials.find((item) => item.slug === r.slug);
       const mode = programmedChannel(r, cred) ?? cred?.kind ?? r.kind;
       return `- ${r.name} (${r.slug}, ${mode})`;
     })
     .join("\n");
+  const needsPage = rest.some((recipe) => usesBrowser(recipe, services.credentials.find((item) => item.slug === recipe.slug)));
+  const needsCall = rest.some((recipe) => programmedChannel(recipe, services.credentials.find((item) => item.slug === recipe.slug)) !== null);
   return [
     "Плановая проверка раз в 15 минут.",
     "Пройди только по этим сервисам и найди задачи, назначенные на тебя или упоминающие тебя:",
     list || "- сервисов с задачами нет",
     "Другие подключённые сервисы не открывай: они не для задач.",
+    saved.length
+      ? `Страница списка уже сохранена, runtime откроет её сам: ${saved.map((item) => item.recipe.name).join(", ")}. В браузере эти сервисы не ищи.`
+      : "",
+    calls.length
+      ? `Вызов списка уже запомнен, runtime выполнит его сам: ${calls.map((item) => item.recipe.name).join(", ")}. Эти сервисы не открывай.`
+      : "",
+    needsPage
+      ? "Для способа browser без сохранённой страницы дойди до списка назначенных тебе задач и один раз вызови POST /tasks/watch с runId и service. url не передавай: runtime возьмёт адрес открытой вкладки. Вход, корень сайта и страница без списка не сохраняются, уже записанный адрес не меняется. Задачи с этой страницы runtime заберёт сам — /tasks/found для них не вызывай."
+      : "",
+    needsCall
+      ? "Для API или MCP без запомненного вызова один раз вызови POST /tasks/watch с runId и service. API: method и url (GET или POST, body если нужен). MCP: tool и arguments. Токен не пиши. Уже записанный вызов не меняется. Задачи из ответа runtime заберёт сам — /tasks/found для них не вызывай."
+      : "",
     "Только чтение. Не выполняй задачи и ничего не меняй. Пустой список пометку не снимает и сервис из обхода не убирает.",
     "Как только нашёл задачу — сразу поставь её в работу и смотри дальше, не копи до конца:",
     'curl -s -X POST http://127.0.0.1:8787/tasks/found -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" -H "Content-Type: application/json" -d \'{"runId":"<runId>","service":"slug","title":"как задача называется","detail":"что сделать и где она лежит","key":"LIN-12 или ссылка на карточку"}\'',
     "В key положи ключ задачи или ссылку на карточку, если они есть. Та же метка уже могла прийти письмом: runtime не начнёт её второй раз, пока первая не закрыта.",
     "Ответ {\"started\":false} значит задача уже идёт — не делай её в этой проверке. {\"started\":true} значит отдельная задача уже выполняется. В конце перечисли поставленные названия. Ничего не нашёл — ответь одним словом: пусто.",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** Повтор проверки, если в журнале нет чтения сервиса. */
@@ -468,6 +489,8 @@ export const TICK_RETRY_PROMPT = [
   "В журнале этой проверки нет вызовов сервиса.",
   "Посмотри задачи в перечисленных сервисах. Не выполняй их и ничего не меняй.",
   "Каждую найденную сразу отправь POST /tasks/found с runId этой проверки, service, title, detail и key (ключ или ссылка, если они есть) — runtime начнёт её отдельной задачей.",
+  "Для способа browser без сохранённой страницы: открой список назначенных задач и вызови POST /tasks/watch с runId и service. Задачи с этой страницы runtime заберёт сам.",
+  "Для API или MCP без запомненного вызова: POST /tasks/watch с method и url либо с tool и arguments. Токен не пиши. Задачи из ответа runtime заберёт сам.",
   "Ничего не нашёл — ответь одним словом: пусто.",
 ].join(" ");
 

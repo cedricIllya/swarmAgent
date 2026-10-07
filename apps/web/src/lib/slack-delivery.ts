@@ -1,5 +1,5 @@
 import type { DeliverSlackEventRequest } from "@swarm/contracts";
-import { getAgentById } from "@swarm/agents";
+import { getAgentById, rememberTickQuiet } from "@swarm/agents";
 import { deleteCredential, findSlackInstall } from "@swarm/connections";
 import { db } from "@/lib/db";
 import { pushServicesToAgent } from "@/lib/create-agent";
@@ -51,6 +51,7 @@ const queue = createQueue();
 /** `true` — runtime событие принял, повторил или отбросил как чужое. */
 export async function deliverSlack(agentId: string, event: DeliverSlackEventRequest): Promise<boolean> {
   const agent = await getAgentById(db(), agentId);
+  await rememberTickQuiet(db(), agentId, null).catch(() => undefined);
   if (!agent || agent.status !== "running") {
     console.warn(`[slack] агент ${agentId} не запущен (${agent?.status ?? "нет"}); событие ${event.eventId} подождёт`);
     return false;

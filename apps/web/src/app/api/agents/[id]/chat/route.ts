@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ChatRequestSchema } from "@swarm/contracts";
-import { getAgent } from "@swarm/agents";
+import { getAgent, rememberTickQuiet } from "@swarm/agents";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
 import { awakeRuntime } from "@/lib/runtime-client";
@@ -14,6 +14,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!agent) return NextResponse.json({ error: "not found" }, { status: 404 });
   const body = ChatRequestSchema.pick({ message: true, chatId: true }).safeParse(await req.json().catch(() => null));
   if (!body.success) return NextResponse.json({ error: "bad input" }, { status: 400 });
+  await rememberTickQuiet(db(), agent.id, null).catch(() => undefined);
   const client = await awakeRuntime(agent);
   if (!client) {
     return NextResponse.json({ error: t("errors.agentNotStarted") }, { status: 409 });

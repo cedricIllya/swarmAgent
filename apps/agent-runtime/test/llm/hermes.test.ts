@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { LlmCostLedger } from "../../src/llm/cost-ledger";
 import { HermesClient, hermesSessionCostUsd, stripToolMarkup } from "../../src/llm/hermes";
 import type { OpenRouterClient } from "../../src/llm/openrouter";
 
@@ -88,6 +89,34 @@ describe("HermesClient cost", () => {
     expect(r.costUsd).toBe(0.37);
     expect(r.usedFallback).toBe(false);
     expect(String(fetchImpl.mock.calls[1]?.[0])).toBe("http://127.0.0.1:8642/api/sessions/api-abc");
+  });
+
+  it("adds provider cost from a failed Hermes attempt to the fallback", async () => {
+    const ledger = new LlmCostLedger();
+    const fallback = {
+      chat: vi.fn(async () => ({
+        text: "без инструментов",
+        promptTokens: 1,
+        completionTokens: 1,
+        costUsd: 0.5,
+        model: "m",
+        citations: [],
+      })),
+    } as unknown as OpenRouterClient;
+    const c = new HermesClient({
+      apiUrl: "http://127.0.0.1:8642/v1",
+      apiKey: "rt",
+      fallback,
+      fetchImpl: vi.fn(async () => {
+        ledger.note(3);
+        throw new Error("ECONNREFUSED");
+      }) as unknown as typeof fetch,
+      readyWaitMs: 0,
+      costs: ledger,
+    });
+    const r = await c.run("привет", { sessionId: "run_1", model: "m" });
+    expect(r.usedFallback).toBe(true);
+    expect(r.costUsd).toBeCloseTo(3.5);
   });
 
   it("marks OpenRouter fallback when Hermes is down", async () => {
@@ -196,6 +225,33 @@ describe("HermesClient cost", () => {
     const r = await client(fetchImpl as unknown as typeof fetch).run("a", { sessionId: "s", model: "m" });
     expect(r.promptTokens).toBe(2_000_000);
     expect(r.costUsd).toBe(95.8);
+  });
+
+  it("берёт сумму usage.cost за ход, а не оценку сессии", async () => {
+    const ledger = new LlmCostLedger();
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).endsWith("/chat/completions")) {
+        ledger.note(2.4);
+        ledger.note(11.6);
+        return json(
+          { choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 24_000_000, completion_tokens: 10 } },
+          200,
+          { "X-Hermes-Session-Id": "api-billed" },
+        );
+      }
+      return json({ session: { estimated_cost_usd: 4, actual_cost_usd: 0 } });
+    });
+    const fallback = { chat: vi.fn() } as unknown as OpenRouterClient;
+    const c = new HermesClient({
+      apiUrl: "http://127.0.0.1:8642/v1",
+      apiKey: "rt",
+      fallback,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      costs: ledger,
+    });
+    const r = await c.run("a", { sessionId: "s", model: "m" });
+    expect(r.costUsd).toBeCloseTo(14);
+    expect(r.promptTokens).toBe(24_000_000);
   });
 
   it("keeps a cost already present on the completion", async () => {

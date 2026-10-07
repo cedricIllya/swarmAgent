@@ -194,6 +194,30 @@ export const ServiceCredentialSchema = z.object({
    * У Slack это id команды. В шифрованное тело не кладётся — только в колонку.
    */
   externalKey: z.string().min(1).max(64).optional(),
+  /**
+   * Страница списка назначенных задач этого аккаунта.
+   * Плановая проверка открывает её сразу и не ищет список по меню.
+   */
+  tasksUrl: z.string().url().optional(),
+  /**
+   * Отпечаток прошлого списка. Пока текст страницы или ответ вызова тот же,
+   * плановая проверка не зовёт модель.
+   */
+  tasksDigest: z.string().min(16).max(128).optional(),
+  /**
+   * Вызов, которым читается список задач API или MCP.
+   * Секрет в него не кладётся: токен runtime подставляет сам.
+   */
+  tasksCall: z
+    .object({
+      kind: z.enum(["api", "mcp"]),
+      method: z.enum(["GET", "POST"]).optional(),
+      url: z.string().url().optional(),
+      body: z.string().max(4000).optional(),
+      tool: z.string().max(120).optional(),
+      arguments: z.record(z.string(), z.unknown()).optional(),
+    })
+    .optional(),
 });
 
 export type ServiceCredential = z.infer<typeof ServiceCredentialSchema>;
@@ -214,6 +238,9 @@ export function mergeCredential(prev: ServiceCredential | undefined, next: Servi
     accountName: next.accountName ?? prev.accountName,
     password: next.password ?? prev.password,
     externalKey: next.externalKey ?? prev.externalKey,
+    tasksUrl: next.tasksUrl || prev.tasksUrl,
+    tasksDigest: next.tasksDigest || prev.tasksDigest,
+    tasksCall: next.tasksCall ?? prev.tasksCall,
   });
 }
 

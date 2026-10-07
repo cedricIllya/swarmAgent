@@ -1,5 +1,5 @@
 import type { InboundEmail } from "@swarm/contracts";
-import { getAgentById } from "@swarm/agents";
+import { getAgentById, rememberTickQuiet } from "@swarm/agents";
 import { db } from "@/lib/db";
 import { awakeRuntime } from "@/lib/runtime-client";
 import { inboundMail } from "@/lib/undelivered-mail";
@@ -14,6 +14,7 @@ export const EMAIL_WAKE_MS = 180_000;
 /** `true` — runtime письмо принял. */
 export async function deliverInbound(agentId: string, email: InboundEmail): Promise<boolean> {
   const agent = await getAgentById(db(), agentId);
+  await rememberTickQuiet(db(), agentId, null).catch(() => undefined);
   if (!agent || agent.status !== "running") {
     console.warn(`[mail] агент ${agentId} не запущен (${agent?.status ?? "нет"}); письмо «${email.subject}» подождёт`);
     return false;

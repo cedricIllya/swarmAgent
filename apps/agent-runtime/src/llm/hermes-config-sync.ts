@@ -1,7 +1,7 @@
 import { chmod, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ServicesSnapshot } from "@swarm/contracts";
-import { replaceMcpServers } from "@swarm/hermes-config";
+import { replaceMcpServers, useOpenRouterUsageProxy } from "@swarm/hermes-config";
 import { warn } from "../core/log";
 
 /**
@@ -9,6 +9,15 @@ import { warn } from "../core/log";
  * и подключает новые серверы без рестарта машины.
  */
 export async function syncHermesMcp(dataDir: string, services: ServicesSnapshot, skyvernEnabled: boolean): Promise<void> {
+  await rewriteHermesConfig(dataDir, (current) => useOpenRouterUsageProxy(replaceMcpServers(current, services, skyvernEnabled)));
+}
+
+/** До старта Hermes: его вызовы модели идут в локальный прокси, даже если config.yaml старый. */
+export async function ensureOpenRouterUsageProxy(dataDir: string): Promise<void> {
+  await rewriteHermesConfig(dataDir, useOpenRouterUsageProxy);
+}
+
+async function rewriteHermesConfig(dataDir: string, edit: (current: string) => string): Promise<void> {
   const file = path.join(dataDir, "config.yaml");
   let current: string;
   try {
@@ -18,9 +27,9 @@ export async function syncHermesMcp(dataDir: string, services: ServicesSnapshot,
   }
   let next: string;
   try {
-    next = replaceMcpServers(current, services, skyvernEnabled);
+    next = edit(current);
   } catch (e) {
-    warn("hermes-config", "config.yaml не разобран, MCP не обновлён", { error: String(e) });
+    warn("hermes-config", "config.yaml не разобран", { error: String(e) });
     return;
   }
   if (next === current) return;

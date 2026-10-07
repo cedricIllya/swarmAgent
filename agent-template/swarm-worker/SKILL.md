@@ -259,6 +259,33 @@ curl -s -X POST http://127.0.0.1:8787/tasks/found -H "Authorization: Bearer $SWA
 
 Не копи найденное до конца проверки. Нет задач — ответь «пусто». Почту не проверяй: она приходит сама.
 
+Сервис со способом browser и уже сохранённой страницей списка в этот список не входит: runtime открывает её сам.
+Если страницы ещё нет, дойди до списка назначенных тебе задач и один раз вызови:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/tasks/watch -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"runId":"<runId>","service":"example"}'
+# → {"saved":true,"url":"https://…","tasks":1} — адрес записан, найденные задачи уже запущены
+# → {"saved":false,"url":"https://…","tasks":0} — адрес уже был, повторно не пишется
+```
+
+`url` не передавай: runtime берёт адрес открытой вкладки этого сервиса. Вход, корень сайта, чужой домен
+и страница, с которой список не читается, не сохраняются. Для задач с этой страницы `/tasks/found` не вызывай.
+Пока текст страницы тот же, модель её больше не читает.
+
+Для API и MCP без запомненного вызова один раз передай сам запрос, без токена:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/tasks/watch -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"runId":"<runId>","service":"example","method":"GET","url":"https://api.example.com/v1/issues?assignee=me"}'
+# MCP: {"runId":"<runId>","service":"example","tool":"list_issues","arguments":{}}
+```
+
+Runtime повторяет этот вызов сам. Модель разбирает ответ только когда он изменился.
+`/tasks/found` для этих задач не вызывай.
+
 ## 8. Память
 
 Если в заметках рецепта уже есть «Как работать», начинай с этой карты: там объекты, где лежит

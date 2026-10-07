@@ -1,5 +1,6 @@
 import { parseOpenRouterUsage } from "@swarm/usage";
 import type { OpenRouterClient, ChatResult } from "./openrouter";
+import type { LlmCostLedger } from "./cost-ledger";
 import { warn } from "../core/log";
 
 export interface HermesClientOptions {
@@ -9,24 +10,41 @@ export interface HermesClientOptions {
   fetchImpl?: typeof fetch;
   /** Сколько ждать поднятия api_server после рестарта, прежде чем ответить без инструментов. */
   readyWaitMs?: number;
+  /** Фактические `usage.cost` вызовов OpenRouter за время хода. */
+  costs?: LlmCostLedger;
+}
+
+export interface HermesSessionSpend {
+  usd: number;
+  /** `actual` — сверка с провайдером, `estimated` — прайс Hermes, пока сверки нет. */
+  source: "actual" | "estimated" | "none";
 }
 
 /**
- * Сумма, которую Hermes записал в сессию. `actual_cost_usd` появляется после
- * сверки с провайдером; пока её нет, берём оценку `estimated_cost_usd`.
- * В `/v1/chat/completions` этих полей нет: там только токены.
- * `GET /api/sessions/:id` отдаёт их внутри `session`, старый ответ клал на корень.
+ * Сумма, которую Hermes записал в сессию.
+ * `GET /api/sessions/:id` отдаёт её внутри `session`, старый ответ клал на корень.
+ * Фактическое списание OpenRouter важнее оценки по прайсу.
  */
+export function hermesSessionSpend(body: {
+  actual_cost_usd?: unknown;
+  estimated_cost_usd?: unknown;
+  session?: { actual_cost_usd?: unknown; estimated_cost_usd?: unknown } | null;
+}): HermesSessionSpend {
+  const nested = body.session;
+  const session = nested && typeof nested === "object" ? nested : body;
+  const actual = positive(session.actual_cost_usd);
+  if (actual > 0) return { usd: actual, source: "actual" };
+  const estimated = positive(session.estimated_cost_usd);
+  if (estimated > 0) return { usd: estimated, source: "estimated" };
+  return { usd: 0, source: "none" };
+}
+
 export function hermesSessionCostUsd(body: {
   actual_cost_usd?: unknown;
   estimated_cost_usd?: unknown;
   session?: { actual_cost_usd?: unknown; estimated_cost_usd?: unknown } | null;
 }): number {
-  const nested = body.session;
-  const session = nested && typeof nested === "object" ? nested : body;
-  const actual = positive(session.actual_cost_usd);
-  if (actual > 0) return actual;
-  return positive(session.estimated_cost_usd);
+  return hermesSessionSpend(body).usd;
 }
 
 /**
@@ -92,6 +110,14 @@ export class HermesClient {
     prompt: string,
     args: { sessionId: string; system?: string; model: string; signal?: AbortSignal },
   ): Promise<ChatResult> {
+    const turnId = `${args.sessionId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+    this.opts.costs?.begin(turnId);
+    let closed = false;
+    const closeTurn = (): number => {
+      if (closed) return 0;
+      closed = true;
+      return this.opts.costs?.end(turnId) ?? 0;
+    };
     const timeout = AbortSignal.timeout(20 * 60 * 1000);
     const signal = args.signal ? AbortSignal.any([timeout, args.signal]) : timeout;
     const post = () =>
@@ -129,9 +155,8 @@ export class HermesClient {
       };
       const usage = parseOpenRouterUsage(json);
       const hermesSession = res.headers.get("x-hermes-session-id");
-      if (usage.costUsd <= 0 && hermesSession) {
-        usage.costUsd = await this.turnCostUsd(hermesSession);
-      }
+      const billed = closeTurn();
+      usage.costUsd = await this.resolveTurnCost(usage.costUsd, billed, hermesSession);
       return {
         text: stripToolMarkup(json.choices?.[0]?.message?.content ?? ""),
         model: json.model ?? args.model,
@@ -140,6 +165,7 @@ export class HermesClient {
         ...usage,
       };
     } catch (e) {
+      const billed = closeTurn();
       // Отмена пользователем — не уходим в OpenRouter без инструментов.
       if (args.signal?.aborted || (e instanceof Error && e.name === "AbortError")) throw e;
       warn("hermes", "api_server недоступен, отвечаем без инструментов", { error: String(e) });
@@ -151,8 +177,21 @@ export class HermesClient {
         {},
         args.model,
       );
-      return { ...fallback, usedFallback: true };
+      return { ...fallback, costUsd: fallback.costUsd + billed, usedFallback: true };
     }
+  }
+
+  /**
+   * Сумма `usage.cost` за ход. Если прокси ничего не увидел — стоимость этого
+   * ответа, а когда и её нет, прирост сессии Hermes (сначала фактическая, иначе оценка).
+   */
+  private async resolveTurnCost(completionUsd: number, billedUsd: number, sessionId: string | null): Promise<number> {
+    if (billedUsd > 0) {
+      if (sessionId) await this.rememberSession(sessionId);
+      return billedUsd;
+    }
+    if (completionUsd > 0 || !sessionId) return completionUsd;
+    return this.turnCostUsd(sessionId);
   }
 
   /**
@@ -160,20 +199,31 @@ export class HermesClient {
    * ронять уже полученный ответ и уводить задачу в fallback без инструментов.
    */
   private async turnCostUsd(sessionId: string): Promise<number> {
+    const total = await this.fetchSessionTotal(sessionId);
+    if (total == null) return 0;
+    const prev = this.sessionCostSeen.get(sessionId) ?? 0;
+    this.sessionCostSeen.set(sessionId, total);
+    return Math.max(0, total - prev);
+  }
+
+  /** Запомнить сумму сессии, чтобы следующая оценка не повторила уже записанный ход. */
+  private async rememberSession(sessionId: string): Promise<void> {
+    const total = await this.fetchSessionTotal(sessionId);
+    if (total != null && total > 0) this.sessionCostSeen.set(sessionId, total);
+  }
+
+  private async fetchSessionTotal(sessionId: string): Promise<number | null> {
     try {
       const origin = new URL(this.opts.apiUrl).origin;
       const res = await this.f(`${origin}/api/sessions/${encodeURIComponent(sessionId)}`, {
         headers: this.opts.apiKey ? { Authorization: `Bearer ${this.opts.apiKey}` } : {},
         signal: AbortSignal.timeout(10_000),
       });
-      if (!res.ok) return 0;
-      const total = hermesSessionCostUsd((await res.json()) as { actual_cost_usd?: unknown; estimated_cost_usd?: unknown });
-      const prev = this.sessionCostSeen.get(sessionId) ?? 0;
-      this.sessionCostSeen.set(sessionId, total);
-      return Math.max(0, total - prev);
+      if (!res.ok) return null;
+      return hermesSessionCostUsd((await res.json()) as { actual_cost_usd?: unknown; estimated_cost_usd?: unknown });
     } catch (e) {
       warn("hermes", "не удалось прочитать стоимость сессии", { error: String(e) });
-      return 0;
+      return null;
     }
   }
 }

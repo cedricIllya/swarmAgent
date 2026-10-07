@@ -1,5 +1,6 @@
 import type { UsageTotals } from "@swarm/contracts";
 import { tick } from "./cron";
+import { closeStalledRuns } from "./stall";
 import { closeAllStreams } from "../core/events";
 import type { AgentRuntime } from "../runtime";
 import { warn } from "../core/log";
@@ -42,6 +43,7 @@ async function usageTotals(rt: AgentRuntime): Promise<UsageTotals | undefined> {
 
 async function maybeSuspend(rt: AgentRuntime): Promise<void> {
   if (suspending) return;
+  await closeStalledRuns(rt);
   if (Date.now() - lastActivity < IDLE_MS) return;
   if (!(await machineIsIdle(rt))) return;
   if (await rt.store.hasDeferredEmails()) {

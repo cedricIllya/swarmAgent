@@ -11,6 +11,8 @@ import { resumeConnect } from "./onboarding";
 import { startTicker } from "./tasks/cron";
 import { startIdleWatch } from "./tasks/idle";
 import { controlPlaneRoutes } from "./http/control-plane-routes";
+import { proxyOpenRouter } from "./llm/openrouter-proxy";
+import { ensureOpenRouterUsageProxy } from "./llm/hermes-config-sync";
 import { browserRoutes } from "./http/browser-routes";
 import { toolRoutes } from "./http/tool-routes";
 import { log, warn } from "./core/log";
@@ -24,21 +26,28 @@ const rt = new AgentRuntime(cfg);
 rt.handoffs.useResume(resumeConnect);
 await rt.init();
 if (process.env.BOOTSTRAP_DIR) await applyBootstrap(process.env.BOOTSTRAP_DIR, cfg.dataDir);
+await ensureOpenRouterUsageProxy(cfg.dataDir);
 
 const app = new Hono();
 
-function tokenOk(header: string | undefined): boolean {
-  if (!header?.startsWith("Bearer ")) return false;
-  const a = Buffer.from(header.slice(7), "utf8");
-  const b = Buffer.from(cfg.runtimeToken, "utf8");
+function bearerMatches(header: string | undefined, secret: string): boolean {
+  if (!secret || !header?.startsWith("Bearer ")) return false;
+  const a = Buffer.from(header.slice("Bearer ".length), "utf8");
+  const b = Buffer.from(secret, "utf8");
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
 app.get("/health", (c) => c.json({ ok: true, agentId: cfg.agentId, busyInBrowser: rt.busyInBrowser }));
 
+// Hermes ходит в OpenRouter через runtime, чтобы стоимость бралась из usage.cost ответа.
+app.all("/openrouter/*", async (c) => {
+  if (!bearerMatches(c.req.header("authorization"), cfg.openRouterApiKey)) return c.json({ error: "unauthorized" }, 401);
+  return proxyOpenRouter(c.req.raw, rt.llmCosts);
+});
+
 app.use("*", async (c, next) => {
   if (c.req.path === "/health") return next();
-  if (!tokenOk(c.req.header("authorization"))) return c.json({ error: "unauthorized" }, 401);
+  if (!bearerMatches(c.req.header("authorization"), cfg.runtimeToken)) return c.json({ error: "unauthorized" }, 401);
   return next();
 });
 

@@ -1,6 +1,7 @@
 import type { BrowserSession, ChatMessage, Run, RunStep, RuntimeState } from "@swarm/contracts";
 import { emptyUsage } from "@swarm/usage";
 import { ControlPlaneClient } from "../core/control-plane";
+import { LlmCostLedger } from "../llm/cost-ledger";
 import { HermesClient } from "../llm/hermes";
 import { OpenRouterClient } from "../llm/openrouter";
 import { Store } from "../store";
@@ -43,6 +44,8 @@ export class AgentRuntime {
   readonly browser: BrowserControl;
   readonly services: ServiceCatalog;
   readonly research: Research;
+  /** Фактические списания OpenRouter, которые прокси увидел за ход Hermes. */
+  readonly llmCosts = new LlmCostLedger();
   model: string;
   autonomous: boolean;
   /** Abort текущих ходов Hermes по id задачи. */
@@ -56,7 +59,12 @@ export class AgentRuntime {
     this.model = cfg.model;
     this.autonomous = cfg.autonomous;
     this.openRouter = new OpenRouterClient(cfg.openRouterApiKey, cfg.model, fetch, { fallbackModels: [cfg.fallbackModel] });
-    this.hermes = new HermesClient({ apiUrl: cfg.hermesApiUrl, apiKey: cfg.hermesApiKey, fallback: this.openRouter });
+    this.hermes = new HermesClient({
+      apiUrl: cfg.hermesApiUrl,
+      apiKey: cfg.hermesApiKey,
+      fallback: this.openRouter,
+      costs: this.llmCosts,
+    });
     this.controlPlane = new ControlPlaneClient(cfg.controlPlaneUrl, cfg.agentId, cfg.runtimeToken);
     this.skyvern = cfg.skyvernApiKey ? new SkyvernClient(cfg.skyvernApiKey, this.store, cfg.email) : null;
     this.skyvern?.setMailboxReleaseHook(() => {
@@ -120,6 +128,7 @@ export class AgentRuntime {
     const current = (await this.store.getRun(run.id)) ?? run;
     // Отмена пользователем не должна быть перезаписана поздним finish из фоновой задачи.
     if (current.status === "canceled" && status !== "canceled") return;
+    if (current.status === "failed" && status !== "failed") return;
     run.status = status;
     run.summary = redactInternal(summary).slice(0, 2000);
     run.finishedAt = status === "waiting_approval" ? null : new Date().toISOString();
@@ -133,6 +142,11 @@ export class AgentRuntime {
   /** Задача ещё отменяема: идёт, в очереди или ждёт человека (одобрение либо «нужен человек»). */
   canCancel(run: Run): boolean {
     return run.status === "running" || run.status === "queued" || run.status === "waiting_approval" || run.status === "escalated";
+  }
+
+  /** Оборвать ход модели. Поздний finish не переписывает уже закрытую ошибкой задачу. */
+  abortRun(runId: string): void {
+    this.aborts.get(runId)?.abort();
   }
 
   async isCanceled(runId: string): Promise<boolean> {

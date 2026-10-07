@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Run, RunStep } from "@swarm/contracts";
+import type { Run, RunStep, ServicesSnapshot } from "@swarm/contracts";
 import { acceptFoundTask, tick } from "../../src/tasks/cron";
+import { pageDigest } from "../../src/tasks/watch-page";
 import type { AgentRuntime } from "../../src/runtime";
 
 const services = {
@@ -19,7 +20,14 @@ const services = {
   credentials: [{ slug: "linear", kind: "mcp" as const, token: "lin" }],
 };
 
-function runtime(opts?: { reply?: string; open?: Run[]; openSteps?: Record<string, RunStep[]>; report?: boolean }) {
+function runtime(opts?: {
+  reply?: string;
+  open?: Run[];
+  openSteps?: Record<string, RunStep[]>;
+  report?: boolean;
+  services?: ServicesSnapshot;
+  browser?: unknown;
+}) {
   const runs = new Map<string, Run>();
   const steps = new Map<string, RunStep[]>();
   const order: string[] = [];
@@ -49,11 +57,11 @@ function runtime(opts?: { reply?: string; open?: Run[]; openSteps?: Record<strin
     return { text, usedFallback: false, startedAt: at };
   });
   const rt = {
-    browser: { waitingForCode: false },
+    browser: opts?.browser ?? { waitingForCode: false },
     isCanceled: async (id: string) => (await rt.store.getRun(id))?.status === "canceled",
     store: {
       takeDeferredEmails: async () => [],
-      readServices: async () => services,
+      readServices: async () => opts?.services ?? services,
       listRuns: async () => [...runs.values()],
       getRun: async (id: string) => runs.get(id) ?? null,
       listSteps: async (id: string) => steps.get(id) ?? [],
@@ -112,7 +120,7 @@ describe("tick", () => {
   it("starts a task from the final list without waiting for another tick", async () => {
     const { rt, runs, think } = runtime();
     const result = await tick(rt);
-    expect(result).toEqual({ deferred: 0, checkedServices: true });
+    expect(result).toEqual({ deferred: 0, checkedServices: true, quiet: "clear", quietUntil: null });
     const check = [...runs.values()].find((r) => r.title === "Плановая проверка сервисов");
     const task = [...runs.values()].find((r) => r.title === "linear: Починить баг");
     expect(check?.status).toBe("done");
@@ -208,5 +216,96 @@ describe("tick", () => {
       "Уже в работе: linear: Починить баг",
     );
     expect(think).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a saved tasks page without asking the model to search", async () => {
+    const cards = "https://trello.com/u/me/cards";
+    let url = cards;
+    const extract = vi.fn(async () => ({
+      tasks: [{ title: "Починить баг", detail: "сделать", key: "https://trello.com/c/abc" }],
+    }));
+    const act = vi.fn();
+    const session = {
+      id: "ses",
+      serviceSlug: "trello",
+      goto: async (next: string) => {
+        url = next;
+      },
+      currentUrl: async () => url,
+      act,
+      extract,
+      read: async () => ({ url, text: "мои карточки ".repeat(40) }),
+    };
+    const open = vi.fn(async () => session);
+    const snap = {
+      generatedAt: "t",
+      recipes: [
+        {
+          slug: "trello",
+          name: "Trello",
+          kind: "browser" as const,
+          domains: ["trello.com"],
+          notes: "Как работать: карточки на доске.",
+          discoveredBy: null,
+          watchesTasks: true,
+          browser: { loginUrl: "https://trello.com/login", appUrl: "https://trello.com/" },
+        },
+      ],
+      credentials: [{ slug: "trello", kind: "browser" as const, tasksUrl: cards, accountEmail: "a@b.c", password: "pw" }],
+    };
+    const { rt, runs, think } = runtime({
+      services: snap,
+      browser: { waitingForCode: false, open, close: async () => undefined, sessions: new Map() },
+    });
+    await tick(rt);
+    expect(open).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ url: cards, serviceSlug: "trello" }));
+    expect(act).not.toHaveBeenCalled();
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(think).toHaveBeenCalledTimes(1);
+    expect(String(think.mock.calls[0]?.[1])).toMatch(/Починить баг/);
+    expect(String(think.mock.calls[0]?.[1])).not.toMatch(/\/tasks\/found/);
+    expect([...runs.values()].find((r) => r.title === "Плановая проверка сервисов")?.summary).toBe(
+      "В работе: trello: Починить баг",
+    );
+  });
+
+  it("does not ask the model to read an unchanged API list", async () => {
+    const body = '{"issues":[]}';
+    const previous = globalThis.fetch;
+    const fetchImpl = vi.fn(async () => new Response(body, { status: 200 }));
+    globalThis.fetch = fetchImpl as typeof fetch;
+    const snap = {
+      generatedAt: "t",
+      recipes: [
+        {
+          slug: "linear",
+          name: "Linear",
+          kind: "api" as const,
+          domains: ["linear.app"],
+          notes: "",
+          discoveredBy: null,
+          watchesTasks: true,
+          api: { baseUrl: "https://api.linear.app", auth: "bearer" as const, authHeader: "Authorization" },
+        },
+      ],
+      credentials: [
+        {
+          slug: "linear",
+          kind: "api" as const,
+          token: "lin",
+          tasksDigest: pageDigest(body),
+          tasksCall: { kind: "api" as const, method: "GET" as const, url: "https://api.linear.app/issues" },
+        },
+      ],
+    };
+    try {
+      const { rt, runs, think } = runtime({ services: snap });
+      await tick(rt);
+      expect(fetchImpl).toHaveBeenCalledOnce();
+      expect(think).not.toHaveBeenCalled();
+      expect([...runs.values()].find((r) => r.title === "Плановая проверка сервисов")?.summary).toBe("пусто");
+    } finally {
+      globalThis.fetch = previous;
+    }
   });
 });

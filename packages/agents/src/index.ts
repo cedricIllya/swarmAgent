@@ -153,6 +153,11 @@ export async function rememberAgentUsage(db: Db, agentId: string, totals: UsageT
     );
 }
 
+/** Когда будить агента на плановую проверку. `null` — снова каждые 15 минут. */
+export async function rememberTickQuiet(db: Db, agentId: string, until: Date | null): Promise<void> {
+  await db.update(schema.agents).set({ tickQuietUntil: until, updatedAt: new Date() }).where(eq(schema.agents.id, agentId));
+}
+
 export async function deleteAgent(db: Db, agentId: string): Promise<void> {
   await db.delete(schema.agents).where(eq(schema.agents.id, agentId));
 }

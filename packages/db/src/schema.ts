@@ -156,6 +156,11 @@ export const agents = pgTable(
     usagePromptTokens: bigint("usage_prompt_tokens", { mode: "number" }),
     usageCompletionTokens: bigint("usage_completion_tokens", { mode: "number" }),
     usageAt: timestamp("usage_at", { withTimezone: true }),
+    /**
+     * Плановую проверку не будить раньше этого времени: несколько пустых обходов подряд.
+     * Письмо, чат и мессенджер сбрасывают. Пусто — обычные 15 минут.
+     */
+    tickQuietUntil: timestamp("tick_quiet_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

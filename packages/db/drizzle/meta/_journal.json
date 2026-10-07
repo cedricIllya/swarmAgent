@@ -64,6 +64,13 @@
       "when": 1791561600000,
       "tag": "0008_slack_team",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791648000000,
+      "tag": "0009_tick_quiet",
+      "breakpoints": true
     }
   ]
 }

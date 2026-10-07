@@ -18,6 +18,7 @@ import { continueFinishedAnswer, takeFinishedAnswer } from "../tasks/question-re
 import { tick } from "../tasks/cron";
 import { streamRuntimeEvents } from "./events-routes";
 import { machineIsIdle, markSleepy, noteActivity } from "../tasks/idle";
+import { resetSurveyQuiet } from "../tasks/tick-quiet";
 import { videoMediaType } from "../browser/recordings";
 import { warn } from "../core/log";
 
@@ -31,6 +32,7 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
 
   app.post("/email", async (c) => {
     noteActivity();
+    void resetSurveyQuiet(rt);
     const body = DeliverEmailRequestSchema.parse(await c.req.json());
     processEmail(rt, body.email).catch((e) => warn("inbox", "обработка упала", { error: String(e) }));
     return c.json({ accepted: true }, 202);
@@ -38,6 +40,7 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
 
   app.post("/channel/slack", async (c) => {
     noteActivity();
+    void resetSurveyQuiet(rt);
     const body = DeliverSlackEventRequestSchema.parse(await c.req.json());
     const status = await acceptSlackEvent(rt, body);
     return c.json({ status }, 202);
@@ -45,6 +48,7 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
 
   app.post("/chat", async (c) => {
     noteActivity();
+    void resetSurveyQuiet(rt);
     const body = ChatRequestSchema.parse(await c.req.json());
     const result = await handleChat(rt, { message: body.message, author: body.author, chatId: body.chatId });
     if (!result) return c.json({ error: "chat not found" }, 404);

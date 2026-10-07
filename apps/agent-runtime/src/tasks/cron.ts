@@ -1,6 +1,8 @@
 import type { Run } from "@swarm/contracts";
 import { browserHoldsMail, processEmail } from "./inbox";
 import { foundTaskPrompt, taskServices, TICK_RETRY_PROMPT, tickPrompt } from "../llm/prompts";
+import { surveySavedCalls } from "./replay";
+import { splitTaskSurvey, surveySavedPages } from "./watch-page";
 import { classificationPending, ensureWorkGuides } from "../onboarding/service-guide";
 import type { AgentRuntime } from "../runtime";
 import { parseFoundTasks, selectNewTasks, surveySummary, taskRunTitle, type FoundTask } from "./found-tasks";
@@ -8,6 +10,7 @@ import { bindWork, dropWork, holdWork } from "./work-claim";
 import { finishServiceThink } from "./service-work";
 import { listenMessengers } from "../channels/listen";
 import { log, warn } from "../core/log";
+import { recordSurvey } from "./tick-quiet";
 
 export const CHECK_TITLE = "Плановая проверка сервисов";
 const MAX_FOUND = 8;
@@ -34,16 +37,41 @@ async function waitFoundWork(): Promise<void> {
 
 let running = false;
 
+export interface TickResult {
+  deferred: number;
+  checkedServices: boolean;
+  /** `leave` — обхода не было. `clear` — будить как обычно. `until` — несколько пустых подряд. */
+  quiet: "leave" | "clear" | "until";
+  quietUntil: string | null;
+}
+
+async function answered(
+  rt: AgentRuntime,
+  base: { deferred: number; checkedServices: boolean },
+  outcome: "leave" | "empty" | "work",
+): Promise<TickResult> {
+  if (outcome === "leave") return { ...base, quiet: "leave", quietUntil: null };
+  const quietUntil = await recordSurvey(rt, outcome === "empty" ? "empty" : "work");
+  return { ...base, quiet: quietUntil ? "until" : "clear", quietUntil };
+}
+
+/** Пустой список и ни одной новой задачи. «Уже в работе» серию не копит: доска не пустая. */
+function surveyWasEmpty(summary: string, started: number): boolean {
+  return started === 0 && summary === "пусто";
+}
+
 /**
  * Тик раз в 15 минут. Новая почта сюда не поллится — она приходит вебхуком.
  * Мессенджер читается здесь запасным путём: событие Slack приходит сразу,
  * тик дочитывает то, что не дошло. Новое сообщение становится задачей, как чат.
  * Дальше — отложенные письма (если браузер освободился) и просмотр сервисов для задач.
+ * Браузерный сервис с сохранённой страницей и API/MCP с запомненным вызовом runtime читает сам.
+ * Модель зовётся, только если список изменился или вызов ещё не запомнен.
  * Найденная задача сразу идёт отдельным прогоном, проверка в это время смотрит дальше.
  * Пустой список сервис из обхода не убирает. Оплата, ключи и прочие сервисы не для задач не открываются.
  */
-export async function tick(rt: AgentRuntime): Promise<{ deferred: number; checkedServices: boolean }> {
-  if (running) return { deferred: 0, checkedServices: false };
+export async function tick(rt: AgentRuntime): Promise<TickResult> {
+  if (running) return answered(rt, { deferred: 0, checkedServices: false }, "leave");
   running = true;
   try {
     let deferred = 0;
@@ -70,41 +98,54 @@ export async function tick(rt: AgentRuntime): Promise<{ deferred: number; checke
       services?.recipes.filter((r) => services.credentials.some((c) => c.slug === r.slug)) ?? [];
     if (!connected.length) {
       log("cron", "тик: подключённых сервисов нет", { deferred });
-      return { deferred, checkedServices: false };
+      return answered(rt, { deferred, checkedServices: false }, "leave");
     }
     const pending = connected.some(classificationPending);
     if (!pending && !taskServices(services!).length) {
       log("cron", "тик: сервисов с задачами нет", { deferred });
-      return { deferred, checkedServices: false };
+      return answered(rt, { deferred, checkedServices: false }, "leave");
     }
 
     resetFound();
     const run = await rt.createRun("cron", CHECK_TITLE, null);
     try {
       await ensureWorkGuides(rt, run);
-      if (await rt.isCanceled(run.id)) return { deferred, checkedServices: true };
+      if (await rt.isCanceled(run.id)) return answered(rt, { deferred, checkedServices: true }, "leave");
       const fresh = (await rt.store.readServices()) ?? services!;
       if (!taskServices(fresh).length) {
         await rt.finishRun(run, "done", "пусто");
-        return { deferred, checkedServices: false };
+        return answered(rt, { deferred, checkedServices: false }, "empty");
+      }
+      const surveyed = await surveySavedPages(rt, run);
+      const called = await surveySavedCalls(rt, run);
+      if (await rt.isCanceled(run.id)) return answered(rt, { deferred, checkedServices: true }, "leave");
+      for (const task of [...surveyed.tasks, ...called.tasks]) await acceptFoundTask(rt, run.id, task);
+      if (!splitTaskSurvey(fresh).rest.length) {
+        const status = surveyed.failed + called.failed > 0 && startedTitles.length === 0 ? "failed" : "done";
+        const summary = status === "failed" ? "страница задач не прочитана" : surveySummary("пусто", startedTitles, alreadyTitles);
+        await rt.finishRun(run, status, summary);
+        return answered(rt, { deferred, checkedServices: true }, surveyWasEmpty(summary, startedTitles.length) ? "empty" : "work");
       }
       const turn = await rt.think(run, tickPrompt(fresh), "hermes.tick");
       const { text, status } = await finishServiceThink(rt, run, turn, { retryPrompt: TICK_RETRY_PROMPT });
-      if (await rt.isCanceled(run.id)) return { deferred, checkedServices: true };
+      if (await rt.isCanceled(run.id)) return answered(rt, { deferred, checkedServices: true }, "leave");
       if (status !== "waiting_approval") {
         if (status === "done") {
           for (const task of parseFoundTasks(text)) await acceptFoundTask(rt, run.id, task);
         }
-        await rt.finishRun(run, status, surveySummary(text, startedTitles, alreadyTitles));
+        const summary = surveySummary(text, startedTitles, alreadyTitles);
+        await rt.finishRun(run, status, summary);
+        return answered(rt, { deferred, checkedServices: true }, surveyWasEmpty(summary, startedTitles.length) ? "empty" : "work");
       }
     } catch (e) {
-      if (await rt.isCanceled(run.id)) return { deferred, checkedServices: true };
+      if (await rt.isCanceled(run.id)) return answered(rt, { deferred, checkedServices: true }, "leave");
       await rt.step(run.id, "error", String(e));
       await rt.finishRun(run, "failed", String(e));
+      return answered(rt, { deferred, checkedServices: true }, "work");
     } finally {
       await waitFoundWork();
     }
-    return { deferred, checkedServices: true };
+    return answered(rt, { deferred, checkedServices: true }, "leave");
   } finally {
     running = false;
   }
@@ -148,6 +189,7 @@ export async function acceptFoundTask(
     service: task.service,
     title,
     texts: [task.service, task.title, task.detail, task.key ?? ""],
+    ...(task.key ? { key: task.key } : {}),
     broad: false,
   });
   if (!hold.ok) {

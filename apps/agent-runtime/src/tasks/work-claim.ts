@@ -1,6 +1,6 @@
 import type { Run, RunStep } from "@swarm/contracts";
 import type { AgentRuntime } from "../runtime";
-import { exactMark, normalizeService, serviceFromTitle, titleMark, workMarks } from "./work-marks";
+import { cardMark, exactMark, normalizeService, serviceFromTitle, titleMark, workMarks } from "./work-marks";
 
 /**
  * Задача, которую уже взяли письмо или плановая проверка.
@@ -23,6 +23,8 @@ export interface WorkIdentity {
   service: string | null;
   title: string;
   texts: string[];
+  /** Ключ карточки или ссылка на неё. Одинаковый ключ под разными названиями — одна задача. */
+  key?: string | null;
   /** Письмо-сигнал без конкретной карточки: пока оно идёт, сервис второй раз не открываем. */
   broad: boolean;
 }
@@ -63,6 +65,8 @@ function marksOf(identity: WorkIdentity): { marks: string[]; broad: boolean; ser
   const title = titleMark(identity.title, service);
   if (title) marks.push(title);
   marks.push(exactMark(identity.title));
+  const card = cardMark(service, identity.key);
+  if (card) marks.push(card);
   const specific = marks.some((mark) => mark.startsWith("ticket:") || mark.startsWith("url:"));
   return { marks, broad: identity.broad && !specific, service };
 }
@@ -74,6 +78,7 @@ function overlaps(held: Held, incoming: { service: string | null; marks: string[
   const distinctTickets = heldTickets.length > 0 && nextTickets.length > 0;
 
   if (held.marks.some((mark) => mark.startsWith("url:") && incoming.marks.includes(mark))) return true;
+  if (held.marks.some((mark) => mark.startsWith("card:") && incoming.marks.includes(mark))) return true;
   if (!distinctTickets && held.marks.some((mark) => (mark.startsWith("title:") || mark.startsWith("exact:")) && incoming.marks.includes(mark))) {
     return true;
   }

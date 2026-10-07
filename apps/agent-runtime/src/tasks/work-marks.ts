@@ -77,6 +77,26 @@ export function serviceFromDomain(domain: string | null | undefined): string | n
   return label ?? null;
 }
 
+/**
+ * Явный ключ карточки. Число, uuid и хвост ссылки склеиваются:
+ * `198035` и `https://host/tasks/198035` — одна метка.
+ */
+export function cardMark(service: string | null, key: string | null | undefined): string | null {
+  if (!key) return null;
+  const raw = key.replace(/\s+/g, " ").trim();
+  if (raw.length < 3 || raw.length > 200) return null;
+  let body = raw.toLowerCase();
+  try {
+    const url = new URL(raw);
+    const segment = url.pathname.split("/").filter(Boolean).pop();
+    if (segment && segment.length >= 3) body = decodeURIComponent(segment).toLowerCase();
+  } catch {
+    // не ссылка — метка из самого ключа
+  }
+  const slug = normalizeService(service) ?? "task";
+  return `card:${slug}:${body}`;
+}
+
 /** `linear: Название` → linear. У плановой проверки и обычной фразы префикса нет. */
 export function serviceFromTitle(title: string): string | null {
   const match = title.match(/^([A-Za-z0-9_-]{2,40}):\s+\S/);

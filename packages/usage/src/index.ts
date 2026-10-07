@@ -12,16 +12,58 @@ export interface OpenRouterUsage {
   cost_details?: { upstream_inference_cost?: number };
 }
 
+function nonNegative(value: unknown): number | null {
+  if (typeof value === "boolean" || value == null) return null;
+  const n = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+/**
+ * Сколько OpenRouter списал за ответ.
+ * `usage.cost` — сумма с аккаунта. `upstream_inference_cost` и `total_cost`
+ * подставляются, только когда этой суммы в ответе нет.
+ * `null` — стоимости в теле нет (это не то же самое, что бесплатный вызов за $0).
+ */
+export function openRouterCostUsd(body: unknown): number | null {
+  if (!body || typeof body !== "object") return null;
+  const record = body as {
+    usage?: OpenRouterUsage;
+    data?: { total_cost?: unknown; usage?: unknown };
+  };
+  const usage = record.usage;
+  if (usage && typeof usage === "object") {
+    const billed = nonNegative(usage.cost);
+    if (billed != null) return billed;
+    const upstream = nonNegative(usage.cost_details?.upstream_inference_cost);
+    if (upstream != null) return upstream;
+  }
+  const data = record.data;
+  if (data && typeof data === "object") {
+    const total = nonNegative(data.total_cost);
+    if (total != null) return total;
+    const usageField = nonNegative(data.usage);
+    if (usageField != null) return usageField;
+  }
+  return null;
+}
+
 export function parseOpenRouterUsage(body: unknown): {
   promptTokens: number;
   completionTokens: number;
   costUsd: number;
 } {
-  const usage = (body as { usage?: OpenRouterUsage } | null)?.usage ?? {};
+  const record = (body ?? {}) as {
+    usage?: OpenRouterUsage;
+    data?: { tokens_prompt?: number; tokens_completion?: number };
+  };
+  const usage = record.usage ?? {};
+  const prompt = usage.prompt_tokens ?? record.data?.tokens_prompt ?? 0;
+  const completion = usage.completion_tokens ?? record.data?.tokens_completion ?? 0;
   return {
-    promptTokens: Math.max(0, Math.trunc(usage.prompt_tokens ?? 0)),
-    completionTokens: Math.max(0, Math.trunc(usage.completion_tokens ?? 0)),
-    costUsd: Math.max(0, usage.cost ?? 0),
+    promptTokens: Math.max(0, Math.trunc(Number(prompt) || 0)),
+    completionTokens: Math.max(0, Math.trunc(Number(completion) || 0)),
+    costUsd: openRouterCostUsd(body) ?? 0,
   };
 }
 

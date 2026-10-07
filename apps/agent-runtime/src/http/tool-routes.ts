@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { RuntimeReportSchema, type RuntimeReport, type ServiceCredential, type ServiceRecipe } from "@swarm/contracts";
 import type { AgentRuntime } from "../runtime";
-import { acceptFoundTask } from "../tasks/cron";
+import { acceptFoundTask, CHECK_TITLE } from "../tasks/cron";
+import { rememberWatch } from "../tasks/replay";
 import { noteActivity } from "../tasks/idle";
 import { redactInternal } from "../core/redact";
 import { withAliases } from "./lenient";
@@ -183,6 +184,47 @@ export function toolRoutes(rt: AgentRuntime): Hono {
     });
     if (!result.ok) return c.json({ error: result.error }, result.error === "run not found" ? 404 : 409);
     return c.json({ started: result.started, runId: result.started ? result.runId : null, title: result.title });
+  });
+
+  app.post("/tasks/watch", async (c) => {
+    noteActivity();
+    const body = z
+      .object({
+        runId: z.string(),
+        service: z.string().min(1),
+        method: z.string().optional(),
+        url: z.string().optional(),
+        body: z.union([z.string().max(4000), z.record(z.string(), z.unknown())]).optional(),
+        tool: z.string().max(120).optional(),
+        arguments: z.record(z.string(), z.unknown()).optional(),
+      })
+      .parse(
+        withAliases(await c.req.json(), {
+          runId: ["run_id", "run"],
+          service: ["slug", "serviceSlug", "name"],
+          method: ["http_method", "verb"],
+          url: ["endpoint", "link"],
+          tool: ["toolName", "tool_name"],
+          arguments: ["args", "params", "input"],
+        }),
+      );
+    const run = await rt.store.getRun(body.runId);
+    if (!run) return c.json({ error: "run not found" }, 404);
+    if (run.title !== CHECK_TITLE || (run.status !== "running" && run.status !== "queued")) {
+      return c.json({ error: "страница задач сохраняется только из плановой проверки" }, 409);
+    }
+    const payload = typeof body.body === "string" ? body.body : body.body ? JSON.stringify(body.body).slice(0, 4000) : undefined;
+    const result = await rememberWatch(rt, run, {
+      service: body.service,
+      ...(body.method ? { method: body.method } : {}),
+      ...(body.url ? { url: body.url } : {}),
+      ...(payload ? { body: payload } : {}),
+      ...(body.tool ? { tool: body.tool } : {}),
+      ...(body.arguments ? { arguments: body.arguments } : {}),
+    });
+    if (!result.ok) return c.json({ error: result.error }, result.status);
+    for (const task of result.tasks) await acceptFoundTask(rt, run.id, task);
+    return c.json({ saved: result.saved, ...(result.url ? { url: result.url } : {}), tasks: result.tasks.length });
   });
 
   app.post("/runs/:id/step", async (c) => {

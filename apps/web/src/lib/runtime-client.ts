@@ -174,7 +174,7 @@ export class RuntimeClient {
     return this.call("GET", `/browser-sessions/${sessionId}/actions`);
   }
 
-  tick(): Promise<{ deferred: number; checkedServices: boolean }> {
+  tick(): Promise<{ deferred: number; checkedServices: boolean; quiet?: "leave" | "clear" | "until"; quietUntil?: string | null }> {
     return this.call("POST", "/tick", {}, 180_000);
   }
 
