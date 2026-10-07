@@ -68,6 +68,13 @@ export const RunSchema = z.object({
   /** Короткий итог для списка. */
   summary: z.string(),
   threadId: z.string().nullable(),
+  /**
+   * Миллисекунды, пока задача была в работе.
+   * Ожидание человека не входит. Нет поля — старая задача, время считается по началу и концу.
+   */
+  activeMs: z.number().int().nonnegative().optional(),
+  /** Начало текущего отрезка работы. null — пауза или задача ещё в очереди. */
+  activeSince: z.string().nullable().optional(),
 });
 
 export const RunStepSchema = z.object({

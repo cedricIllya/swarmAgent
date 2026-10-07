@@ -1,6 +1,7 @@
 import { parseUserQuestion, type Run } from "@swarm/contracts";
 import { escalationContinuationPrompt, questionContinuationPrompt } from "../llm/prompts";
 import { redactInternal } from "../core/redact";
+import { beginWork } from "../core/spent";
 import { warn } from "../core/log";
 import type { AgentRuntime } from "../runtime";
 import { finishServiceThink } from "./service-work";
@@ -36,6 +37,7 @@ export async function takeFinishedAnswer(rt: AgentRuntime, runId: string, answer
 
   inflight.add(runId);
   try {
+    beginWork(run);
     run.status = "running";
     run.finishedAt = null;
     run.summary = "";

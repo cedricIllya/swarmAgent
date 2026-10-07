@@ -1,6 +1,7 @@
 import type { PendingApproval, Run } from "@swarm/contracts";
 import { approvalContinuationPrompt, questionContinuationPrompt } from "../llm/prompts";
 import { redactInternal } from "../core/redact";
+import { beginWork } from "../core/spent";
 import { finishServiceThink } from "../tasks/service-work";
 import { warn } from "../core/log";
 import { newId } from "./ids";
@@ -204,6 +205,7 @@ export class Approvals {
       if (handoff) return await rt.handoffs.resolve(pending, approved, chatId);
       if (await rt.isCanceled(run.id)) return run;
       run.status = "running";
+      beginWork(run);
       await rt.store.saveRun(run);
       await rt.step(run.id, "note", question ? "ответ человека получен" : approved ? "одобрено человеком" : "отклонено человеком");
       try {

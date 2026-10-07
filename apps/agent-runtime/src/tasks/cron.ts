@@ -10,6 +10,7 @@ import { bindWork, dropWork, holdWork } from "./work-claim";
 import { finishServiceThink } from "./service-work";
 import { listenMessengers } from "../channels/listen";
 import { log, warn } from "../core/log";
+import { beginWork } from "../core/spent";
 import { recordSurvey } from "./tick-quiet";
 
 export const CHECK_TITLE = "Плановая проверка сервисов";
@@ -241,6 +242,7 @@ async function runFoundTask(rt: AgentRuntime, run: Run, task: FoundTask): Promis
   const current = (await rt.store.getRun(run.id)) ?? run;
   if (current.status !== "queued" && current.status !== "running") return;
   current.status = "running";
+  beginWork(current);
   await rt.store.saveRun(current);
   log("run", "начата", { id: current.id, trigger: current.trigger, title: current.title });
   try {

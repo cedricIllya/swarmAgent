@@ -9,6 +9,7 @@ import { SkyvernClient } from "../browser/skyvern";
 import { resumeDeferredMail } from "../tasks/inbox";
 import { systemPrompt } from "../llm/prompts";
 import { redactInternal } from "../core/redact";
+import { replyWithSpent, settleWork } from "../core/spent";
 import { ensureWorkGuides } from "../onboarding/service-guide";
 import { ensureRunId } from "../tasks/service-work";
 import { recordUsage, turnDetails, type TaskRef } from "../core/usage";
@@ -103,15 +104,18 @@ export class AgentRuntime {
     threadId: string | null,
     status: Run["status"] = "running",
   ): Promise<Run> {
+    const startedAt = new Date().toISOString();
     const run: Run = {
       id: newId("run"),
-      startedAt: new Date().toISOString(),
+      startedAt,
       finishedAt: null,
       status,
       trigger,
       title: title.slice(0, 120),
       summary: "",
       threadId,
+      activeMs: 0,
+      activeSince: status === "running" ? startedAt : null,
     };
     await this.store.saveRun(run);
     this.armAbort(run.id);
@@ -129,9 +133,13 @@ export class AgentRuntime {
     // Отмена пользователем не должна быть перезаписана поздним finish из фоновой задачи.
     if (current.status === "canceled" && status !== "canceled") return;
     if (current.status === "failed" && status !== "failed") return;
+    if (run.activeMs == null && typeof current.activeMs === "number") run.activeMs = current.activeMs;
+    if (!run.activeSince && current.activeSince) run.activeSince = current.activeSince;
     run.status = status;
     run.summary = redactInternal(summary).slice(0, 2000);
-    run.finishedAt = status === "waiting_approval" ? null : new Date().toISOString();
+    const now = Date.now();
+    if (status !== "running" && status !== "queued") settleWork(run, now);
+    run.finishedAt = status === "waiting_approval" || status === "running" || status === "queued" ? null : new Date(now).toISOString();
     await this.store.saveRun(run);
     if (status !== "running" && status !== "queued" && status !== "waiting_approval") {
       this.disarmAbort(run.id);
@@ -247,7 +255,12 @@ export class AgentRuntime {
 
   async addChat(msg: Omit<ChatMessage, "at" | "chatId"> & { chatId?: string | null }): Promise<void> {
     const chatId = msg.chatId || (await this.store.chats.ensureSystem()).id;
-    const message: ChatMessage = { at: new Date().toISOString(), ...msg, chatId };
+    let text = msg.text;
+    if (msg.role === "agent" && msg.runId && (msg.kind == null || msg.kind === "text")) {
+      const run = await this.store.getRun(msg.runId);
+      if (run) text = replyWithSpent(text, run);
+    }
+    const message: ChatMessage = { at: new Date().toISOString(), ...msg, text, chatId };
     await this.store.chats.addMessage(chatId, message);
     if (message.role !== "agent") return;
     const chat = await this.store.chats.get(chatId);

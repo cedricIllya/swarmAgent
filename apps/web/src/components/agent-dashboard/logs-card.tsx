@@ -7,7 +7,7 @@ import { parseUserQuestion } from "@swarm/contracts";
 import { count, t, type MessageKey } from "@/i18n";
 import { ApprovalRow, QuestionCard } from "./approval-bubbles";
 import { SessionShots } from "./browser-bubble";
-import { fmtTime } from "./format";
+import { fmtTime, taskSpent } from "./format";
 import { SecretValue, StepText } from "./secret-value";
 import { TaskWatchTag } from "../task-watch-tag";
 import { accessKindLabel, type AgentAccess } from "./agent-access";
@@ -547,6 +547,7 @@ function RunItem({
           <div className="run-title">{run.title}</div>
           <div className="faint small">
             {fmtTime(run.startedAt)} · {t(TRIGGER_KEY[run.trigger])}
+            {taskSpent(run, awaitsPerson)}
             {sessions.length ? t("logs.browserCount", { count: sessions.length }) : ""}
             {waitNote(run, approvals.length > 0, pendingQuestion, Boolean(followup))}
             {usedServices.length ? ` · ${usedServices.map((s) => s.name).join(", ")}` : ""}

@@ -15,6 +15,7 @@ import {
 import type { AgentRuntime } from "../runtime";
 import { finishServiceThink } from "./service-work";
 import { recordUsage } from "../core/usage";
+import { replyWithSpent } from "../core/spent";
 import { markVerificationApplied, verificationAlreadyApplied, verificationRunId } from "./verification-mail";
 import { bindWork, dropWork, holdWork } from "./work-claim";
 import { serviceFromDomain } from "./work-marks";
@@ -386,9 +387,9 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
         return;
       }
       const note = engine.status === "escalated" ? escalationNote(engine.reason, engine.liveUrl) : engine.reason;
-      // Карточка с кнопками уже в чате, если открыт handoff.
-      if (!engine.handoffId) await rt.addChat({ role: "agent", text: note, runId: run.id });
+      // Сначала закрыть задачу: ответ человеку дописывает, сколько она заняла.
       await rt.finishRun(run, engine.status === "failed" ? "failed" : engine.status === "escalated" ? "escalated" : "done", note);
+      if (!engine.handoffId) await rt.addChat({ role: "agent", text: note, runId: run.id });
       return;
     }
     const turn = await rt.think(run, emailTaskPrompt(email, c.kind));
@@ -441,10 +442,11 @@ async function replyInThread(rt: AgentRuntime, email: InboundEmail, runId: strin
   if (!rt.controlPlane.enabled || !text.trim()) return;
   try {
     const refs = [...email.references, ...(email.messageId ? [email.messageId] : [])].slice(-20);
+    const run = await rt.store.getRun(runId);
     const { messageId } = await rt.controlPlane.sendEmail({
       to: email.from,
       subject: email.subject.startsWith("Re:") ? email.subject : `Re: ${email.subject}`,
-      text,
+      text: run ? replyWithSpent(text, run) : text,
       ...(email.messageId ? { inReplyTo: email.messageId } : {}),
       references: refs,
     });
