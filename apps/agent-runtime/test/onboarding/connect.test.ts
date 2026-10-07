@@ -4,6 +4,8 @@ import {
   credentialHostAllowed,
   decideConnection,
   interpretApiKeyOutput,
+  keyPageToStore,
+  recipeWithKeyPage,
   looksLikeApiKey,
   looksLikeServiceApprovalWait,
   mailTouchesHost,
@@ -38,6 +40,58 @@ describe("apiKeyPrompt", () => {
     const withHint = apiKeyPrompt({ agentName: "Бот", keyPageUrl: null, feedback: null, hint: "Токен из кабинета: Настройки → MCP." });
     expect(withHint).toContain("Что известно об этом продукте: Токен из кабинета: Настройки → MCP.");
     expect(apiKeyPrompt({ agentName: "Бот", keyPageUrl: null, feedback: null, hint: "  " })).not.toContain("Что известно");
+  });
+
+  it("записанную страницу открывает сразу и не отправляет искать раздел", () => {
+    const prompt = apiKeyPrompt({
+      agentName: "Бот",
+      keyPageUrl: "https://app.acme.io/settings/tokens",
+      remembered: true,
+      feedback: null,
+    });
+    expect(prompt).toContain("открой https://app.acme.io/settings/tokens");
+    expect(prompt).toContain("Другие разделы и документацию не открывай");
+    expect(prompt).not.toContain("Смотри сайдбар");
+  });
+});
+
+describe("keyPageToStore", () => {
+  const anchors = ["https://app.acme.io/home", "acme.io"];
+
+  it("оставляет страницу настроек своего сервиса", () => {
+    expect(keyPageToStore("https://app.acme.io/settings/tokens#done", anchors)).toBe("https://app.acme.io/settings/tokens");
+  });
+
+  it("не запоминает корень, вход, приглашение, документацию и чужой сайт", () => {
+    expect(keyPageToStore("https://app.acme.io/", anchors)).toBeNull();
+    expect(keyPageToStore("https://app.acme.io/login", anchors)).toBeNull();
+    expect(keyPageToStore("https://app.acme.io/invite/abc", anchors)).toBeNull();
+    expect(keyPageToStore("https://app.acme.io/docs/api", anchors)).toBeNull();
+    expect(keyPageToStore("https://evil.test/settings/tokens", anchors)).toBeNull();
+  });
+
+  it("выкидывает query, в котором лежит секрет", () => {
+    expect(keyPageToStore("https://app.acme.io/settings/tokens?tab=api&token=sk_live_abcdefghijklmnopqrstuv", anchors)).toBe(
+      "https://app.acme.io/settings/tokens",
+    );
+  });
+});
+
+describe("recipeWithKeyPage", () => {
+  const recipe: { slug: string; browser?: { loginUrl: string; appUrl: string; keyPageUrl?: string } } = {
+    slug: "acme",
+    browser: { loginUrl: "https://app.acme.io/login", appUrl: "https://app.acme.io/" },
+  };
+
+  it("дописывает страницу и не переписывает ту же самую", () => {
+    expect(recipeWithKeyPage(recipe, "https://app.acme.io/settings/tokens")?.browser?.keyPageUrl).toBe(
+      "https://app.acme.io/settings/tokens",
+    );
+    const saved = {
+      slug: "acme",
+      browser: { loginUrl: "https://app.acme.io/login", appUrl: "https://app.acme.io/", keyPageUrl: "https://app.acme.io/settings/tokens" },
+    };
+    expect(recipeWithKeyPage(saved, "https://app.acme.io/settings/tokens")).toBeNull();
   });
 });
 

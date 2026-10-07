@@ -429,6 +429,25 @@ describe("withoutForeignEndpoints", () => {
     expect(cleaned.notes).toBe("MCP: https://gensite.ru/api/mcp (проверен).");
     expect(cleaned.notes).not.toContain("gitverse");
   });
+
+  it("снимает чужую страницу токена и оставляет кабинет своего домена", () => {
+    const cleaned = withoutForeignEndpoints({
+      slug: "gensite",
+      name: "Gensite",
+      kind: "mcp",
+      domains: ["gensite.ru"],
+      browser: {
+        loginUrl: "https://gensite.ru/login",
+        appUrl: "https://gensite.ru/",
+        keyPageUrl: "https://gitverse.ru/settings/tokens",
+      },
+      notes: "Токен из кабинета.",
+      discoveredBy: null,
+    });
+    expect(cleaned.browser?.loginUrl).toBe("https://gensite.ru/login");
+    expect(cleaned.browser?.keyPageUrl).toBeUndefined();
+    expect(cleaned.notes).toBe("Токен из кабинета.");
+  });
 });
 
 describe("pickDocsSeed", () => {

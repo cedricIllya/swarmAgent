@@ -1,3 +1,4 @@
+import { isInviteUrl } from "../tasks/invite-signal";
 import { hostOf, rootDomain, sameBrand } from "./domains";
 
 /**
@@ -428,8 +429,71 @@ export const API_KEY_SCHEMA = {
   },
 } as const;
 
+/**
+ * Адрес страницы, где токен уже выпустили, годится для следующего входа.
+ * Корень сайта, вход, приглашение и длинный секрет в query не записываем.
+ */
+export function keyPageToStore(raw: string | null | undefined, anchors: string[]): string | null {
+  if (!raw || !/^https:\/\//i.test(raw)) return null;
+  if (!credentialHostAllowed(raw, anchors)) return null;
+  if (isInviteUrl(raw)) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  url.hash = "";
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  if (path === "/") return null;
+  if (/^\/(?:login|signin|sign-in|log-in|auth|register|signup|sign-up)\/?$/i.test(path)) return null;
+  if (/^\/(?:docs|documentation|help|support)(?:\/|$)/i.test(path)) return null;
+  if ([...url.searchParams.values()].some((value) => value.length > 24)) url.search = "";
+  return url.toString();
+}
+
+/** Рецепт с записанной страницей токена. null — записывать нечего, адрес уже тот же. */
+export function recipeWithKeyPage<
+  T extends { browser?: { loginUrl: string; appUrl: string; keyPageUrl?: string | undefined } | undefined },
+>(recipe: T, page: string): T | null {
+  if (recipe.browser?.keyPageUrl === page) return null;
+  let origin = "";
+  try {
+    origin = new URL(page).origin + "/";
+  } catch {
+    return null;
+  }
+  const browser = recipe.browser
+    ? { ...recipe.browser, keyPageUrl: page }
+    : { loginUrl: origin, appUrl: origin, keyPageUrl: page };
+  return { ...recipe, browser };
+}
+
 /** Задача уже залогиненному браузеру: создать ключ. Продукт не называется способами, только адресом, если он известен. */
-export function apiKeyPrompt(args: { agentName: string; keyPageUrl: string | null; feedback: string | null; hint?: string | null }): string {
+export function apiKeyPrompt(args: {
+  agentName: string;
+  keyPageUrl: string | null;
+  /** Адрес уже подтверждён прошлым выпуском токена: открыть его, а не искать раздел. */
+  remembered?: boolean;
+  feedback: string | null;
+  hint?: string | null;
+}): string {
+  const reportPage = "В key_page_url верни точный адрес страницы, на которой ключ создан или показан целиком.";
+  if (args.remembered && args.keyPageUrl) {
+    return [
+      "Ты уже вошёл в веб-продукт. Цель — создать новый API-ключ этого аккаунта.",
+      `Страница, где его выпускают, уже известна: открой ${args.keyPageUrl} и создай ключ там.`,
+      "Другие разделы и документацию не открывай, пока эта страница не открылась или ключа на ней нет.",
+      `Имя ключа — «${args.agentName}». Права — полный доступ, который этот аккаунт вправе выдать.`,
+      "Существующие ключи замаскированы: не сообщай обрезанное значение. Нажми reveal или создай новый.",
+      "Ничего другого не меняй, ничего не удаляй и не отзывай.",
+      args.feedback ? `Прошлая попытка отклонена: ${args.feedback}. Покажи ключ целиком или создай новый.` : "",
+      reportPage,
+      "В любом случае закончи JSON-объектом. Ключ на экране, о котором не доложили, считается отсутствующим.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
   const where = args.keyPageUrl
     ? `Сначала открой ${args.keyPageUrl}. Если страницы нет или ключ там не создаётся — ищи в навигации.`
     : "Ищи в навигации.";
@@ -445,6 +509,7 @@ export function apiKeyPrompt(args: { agentName: string; keyPageUrl: string | nul
     "Ничего другого не меняй, ничего не удаляй и не отзывай.",
     "found=false только после того, как посмотрел и интерфейс, и документацию.",
     args.feedback ? `Прошлая попытка отклонена: ${args.feedback}. Покажи ключ целиком или создай новый.` : "",
+    reportPage,
     "В любом случае закончи JSON-объектом. Ключ на экране, о котором не доложили, считается отсутствующим.",
   ]
     .filter(Boolean)
@@ -454,6 +519,7 @@ export function apiKeyPrompt(args: { agentName: string; keyPageUrl: string | nul
 export function readPagePrompt(): string {
   return [
     "Ничего не нажимай. Прочитай страницу, на которой стоишь, и верни API-ключ, если он виден целиком.",
+    "В key_page_url верни адрес этой страницы.",
     "Маскированное значение не возвращай. В любом случае закончи JSON-объектом.",
   ].join("\n");
 }

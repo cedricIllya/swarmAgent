@@ -9,6 +9,7 @@ import {
   messengerPatch,
   ServiceCredentialSchema,
   ServiceRecipeSchema,
+  mergeBrowser,
   withoutForeignEndpoints,
   type ServiceCredential,
   type ServiceRecipe,
@@ -58,6 +59,7 @@ export async function upsertRecipe(db: Db, recipe: ServiceRecipe, discoveredByAg
   const watchesTasks = parsed.channel === "messenger" ? false : keepWatchesTasks(existing?.watchesTasks, parsed.watchesTasks);
   const channel = keepChannel(existing?.channel, parsed.channel);
   const rank = { mcp: 3, api: 2, browser: 1 } as const;
+  const browser = mergeBrowser(existing?.browser, parsed.browser);
   if (existing && rank[existing.kind] > rank[parsed.kind]) {
     await db
       .update(schema.serviceRecipes)
@@ -65,7 +67,7 @@ export async function upsertRecipe(db: Db, recipe: ServiceRecipe, discoveredByAg
         domains: Array.from(new Set([...existing.domains, ...parsed.domains])),
         mcp: parsed.mcp ?? existing.mcp ?? null,
         api: parsed.api ?? existing.api ?? null,
-        browser: parsed.browser ?? existing.browser ?? null,
+        browser,
         notes:
           channel === "messenger"
             ? messengerPatch({ ...existing, notes: [existing.notes, parsed.notes].filter(Boolean).join(" ") }).notes
@@ -88,7 +90,7 @@ export async function upsertRecipe(db: Db, recipe: ServiceRecipe, discoveredByAg
       domains: parsed.domains,
       mcp: parsed.mcp ?? null,
       api: parsed.api ?? null,
-      browser: parsed.browser ?? null,
+      browser,
       notes: parsed.notes,
       watchesTasks,
       channel,
@@ -102,7 +104,7 @@ export async function upsertRecipe(db: Db, recipe: ServiceRecipe, discoveredByAg
         domains: parsed.domains,
         mcp: parsed.mcp ?? null,
         api: parsed.api ?? null,
-        browser: parsed.browser ?? null,
+        browser,
         notes: parsed.notes,
         watchesTasks,
         channel,

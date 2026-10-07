@@ -1,5 +1,6 @@
 import type { ServiceCredential, ServiceRecipe } from "@swarm/contracts";
 import type { AgentRuntime } from "../runtime";
+import { keyPageToStore, recipeWithKeyPage } from "../onboarding/connect";
 import { mcpTokenCheck, type TokenCheck } from "../onboarding/report-guard";
 import type { ManagedBrowserSession } from "./stagehand";
 
@@ -54,7 +55,13 @@ export async function saveTokenFromPage(rt: AgentRuntime, s: ManagedBrowserSessi
     ...(prev?.accountName ? { accountName: prev.accountName } : {}),
   };
   await rt.services.applyReport({ type: "credential", credential, ...(runId ? { runId } : {}) });
+  const page = recipe ? keyPageToStore(reading.url, recipe.domains) : null;
+  const withPage = recipe && page ? recipeWithKeyPage(recipe, page) : null;
+  if (withPage) {
+    await rt.services.applyReport({ type: "recipe", recipe: withPage, ...(runId ? { runId } : {}) }, { quiet: true });
+  }
   const how = pick.verified ? "MCP принял его" : "проверить вызовом не удалось";
-  if (runId) await rt.step(runId, "note", `токен ${slug} сохранён в доступ рядом с паролем, ${how}`);
+  const where = withPage ? " Страница записана: следующий вход откроет её сразу." : "";
+  if (runId) await rt.step(runId, "note", `токен ${slug} сохранён в доступ рядом с паролем, ${how}.${where}`);
   return { status: 200, body: { saved: true, verified: pick.verified, kind } };
 }

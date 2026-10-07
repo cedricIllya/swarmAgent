@@ -40,6 +40,20 @@ describe("guardRecipeReport", () => {
     expect(r.note).toContain("оставлены прежними");
   });
 
+  it("повторный отчёт без страницы токена не стирает уже записанную", () => {
+    const saved = {
+      ...gensite,
+      browser: { loginUrl: "https://gensite.ru/login", appUrl: "https://gensite.ru/", keyPageUrl: "https://gensite.ru/settings/tokens" },
+    };
+    const r = guardRecipeReport(saved, {
+      ...saved,
+      browser: { loginUrl: "https://gensite.ru/login", appUrl: "https://gensite.ru/" },
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.browser?.keyPageUrl).toBe("https://gensite.ru/settings/tokens");
+  });
+
   it("новый рецепт принимает целиком, если адреса одного бренда", () => {
     const r = guardRecipeReport(null, {
       slug: "linear",

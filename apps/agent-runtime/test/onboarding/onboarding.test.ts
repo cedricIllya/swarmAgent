@@ -110,6 +110,27 @@ describe("runConnectFollowup", () => {
     expect(looksLikeServiceApprovalWait(prompt)).toBe(false);
   });
 
+  it("открывает записанную страницу токена и не отправляет искать раздел", () => {
+    const prompt = secretFollowupPrompt(
+      "Gensite",
+      "mcp",
+      {
+        slug: "gensite",
+        kind: "mcp",
+        appUrl: "https://gensite.ru/dashboard",
+        keyPageUrl: "https://gensite.ru/settings/tokens",
+        hint: "Токен gs1 из кабинета: Настройки → MCP.",
+        docsUrl: "https://gensite.ru/docs/mcp",
+        cookiesInProfile: true,
+      },
+      "bot@example.com",
+    );
+    expect(prompt).toContain('url "https://gensite.ru/settings/tokens"');
+    expect(prompt).toContain("раздел в меню не ищи");
+    expect(prompt).not.toContain("настройки аккаунта");
+    expect(prompt).not.toContain("https://gensite.ru/dashboard");
+  });
+
   it("does not teach the model the phrase that used to open the card", () => {
     const prompt = secretFollowupPrompt("Pneumatic", "api");
     expect(looksLikeServiceApprovalWait(prompt)).toBe(false);

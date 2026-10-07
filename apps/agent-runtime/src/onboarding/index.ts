@@ -11,8 +11,10 @@ import {
   decideConnection,
   OWNER_OUTAGE,
   interpretApiKeyOutput,
+  keyPageToStore,
   looksLikeServiceApprovalWait,
   proofUrlsForService,
+  recipeWithKeyPage,
   proveApiKey,
   readPagePrompt,
   recipeAuth,
@@ -72,6 +74,8 @@ export interface SecretNeed {
   kind: "mcp" | "api";
   /** Страница, на которой вход закончился, — отсюда искать кабинет. */
   appUrl: string;
+  /** Страница, где токен уже выпускали. Следующий вход открывает её сразу. */
+  keyPageUrl?: string | null;
   /** Заметки рецепта или находки поиска: где в кабинете лежит токен. */
   hint: string | null;
   docsUrl: string | null;
@@ -316,7 +320,7 @@ async function connectInvite(
     decision: ConnectDecision,
     invite: AcceptInviteResult | null,
     ctx: Omit<HandoffContext, "url" | "slug" | "service" | "discovery">,
-    seen: { landedUrl?: string | null; hint?: string | null; docsUrl?: string | null } = {},
+    seen: { landedUrl?: string | null; hint?: string | null; docsUrl?: string | null; keyPageUrl?: string | null } = {},
   ): Promise<{ invite: AcceptInviteResult | null; engine: EngineResult }> => {
     const handoff = decision.status === "escalated" && (decision.park || (!decision.closeBrowser && ctx.browserSessionId));
     if (handoff) {
@@ -347,12 +351,14 @@ async function connectInvite(
     const engine = toEngine(decision, decision.closeBrowser ? null : ctx.liveUrl);
     if (decision.status === "ready" && (await needsSecret(rt, args, decision.mode))) {
       const kind = (await recipeKindOf(rt, args)) === "api" ? "api" : "mcp";
+      const knownNow = await knownRecipeFor(rt, args);
       engine.status = "needs_secret";
       engine.mode = kind;
       engine.secret = {
         slug: args.slug,
         kind,
         appUrl: seen.landedUrl || invite?.finalUrl || args.url,
+        keyPageUrl: seen.keyPageUrl ?? knownNow?.browser?.keyPageUrl ?? null,
         hint: seen.hint ?? args.discovery?.api?.howToGetKey ?? null,
         docsUrl: seen.docsUrl ?? args.discovery?.api?.docsUrl ?? null,
         cookiesInProfile: invite?.cookiesInProfile ?? false,
@@ -520,10 +526,22 @@ async function connectInvite(
           authHeader: args.discovery?.api?.authHeader ?? null,
           docsUrl: args.discovery?.api?.docsUrl ?? null,
           notes: "",
+          keyPageUrl: null as string | null,
         };
         const known = await knownRecipeFor(rt, args).catch(() => null);
         try {
-          sought = await seekApiKey(rt, run, session.browserSessionId, { ...args, hint: known?.notes ?? null }, landed);
+          sought = await seekApiKey(
+            rt,
+            run,
+            session.browserSessionId,
+            {
+              ...args,
+              hint: known?.notes ?? null,
+              savedKeyPageUrl: known?.browser?.keyPageUrl ?? null,
+              domains: known?.domains ?? [],
+            },
+            landed,
+          );
         } catch (e) {
           warn("onboarding", "поиск ключа не удался", { error: String(e) });
           await rt.step(run.id, "error", `поиск ключа не удался: ${String(e)}`);
@@ -578,14 +596,24 @@ async function connectInvite(
             baseUrl: sought.baseUrl,
             authHeader: sought.authHeader,
             docsUrl: sought.docsUrl,
+            keyPageUrl: sought.keyPageUrl,
             loginUrl: args.url,
             appUrl: originOf(landed) ?? originOf(args.url) ?? args.url,
             cookiesInProfile,
           });
         }
+        const pageSaved = sought.keyPageUrl ? await rememberKeyPage(rt, run, args.slug, sought.keyPageUrl) : false;
+        if (pageSaved && sought.keyPageUrl !== (known?.browser?.keyPageUrl ?? null)) {
+          await rt.step(run.id, "note", `страница токена ${args.slug} записана: следующий вход откроет её сразу`);
+        }
         if (decision.closeBrowser) await close();
         await rt.step(run.id, "note", decision.reason);
-        return escalate(decision, invite, handoffCtx, { landedUrl: landed, hint: known?.notes ?? null, docsUrl: sought.docsUrl });
+        return escalate(decision, invite, handoffCtx, {
+          landedUrl: landed,
+          hint: known?.notes ?? null,
+          docsUrl: sought.docsUrl,
+          keyPageUrl: sought.keyPageUrl ?? known?.browser?.keyPageUrl ?? null,
+        });
       }
     } catch (e) {
       warn("onboarding", "Skyvern не довёл подключение", { error: String(e) });
@@ -703,38 +731,56 @@ async function seekApiKey(
   rt: AgentRuntime,
   run: Run,
   browserSessionId: string,
-  args: { slug: string; service: string; discovery: DiscoveryResult | null; url?: string; hint?: string | null },
+  args: {
+    slug: string;
+    service: string;
+    discovery: DiscoveryResult | null;
+    url?: string;
+    hint?: string | null;
+    savedKeyPageUrl?: string | null;
+    domains?: string[];
+  },
   landedUrl: string,
-): Promise<{ token: string | null; proof: Proof; baseUrl: string | null; authHeader: string | null; docsUrl: string | null; notes: string }> {
+): Promise<{ token: string | null; proof: Proof; baseUrl: string | null; authHeader: string | null; docsUrl: string | null; notes: string; keyPageUrl: string | null }> {
   const skyvern = rt.skyvern;
-  if (!skyvern) return { token: null, proof: "not_tried", baseUrl: null, authHeader: null, docsUrl: null, notes: "" };
-  const serviceUrls = [landedUrl, args.url, args.discovery?.mcp?.url, args.discovery?.domain].filter((u): u is string => Boolean(u));
+  const empty = { token: null, proof: "not_tried" as Proof, baseUrl: null, authHeader: null, docsUrl: null, notes: "", keyPageUrl: null };
+  if (!skyvern) return empty;
+  const serviceUrls = [landedUrl, args.url, args.savedKeyPageUrl, args.discovery?.mcp?.url, args.discovery?.domain, ...(args.domains ?? [])].filter(
+    (u): u is string => Boolean(u),
+  );
   const onService = (url: string | null) => (url && credentialHostAllowed(url, serviceUrls) ? url : null);
-  const hinted = onService(args.discovery?.api?.keyPageUrl ?? null);
+  const remembered = onService(args.savedKeyPageUrl ?? null);
+  const hinted = remembered ?? onService(args.discovery?.api?.keyPageUrl ?? null);
   const baseUrl = onService(args.discovery?.api?.baseUrl ?? null);
   const authHeader = args.discovery?.api?.authHeader || null;
   const docsUrl = onService(args.discovery?.api?.docsUrl ?? null);
-  const anchors = [landedUrl, hinted, baseUrl, docsUrl].filter((u): u is string => Boolean(u));
-  const start = hinted ?? keySearchStart(landedUrl, args.url ?? null);
+  const start = remembered ?? hinted ?? keySearchStart(landedUrl, args.url ?? null);
 
   let feedback: string | null = null;
   let forceRead = false;
   let token: string | null = null;
+  let keyPageUrl: string | null = null;
   let notes = "";
   for (let i = 0; i < 3 && !token; i++) {
     const prompt = forceRead
       ? readPagePrompt()
-      : apiKeyPrompt({ agentName: rt.cfg.agentName, keyPageUrl: hinted, feedback, hint: args.hint ?? null });
+      : apiKeyPrompt({
+          agentName: rt.cfg.agentName,
+          keyPageUrl: hinted,
+          remembered: Boolean(remembered),
+          feedback,
+          hint: args.hint ?? null,
+        });
     forceRead = false;
     feedback = null;
     const extracted = await skyvern.extract({
       runId: run.id,
       url: start,
       prompt,
-      purpose: `найти API-ключ ${args.service}`,
+      purpose: remembered ? `выпустить API-ключ ${args.service}` : `найти API-ключ ${args.service}`,
       schema: API_KEY_SCHEMA,
       browserSessionId,
-      maxSteps: i === 0 ? 40 : 8,
+      maxSteps: i === 0 ? (remembered ? 20 : 40) : 8,
       expectTotp: true,
       service: args.service,
       onStep: (text, data) => rt.step(run.id, "browser", text, data),
@@ -751,6 +797,8 @@ async function seekApiKey(
     notes = parsed.notes;
     if (parsed.found && parsed.apiKey) {
       token = parsed.apiKey;
+      const live = await skyvern.currentUrl(browserSessionId).catch(() => null);
+      keyPageUrl = keyPageToStore(parsed.keyPageUrl, serviceUrls) ?? keyPageToStore(live, serviceUrls);
       await rememberToken(rt, run, args.slug, token);
       break;
     }
@@ -760,11 +808,22 @@ async function seekApiKey(
 
   const proveUrls = proofUrlsForService(args.discovery?.api?.readEndpoints ?? [], args.discovery?.api?.baseUrl ?? null, serviceUrls);
   if (!token || !authHeader || !proveUrls.length) {
-    return { token, proof: token ? "not_tried" : "not_tried", baseUrl, authHeader, docsUrl, notes };
+    return { token, proof: token ? "not_tried" : "not_tried", baseUrl, authHeader, docsUrl, notes, keyPageUrl };
   }
   const proof = await proveApiKey({ urls: proveUrls, headerName: authHeader, token });
   await rt.step(run.id, "api", proof.detail);
-  return { token, proof: proof.verdict, baseUrl, authHeader, docsUrl, notes };
+  return { token, proof: proof.verdict, baseUrl, authHeader, docsUrl, notes, keyPageUrl };
+}
+
+/** Страница, где токен выпустился, остаётся в рецепте для следующего онбординга. */
+async function rememberKeyPage(rt: AgentRuntime, run: Run, slug: string, page: string): Promise<boolean> {
+  const snap = await rt.store.readServices();
+  const known = snap?.recipes.find((r) => r.slug === slug);
+  if (!known) return false;
+  const next = recipeWithKeyPage(known, page);
+  if (!next) return known.browser?.keyPageUrl === page;
+  await rt.services.applyReport({ type: "recipe", recipe: next, runId: run.id }, { quiet: true });
+  return true;
 }
 
 /** MCP, который стоит проверить: проверенная находка поиска или рецепт каталога. */
@@ -819,17 +878,25 @@ async function persistConnection(
     baseUrl: string | null;
     authHeader: string | null;
     docsUrl: string | null;
+    keyPageUrl?: string | null;
     loginUrl: string;
     appUrl: string;
     cookiesInProfile?: boolean;
   },
 ): Promise<void> {
   const domains = args.domain ? [args.domain] : [];
+  const previous = (await rt.store.readServices())?.recipes.find((r) => r.slug === args.slug) ?? null;
+  const keyPageUrl = args.keyPageUrl ?? previous?.browser?.keyPageUrl;
   // В общий каталог не кладём ссылку приглашения: в ней бывает одноразовый токен. Вход — с корня сервиса.
-  const browser =
+  const browserBuilt =
     /^https?:\/\//i.test(args.loginUrl) && /^https?:\/\//i.test(args.appUrl)
-      ? { loginUrl: isInviteUrl(args.loginUrl) ? loginAfterApproval(args.loginUrl, args.appUrl) : args.loginUrl, appUrl: args.appUrl }
+      ? {
+          loginUrl: isInviteUrl(args.loginUrl) ? loginAfterApproval(args.loginUrl, args.appUrl) : args.loginUrl,
+          appUrl: args.appUrl,
+          ...(keyPageUrl ? { keyPageUrl } : {}),
+        }
       : undefined;
+  const browser = browserBuilt ?? (keyPageUrl ? previous?.browser : undefined);
   if (args.mode === "api" && args.baseUrl) {
     const auth = recipeAuth(args.authHeader);
     const recipe: ServiceRecipe = {
@@ -850,9 +917,11 @@ async function persistConnection(
     await rt.services.applyReport({ type: "recipe", recipe, runId: run.id });
   } else if (args.mode === "browser") {
     const known = (await rt.store.readServices())?.recipes.find((r) => r.slug === args.slug) ?? null;
-    if (known && !known.browser && browser) {
+    if (known && browser && (!known.browser || (keyPageUrl && known.browser.keyPageUrl !== keyPageUrl))) {
       // Рецепт MCP или API без адреса приложения: модель не знает, где этот сервис живёт в браузере.
-      await rt.services.applyReport({ type: "recipe", recipe: { ...known, browser }, runId: run.id }, { quiet: true });
+      // Уже известный кабинет дополняется страницей, где выпустился токен.
+      const nextBrowser = known.browser ? { ...known.browser, ...(keyPageUrl ? { keyPageUrl } : {}) } : browser;
+      await rt.services.applyReport({ type: "recipe", recipe: { ...known, browser: nextBrowser }, runId: run.id }, { quiet: true });
     }
     if (!known && browser) {
       const recipe: ServiceRecipe = {

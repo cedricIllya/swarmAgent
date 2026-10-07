@@ -1,4 +1,4 @@
-import { messengerPatch, type ServiceCredential, type ServiceRecipe } from "@swarm/contracts";
+import { mergeBrowser, messengerPatch, type ServiceCredential, type ServiceRecipe } from "@swarm/contracts";
 import { hostOf, sameBrand } from "./domains";
 import { mcpToolNames } from "../discovery";
 
@@ -11,7 +11,7 @@ import { mcpToolNames } from "../discovery";
 export type Guard<T> = { ok: true; value: T; note: string | null } | { ok: false; reason: string };
 
 function urlsOf(r: ServiceRecipe): string[] {
-  return [r.mcp?.url, r.api?.baseUrl, r.api?.docsUrl, r.browser?.loginUrl, r.browser?.appUrl].filter(
+  return [r.mcp?.url, r.api?.baseUrl, r.api?.docsUrl, r.browser?.loginUrl, r.browser?.appUrl, r.browser?.keyPageUrl].filter(
     (u): u is string => typeof u === "string" && /^https?:\/\//i.test(u),
   );
 }
@@ -35,7 +35,7 @@ export function guardRecipeReport(existing: ServiceRecipe | null, incoming: Serv
   // Пометку «сервис для задач» ставит разбор документации, не отчёт модели с пустого захода.
   if (!existing) return { ok: true, value: messengerPatch({ ...incoming, watchesTasks: null }), note: null };
 
-  const browser = incoming.browser ?? existing.browser;
+  const browser = mergeBrowser(existing.browser, incoming.browser);
   const merged: ServiceRecipe = {
     ...existing,
     name: existing.name,

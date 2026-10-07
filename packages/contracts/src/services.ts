@@ -35,6 +35,11 @@ export const ServiceRecipeSchema = z.object({
     .object({
       loginUrl: z.string().url(),
       appUrl: z.string().url(),
+      /**
+       * Страница, на которой токен уже выпускали.
+       * Следующий онбординг открывает её сразу и не ищет раздел в меню.
+       */
+      keyPageUrl: z.string().url().optional(),
     })
     .optional(),
   /** Что уже выяснили о сервисе словами, чтобы следующий агент не искал заново. */
@@ -127,6 +132,21 @@ export function keepChannel(
   return null;
 }
 
+type BrowserRecipe = NonNullable<ServiceRecipe["browser"]>;
+
+/**
+ * Повторная запись рецепта не забывает страницу, где уже выпускали токен.
+ * Новый адрес заменяет старый. Запись без адреса оставляет прежний.
+ */
+export function mergeBrowser(
+  prev: BrowserRecipe | null | undefined,
+  next: BrowserRecipe | null | undefined,
+): BrowserRecipe | null {
+  if (!next) return prev ?? null;
+  if (!prev?.keyPageUrl || next.keyPageUrl) return next;
+  return { ...next, keyPageUrl: prev.keyPageUrl };
+}
+
 function hostOnDomains(url: string, domains: string[]): boolean {
   let host = "";
   try {
@@ -150,8 +170,13 @@ export function withoutForeignEndpoints(recipe: ServiceRecipe): ServiceRecipe {
   const ok = (url: string | undefined) => !url || hostOnDomains(url, recipe.domains);
   const mcp = recipe.mcp && ok(recipe.mcp.url) ? recipe.mcp : undefined;
   const api = recipe.api && ok(recipe.api.baseUrl) && ok(recipe.api.docsUrl) ? recipe.api : undefined;
-  const browser = recipe.browser && ok(recipe.browser.loginUrl) && ok(recipe.browser.appUrl) ? recipe.browser : undefined;
-  const dropped = mcp !== recipe.mcp || api !== recipe.api || browser !== recipe.browser;
+  const browserKept = recipe.browser && ok(recipe.browser.loginUrl) && ok(recipe.browser.appUrl) ? recipe.browser : undefined;
+  let browser = browserKept;
+  if (browser?.keyPageUrl && !ok(browser.keyPageUrl)) {
+    const { keyPageUrl: _foreign, ...rest } = browser;
+    browser = rest;
+  }
+  const dropped = mcp !== recipe.mcp || api !== recipe.api || browserKept !== recipe.browser;
   const notes = dropped
     ? recipe.notes
         .split(/(?<=\.)\s+/)
