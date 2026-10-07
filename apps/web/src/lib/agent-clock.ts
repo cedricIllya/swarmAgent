@@ -5,6 +5,7 @@ import { rolloutAgents } from "@/lib/agent-rollout";
 import { reconcileProvisioning } from "@/lib/create-agent";
 import { db } from "@/lib/db";
 import { retryInboundMail } from "@/lib/mail-delivery";
+import { retrySlack } from "@/lib/slack-delivery";
 import { awakeRuntime } from "@/lib/runtime-client";
 
 const g = globalThis as { __swarmClock?: boolean };
@@ -87,6 +88,7 @@ export function startAgentClock(): void {
   setInterval(() => void runReconcile(), 60_000);
   // Письмо, которое не дождалось подъёма машины. Пустая очередь — это возврат без запросов.
   setInterval(() => void retryInboundMail(), 60_000);
+  setInterval(() => void retrySlack(), 60_000);
   // Новый процесс — это чаще всего новая выкладка: агентов надо перевести на её образ сразу.
   setTimeout(() => void runTicks(), 20_000);
   console.log("[clock] проверка агентов раз в 15 минут, пока этот процесс не спит");

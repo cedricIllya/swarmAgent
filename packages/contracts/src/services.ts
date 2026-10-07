@@ -189,6 +189,11 @@ export const ServiceCredentialSchema = z.object({
   accountName: z.string().optional(),
   /** Пароль аккаунта, который агент сам задал при регистрации по приглашению. */
   password: z.string().optional(),
+  /**
+   * Внешний ключ установки, по которому webhook находит агента.
+   * У Slack это id команды. В шифрованное тело не кладётся — только в колонку.
+   */
+  externalKey: z.string().min(1).max(64).optional(),
 });
 
 export type ServiceCredential = z.infer<typeof ServiceCredentialSchema>;
@@ -208,6 +213,7 @@ export function mergeCredential(prev: ServiceCredential | undefined, next: Servi
     accountEmail: next.accountEmail ?? prev.accountEmail,
     accountName: next.accountName ?? prev.accountName,
     password: next.password ?? prev.password,
+    externalKey: next.externalKey ?? prev.externalKey,
   });
 }
 

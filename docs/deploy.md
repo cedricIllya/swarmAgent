@@ -158,5 +158,6 @@ Hermes берётся готовым образом `nousresearch/hermes-agent:l
 1. Свой домен агентов по шагам выше. Секреты Mailgun уже отложены в приложении и применятся первой выкладкой.
 2. `SKYVERN_API_KEY`, если нужен вход через Skyvern и обход капчи. Свой браузер для работы внутри сервиса уже в образе runtime.
 3. `GOOGLE_CLIENT_ID` и `GOOGLE_CLIENT_SECRET`, redirect `https://swarm-control-plane.fly.dev/api/google/callback`.
+4. `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` и `SLACK_SIGNING_SECRET`. Redirect `https://swarm-control-plane.fly.dev/api/slack/callback`, Request URL `https://swarm-control-plane.fly.dev/webhooks/slack`.
 
 Вход, регистрация и пустой список агентов работают без этих пунктов.

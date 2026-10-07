@@ -3,6 +3,7 @@ import type {
   ChatRequest,
   ChatThread,
   DeliverEmailRequest,
+  DeliverSlackEventRequest,
   GoogleTokenRequest,
   RuntimeState,
   SyncServicesRequest,
@@ -86,6 +87,10 @@ export class RuntimeClient {
 
   deliverEmail(body: DeliverEmailRequest): Promise<{ accepted: boolean }> {
     return this.call("POST", "/email", body);
+  }
+
+  deliverSlack(body: DeliverSlackEventRequest): Promise<{ status: "accepted" | "duplicate" | "ignored" | "unavailable" }> {
+    return this.call("POST", "/channel/slack", body, 30_000);
   }
 
   chat(body: ChatRequest): Promise<{ runId: string; chatId: string }> {

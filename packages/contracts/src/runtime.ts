@@ -16,6 +16,23 @@ export const DeliverEmailRequestSchema = z.object({
   email: InboundEmailSchema,
 });
 
+/** Событие Slack, уже проверенное подписью на control plane. */
+export const DeliverSlackEventRequestSchema = z.object({
+  eventId: z.string().min(1).max(64),
+  teamId: z.string().min(1).max(32),
+  event: z.object({
+    type: z.enum(["message", "app_mention"]),
+    channel: z.string().min(1).max(32),
+    user: z.string().max(32).optional(),
+    text: z.string().max(8000).optional(),
+    ts: z.string().min(1).max(32),
+    threadTs: z.string().max(32).optional(),
+    channelType: z.string().max(32).optional(),
+    botId: z.string().max(32).optional(),
+    subtype: z.string().max(64).optional(),
+  }),
+});
+
 export const ChatRequestSchema = z.object({
   message: z.string().min(1),
   /** Кто написал, чтобы runtime знал, что это владелец. */
@@ -188,6 +205,7 @@ export const RuntimeEventSchema = z.discriminatedUnion("type", [
 ]);
 
 export type DeliverEmailRequest = z.infer<typeof DeliverEmailRequestSchema>;
+export type DeliverSlackEventRequest = z.infer<typeof DeliverSlackEventRequestSchema>;
 export type ChatRequest = z.infer<typeof ChatRequestSchema>;
 export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsRequestSchema>;
 export type SyncServicesRequest = z.infer<typeof SyncServicesRequestSchema>;

@@ -205,14 +205,17 @@ export const serviceCredentials = pgTable(
       .notNull()
       .references(() => serviceRecipes.slug, { onDelete: "cascade" }),
     kind: accessKind("kind").notNull(),
-    /** Зашифрованный JSON ServiceCredential без slug/kind. */
+    /** Зашифрованный JSON ServiceCredential без slug/kind и без externalKey. */
     secretEnc: text("secret_enc").notNull(),
     accountEmail: text("account_email"),
+    /** Id установки снаружи. У Slack — id команды, по нему приходит webhook. */
+    externalKey: text("external_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex("service_credentials_agent_slug_idx").on(t.agentId, t.slug),
+    uniqueIndex("service_credentials_slug_external_idx").on(t.slug, t.externalKey),
     index("service_credentials_tenant_idx").on(t.tenantId),
   ],
 );

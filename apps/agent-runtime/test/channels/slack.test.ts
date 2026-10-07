@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Run, ServiceRecipe } from "@swarm/contracts";
 import { hearSlack, slackPlainText } from "../../src/channels/slack";
-import { listenMessengers } from "../../src/channels/listen";
+import { acceptSlackEvent, listenMessengers } from "../../src/channels/listen";
 import { Store } from "../../src/store";
 import type { AgentRuntime } from "../../src/runtime";
 
@@ -179,5 +179,38 @@ describe("listenMessengers", () => {
     expect(saved?.recipes[0]?.channel).toBe("messenger");
     expect(saved?.recipes[0]?.watchesTasks).toBe(false);
     expect(saved?.recipes[0]?.notes).toContain("Канал связи:");
+
+    expect(
+      await acceptSlackEvent(rt, {
+        eventId: "Ev-dm",
+        teamId: "T1",
+        event: { type: "message", channel: "D1", channelType: "im", user: "UALICE", text: "из события", ts: "300.000100" },
+      }),
+    ).toBe("accepted");
+    expect(
+      await acceptSlackEvent(rt, {
+        eventId: "Ev-again",
+        teamId: "T1",
+        event: { type: "message", channel: "D1", channelType: "im", user: "UALICE", text: "из события", ts: "300.000100" },
+      }),
+    ).toBe("duplicate");
+    expect(
+      await acceptSlackEvent(rt, {
+        eventId: "Ev-bot",
+        teamId: "T1",
+        event: { type: "message", channel: "D1", channelType: "im", user: "UBOT", botId: "B1", text: "я сам", ts: "300.000200" },
+      }),
+    ).toBe("ignored");
+    expect(
+      await acceptSlackEvent(rt, {
+        eventId: "Ev-mention",
+        teamId: "T1",
+        event: { type: "app_mention", channel: "C1", user: "UALICE", text: "посмотри <@UBOT> отчёт", ts: "400.000100" },
+      }),
+    ).toBe("accepted");
+    await vi.waitFor(() => expect(runs.filter((run) => run.status === "done")).toHaveLength(3));
+    const titles = (await store.chats.list()).map((chat) => chat.title);
+    expect(titles).toContain("Slack · Алиса");
+    expect(runs).toHaveLength(3);
   });
 });

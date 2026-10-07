@@ -5,6 +5,7 @@ import {
   mergeCredential,
   MESSENGER_DOMAINS,
   MESSENGER_SLUGS,
+  messengerAdapter,
   messengerPatch,
   ServiceCredentialSchema,
   ServiceRecipeSchema,
@@ -129,6 +130,7 @@ export async function listCredentials(db: Db, agentId: string): Promise<ServiceC
       slug: row.slug,
       kind: row.kind,
       accountEmail: row.accountEmail ?? body["accountEmail"],
+      ...(row.externalKey ? { externalKey: row.externalKey } : {}),
     });
   });
 }
@@ -137,7 +139,7 @@ export async function upsertCredential(db: Db, owner: CredentialOwner, credentia
   const parsed = ServiceCredentialSchema.parse(credential);
   const prev = (await listCredentials(db, owner.agentId)).find((c) => c.slug === parsed.slug);
   const merged = mergeCredential(prev, parsed);
-  const { slug, kind, accountEmail, ...secret } = merged;
+  const { slug, kind, accountEmail, externalKey, ...secret } = merged;
   const secretEnc = encryptJson(secret);
   await db
     .insert(schema.serviceCredentials)
@@ -149,11 +151,31 @@ export async function upsertCredential(db: Db, owner: CredentialOwner, credentia
       kind,
       secretEnc,
       accountEmail: accountEmail ?? null,
+      externalKey: externalKey ?? null,
     })
     .onConflictDoUpdate({
       target: [schema.serviceCredentials.agentId, schema.serviceCredentials.slug],
-      set: { kind, secretEnc, accountEmail: accountEmail ?? null, updatedAt: new Date() },
+      set: { kind, secretEnc, accountEmail: accountEmail ?? null, externalKey: externalKey ?? null, updatedAt: new Date() },
     });
+}
+
+/** Агент, чей Slack установлен в этой команде. Секрет не расшифровывается. */
+export async function findSlackInstall(
+  db: Db,
+  teamId: string,
+): Promise<{ agentId: string; tenantId: string; slug: string } | null> {
+  const rows = await db
+    .select({
+      agentId: schema.serviceCredentials.agentId,
+      tenantId: schema.serviceCredentials.tenantId,
+      slug: schema.serviceRecipes.slug,
+      domains: schema.serviceRecipes.domains,
+    })
+    .from(schema.serviceCredentials)
+    .innerJoin(schema.serviceRecipes, eq(schema.serviceRecipes.slug, schema.serviceCredentials.slug))
+    .where(eq(schema.serviceCredentials.externalKey, teamId));
+  const hit = rows.find((row) => messengerAdapter(row) === "slack");
+  return hit ? { agentId: hit.agentId, tenantId: hit.tenantId, slug: hit.slug } : null;
 }
 
 export async function deleteCredential(db: Db, agentId: string, slug: string): Promise<void> {

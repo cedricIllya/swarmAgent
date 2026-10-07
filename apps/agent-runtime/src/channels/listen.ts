@@ -1,4 +1,4 @@
-import type { ChatMessage, ServiceCredential, ServiceRecipe } from "@swarm/contracts";
+import type { ChatMessage, DeliverSlackEventRequest, ServiceCredential, ServiceRecipe } from "@swarm/contracts";
 import { messengerAdapter, messengerPatch } from "@swarm/contracts";
 import { readJson, writeJson } from "../store/files";
 import type { ChannelLink } from "../store/chats";
@@ -14,6 +14,7 @@ import {
   slackIdentity,
   slackPost,
   type HeardSlack,
+  type SlackIdentity,
 } from "./slack";
 
 interface ChannelState {
@@ -21,9 +22,11 @@ interface ChannelState {
   /** Ключ `slug:channel` → ts Slack, с которого читать дальше. */
   cursors: Record<string, string>;
   names: Record<string, string>;
+  /** slug рецепта → бот, чтобы не звать auth.test на каждое событие. */
+  identities: Record<string, SlackIdentity>;
 }
 
-const EMPTY: ChannelState = { seen: [], cursors: {}, names: {} };
+const EMPTY: ChannelState = { seen: [], cursors: {}, names: {}, identities: {} };
 const FIRST_WINDOW_SEC = 20 * 60;
 const MAX_SEEN = 400;
 const MAX_PER_TICK = 20;
@@ -53,14 +56,52 @@ async function readState(rt: AgentRuntime): Promise<ChannelState> {
     seen: Array.isArray(raw?.seen) ? raw.seen : [],
     cursors: raw?.cursors && typeof raw.cursors === "object" ? raw.cursors : {},
     names: raw?.names && typeof raw.names === "object" ? raw.names : {},
+    identities: raw?.identities && typeof raw.identities === "object" ? raw.identities : {},
   };
 }
 
+/** Склеивает курсоры и уже виденные id, чтобы опрос не затёр событие, пришедшее вебхуком. */
 async function writeState(rt: AgentRuntime, state: ChannelState): Promise<void> {
   const file = stateFile(rt);
   if (!file) return;
-  state.seen = state.seen.slice(-MAX_SEEN);
-  await exclusive(() => writeJson(file, state));
+  await exclusive(async () => {
+    const disk = await readJson<ChannelState | null>(file, null);
+    const seen = Array.isArray(disk?.seen) ? [...disk.seen] : [];
+    for (const id of state.seen) if (!seen.includes(id)) seen.push(id);
+    const cursors = { ...(disk?.cursors ?? {}) };
+    for (const [key, value] of Object.entries(state.cursors)) {
+      const prev = cursors[key];
+      if (!prev || value > prev) cursors[key] = value;
+    }
+    await writeJson(file, {
+      seen: seen.slice(-MAX_SEEN),
+      cursors,
+      names: { ...(disk?.names ?? {}), ...state.names },
+      identities: { ...(disk?.identities ?? {}), ...state.identities },
+    });
+  });
+}
+
+/** `false` — это сообщение уже взято в работу. */
+async function claimSeen(rt: AgentRuntime, id: string): Promise<boolean> {
+  return exclusive(async () => {
+    const state = await readState(rt);
+    if (state.seen.includes(id)) return false;
+    state.seen.push(id);
+    state.seen = state.seen.slice(-MAX_SEEN);
+    const file = stateFile(rt);
+    if (file) await writeJson(file, state);
+    return true;
+  });
+}
+
+async function forgetSeen(rt: AgentRuntime, id: string): Promise<void> {
+  await exclusive(async () => {
+    const state = await readState(rt);
+    state.seen = state.seen.filter((item) => item !== id);
+    const file = stateFile(rt);
+    if (file) await writeJson(file, state);
+  });
 }
 
 function tokenOf(cred: ServiceCredential | undefined): string | null {
@@ -126,13 +167,38 @@ async function ingest(rt: AgentRuntime, slug: string, author: string, heard: Hea
   await handleChat(rt, { chatId, message: heard.text, author, fromMessenger: true });
 }
 
-async function pullSlack(rt: AgentRuntime, recipe: ServiceRecipe, token: string): Promise<number> {
+async function cachedIdentity(rt: AgentRuntime, slug: string, token: string): Promise<SlackIdentity | null> {
+  const state = await readState(rt);
+  const known = state.identities[slug];
+  if (known?.userId && known.teamId) return known;
+  const fresh = await slackIdentity(token, globalThis.fetch);
+  if (!fresh) return null;
+  state.identities[slug] = fresh;
+  await writeState(rt, state);
+  return fresh;
+}
+
+/** Команда Slack пишется в доступ, чтобы webhook нашёл этого агента. */
+async function rememberTeam(rt: AgentRuntime, cred: ServiceCredential, teamId: string): Promise<void> {
+  if (cred.externalKey === teamId || !rt.services?.applyReport) return;
+  try {
+    await rt.services.applyReport(
+      { type: "credential", credential: { slug: cred.slug, kind: cred.kind, externalKey: teamId } },
+      { quiet: true },
+    );
+  } catch (e) {
+    warn("channel", "команду Slack не записал", { slug: cred.slug, error: String(e) });
+  }
+}
+
+async function pullSlack(rt: AgentRuntime, recipe: ServiceRecipe, cred: ServiceCredential, token: string): Promise<number> {
   const fetchImpl = globalThis.fetch;
-  const identity = await slackIdentity(token, fetchImpl);
+  const identity = await cachedIdentity(rt, recipe.slug, token);
   if (!identity) {
     warn("channel", "токен Slack не принимает auth.test, сообщения не читаются", { slug: recipe.slug });
     return 0;
   }
+  await rememberTeam(rt, cred, identity.teamId);
   const state = await readState(rt);
   const seen = new Set(state.seen);
   let heard = 0;
@@ -169,6 +235,11 @@ async function pullSlack(rt: AgentRuntime, recipe: ServiceRecipe, token: string)
       if (heard >= MAX_PER_TICK) {
         stopped = true;
         break;
+      }
+      if (!(await claimSeen(rt, item.externalId))) {
+        const ts = item.externalId.slice(item.externalId.indexOf(":") + 1);
+        if (ts > advanced) advanced = ts;
+        continue;
       }
       seen.add(item.externalId);
       state.seen.push(item.externalId);
@@ -211,12 +282,66 @@ export async function listenMessengers(rt: AgentRuntime): Promise<number> {
     const token = tokenOf(cred);
     if (!token) continue;
     try {
-      heard += await pullSlack(rt, recipe, token);
+      heard += await pullSlack(rt, recipe, cred, token);
     } catch (e) {
       warn("channel", "Slack не прочитан", { slug: recipe.slug, error: String(e) });
     }
   }
   return heard;
+}
+
+export type SlackAccept = "accepted" | "duplicate" | "ignored" | "unavailable";
+
+/**
+ * Событие Events API. Личка и упоминание становятся той же задачей, что и опрос.
+ * Повтор Slack с тем же ts не открывает вторую.
+ */
+export async function acceptSlackEvent(rt: AgentRuntime, inbound: DeliverSlackEventRequest): Promise<SlackAccept> {
+  if (typeof rt.store?.readServices !== "function" || typeof rt.store.dir !== "function" || typeof rt.store.chats?.create !== "function") {
+    return "unavailable";
+  }
+  const services = await rt.store.readServices();
+  const recipe = services?.recipes.find(
+    (item) => messengerAdapter(item) === "slack" && services.credentials.some((cred) => cred.slug === item.slug),
+  );
+  const cred = recipe ? services?.credentials.find((item) => item.slug === recipe.slug) : undefined;
+  const token = tokenOf(cred);
+  if (!recipe || !cred || !token) return "unavailable";
+  const identity = await cachedIdentity(rt, recipe.slug, token);
+  if (!identity) return "unavailable";
+  await rememberTeam(rt, cred, identity.teamId);
+  const event = inbound.event;
+  const heard = hearSlack({
+    teamId: identity.teamId,
+    selfId: identity.userId,
+    channelId: event.channel,
+    im: event.channelType === "im" || event.channel.startsWith("D"),
+    messages: [
+      {
+        type: "message",
+        ...(event.user ? { user: event.user } : {}),
+        ...(event.botId ? { bot_id: event.botId } : {}),
+        ...(event.subtype ? { subtype: event.subtype } : {}),
+        ...(event.text ? { text: event.text } : {}),
+        ts: event.ts,
+        ...(event.threadTs ? { thread_ts: event.threadTs } : {}),
+      },
+    ],
+  });
+  const item = heard[0];
+  if (!item) return "ignored";
+  if (!(await claimSeen(rt, item.externalId))) return "duplicate";
+  try {
+    const state = await readState(rt);
+    const name = await authorName(token, state, item.authorId, globalThis.fetch);
+    await writeState(rt, state);
+    await ingest(rt, recipe.slug, name, item);
+    return "accepted";
+  } catch (e) {
+    await forgetSeen(rt, item.externalId);
+    warn("channel", "событие Slack не принято", { id: inbound.eventId, error: String(e) });
+    throw e;
+  }
 }
 
 /** Ответ агента в диалоге мессенджера уходит в тот же тред. */

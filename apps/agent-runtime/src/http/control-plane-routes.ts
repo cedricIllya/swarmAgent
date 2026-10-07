@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   ChatRequestSchema,
   DeliverEmailRequestSchema,
+  DeliverSlackEventRequestSchema,
   GoogleTokenRequestSchema,
   SyncServicesRequestSchema,
   UpdateSettingsRequestSchema,
@@ -12,6 +13,7 @@ import {
 import type { AgentRuntime } from "../runtime";
 import { processEmail } from "../tasks/inbox";
 import { handleChat, retryChatRun } from "../tasks/chat";
+import { acceptSlackEvent } from "../channels/listen";
 import { continueFinishedAnswer, takeFinishedAnswer } from "../tasks/question-reply";
 import { tick } from "../tasks/cron";
 import { streamRuntimeEvents } from "./events-routes";
@@ -32,6 +34,13 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
     const body = DeliverEmailRequestSchema.parse(await c.req.json());
     processEmail(rt, body.email).catch((e) => warn("inbox", "обработка упала", { error: String(e) }));
     return c.json({ accepted: true }, 202);
+  });
+
+  app.post("/channel/slack", async (c) => {
+    noteActivity();
+    const body = DeliverSlackEventRequestSchema.parse(await c.req.json());
+    const status = await acceptSlackEvent(rt, body);
+    return c.json({ status }, 202);
   });
 
   app.post("/chat", async (c) => {

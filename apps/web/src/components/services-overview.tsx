@@ -4,13 +4,15 @@ import type { TenantConnection } from "@swarm/connections";
 import { accessKindLabel } from "./agent-dashboard/agent-access";
 import { TaskWatchTag } from "./task-watch-tag";
 import { AgentFace } from "./agent-avatar";
-import { DisconnectGoogleButton, ServiceAgentChips } from "./disconnect-service";
+import { DisconnectGoogleButton, DisconnectServiceButton, ServiceAgentChips } from "./disconnect-service";
 
 function initials(name: string): string {
   return name.trim().slice(0, 1).toUpperCase() || "?";
 }
 
 export function ServicesOverview({ agents, connections }: { agents: Agent[]; connections: TenantConnection[] }) {
+  const slack = connections.find((connection) => connection.slug === "slack");
+  const catalog = connections.filter((connection) => connection.slug !== "slack");
   const googleAgents = agents.filter((a) => a.googleConnected);
   const totalLinks = connections.reduce((n, c) => n + c.agents.length, 0) + googleAgents.length;
   const agentsWithAccess = new Set<string>([
@@ -48,9 +50,12 @@ export function ServicesOverview({ agents, connections }: { agents: Agent[]; con
       </div>
 
       <GoogleCard agents={agents} />
+      <SlackCard agents={agents} connection={slack} />
 
-      {connections.length === 0 ? (
-        <EmptyState agents={agents} />
+      {catalog.length === 0 ? (
+        connections.length === 0 ? (
+          <EmptyState agents={agents} />
+        ) : null
       ) : (
         <section className="card">
           <div className="card-head">
@@ -58,10 +63,10 @@ export function ServicesOverview({ agents, connections }: { agents: Agent[]; con
               <h2>Из каталога</h2>
               <span className="muted small">Сервисы, в которые агенты вошли сами — по приглашению или ключу</span>
             </div>
-            <span className="badge">{connections.length}</span>
+            <span className="badge">{catalog.length}</span>
           </div>
           <div className="service-list">
-            {connections.map((c) => (
+            {catalog.map((c) => (
               <ServiceRow key={c.slug} connection={c} />
             ))}
           </div>
@@ -120,6 +125,66 @@ function GoogleCard({ agents }: { agents: Agent[] }) {
               </Link>
               <span className="agent-link-meta">не подключён</span>
               <a className="btn btn-sm" href={`/api/agents/${a.id}/google`}>
+                Подключить
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SlackCard({ agents, connection }: { agents: Agent[]; connection: TenantConnection | undefined }) {
+  const linked = new Set(connection?.agents.map((agent) => agent.agentId) ?? []);
+  const connected = agents.filter((agent) => linked.has(agent.id));
+  const rest = agents.filter((agent) => !linked.has(agent.id));
+  return (
+    <section className="card">
+      <div className="card-head">
+        <div className="row" style={{ gap: 12 }}>
+          <span className="avatar avatar-slack" aria-hidden>
+            S
+          </span>
+          <div>
+            <h2>Slack</h2>
+            <span className="muted small">Личные сообщения и упоминания приходят агенту сразу</span>
+          </div>
+        </div>
+        <span className={`badge ${connected.length ? "badge-ok" : ""}`}>
+          {connected.length ? `${connected.length} из ${agents.length}` : "не подключён"}
+        </span>
+      </div>
+
+      {agents.length === 0 ? (
+        <p className="faint small" style={{ margin: 0 }}>
+          Сначала <Link href="/">создайте агента</Link> — Slack подключается к конкретному агенту.
+        </p>
+      ) : (
+        <div className="agent-links">
+          {connected.map((agent) => (
+            <div key={agent.id} className="agent-link">
+              <Link href={`/agents/${agent.id}`} className="agent-link-name">
+                <AgentFace agent={agent} size="sm" />
+                {agent.name}
+              </Link>
+              <span className="agent-link-meta">подключён</span>
+              <div className="row" style={{ gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                <a className="btn btn-sm btn-ghost" href={`/api/agents/${agent.id}/slack`}>
+                  Переподключить
+                </a>
+                <DisconnectServiceButton agentId={agent.id} slug="slack" serviceName="Slack" agentName={agent.name} />
+              </div>
+            </div>
+          ))}
+          {rest.map((agent) => (
+            <div key={agent.id} className="agent-link agent-link-off">
+              <Link href={`/agents/${agent.id}`} className="agent-link-name">
+                <AgentFace agent={agent} size="sm" />
+                {agent.name}
+              </Link>
+              <span className="agent-link-meta">не подключён</span>
+              <a className="btn btn-sm" href={`/api/agents/${agent.id}/slack`}>
                 Подключить
               </a>
             </div>

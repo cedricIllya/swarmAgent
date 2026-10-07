@@ -79,6 +79,17 @@ export const env = {
       return opt("GOOGLE_CLIENT_SECRET");
     },
   },
+  slack: {
+    get clientId() {
+      return opt("SLACK_CLIENT_ID");
+    },
+    get clientSecret() {
+      return opt("SLACK_CLIENT_SECRET");
+    },
+    get signingSecret() {
+      return opt("SLACK_SIGNING_SECRET");
+    },
+  },
   /** В разработке можно указать адрес локального runtime вместо Fly. */
   get devRuntimeUrl() {
     return opt("DEV_RUNTIME_URL");
