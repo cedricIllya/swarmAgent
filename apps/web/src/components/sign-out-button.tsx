@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { t } from "@/i18n";
 import { authClient } from "@/lib/auth-client";
 
 export function SignOutButton() {
@@ -14,7 +15,7 @@ export function SignOutButton() {
         router.refresh();
       }}
     >
-      Выйти
+      {t("auth.signOut")}
     </button>
   );
 }

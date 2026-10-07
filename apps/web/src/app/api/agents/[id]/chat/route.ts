@@ -4,6 +4,7 @@ import { getAgent } from "@swarm/agents";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
 import { awakeRuntime } from "@/lib/runtime-client";
+import { t } from "@/i18n";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
   const viewer = await getViewer();
@@ -15,7 +16,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!body.success) return NextResponse.json({ error: "bad input" }, { status: 400 });
   const client = await awakeRuntime(agent);
   if (!client) {
-    return NextResponse.json({ error: "Агент ещё не запущен" }, { status: 409 });
+    return NextResponse.json({ error: t("errors.agentNotStarted") }, { status: 409 });
   }
   const r = await client.chat({
     message: body.data.message,

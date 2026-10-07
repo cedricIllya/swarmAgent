@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { t } from "@/i18n";
 import type { Agent } from "@swarm/contracts";
 
 /** Поле задачи: без ленты чатов. История и кнопки живут в журнале задачи. */
@@ -51,7 +52,7 @@ export function TaskComposer({
       if (!res.ok) {
         staged.drop();
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        setError(data?.error ?? "Не удалось отправить задачу");
+        setError(data?.error ?? t("task.sendFailed"));
         if (!textRef.current.trim()) write(message);
         return;
       }
@@ -59,7 +60,7 @@ export function TaskComposer({
       if (data?.runId) staged.adopt(data.runId);
     } catch {
       staged.drop();
-      setError("Не удалось отправить задачу");
+      setError(t("task.sendFailed"));
       if (!textRef.current.trim()) write(message);
     }
   }
@@ -68,13 +69,13 @@ export function TaskComposer({
     <section className="card">
       <div className="card-head">
         <div>
-          <h2>Задача</h2>
-          <span className="muted small">Ссылка-приглашение, ключ или что сделать</span>
+          <h2>{t("task.title")}</h2>
+          <span className="muted small">{t("task.lead")}</span>
         </div>
-        <label className="switch" title="Агент не будет спрашивать одобрение перед изменениями">
+        <label className="switch" title={t("task.autonomousTitle")}>
           <input type="checkbox" checked={autonomous} onChange={(e) => void toggle(e.target.checked)} />
           <span className="switch-track" />
-          <span className="small">Разрешать все действия без человека</span>
+          <span className="small">{t("task.autonomous")}</span>
         </label>
       </div>
       <form onSubmit={(e) => void send(e)} className="row" style={{ alignItems: "flex-end" }}>
@@ -82,14 +83,14 @@ export function TaskComposer({
           className="textarea"
           value={text}
           onChange={(e) => write(e.target.value)}
-          placeholder={running ? "Ссылка-приглашение, API-ключ или задача" : "Агент ещё поднимается…"}
+          placeholder={running ? t("task.placeholder") : t("task.waiting")}
           disabled={!running}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send(e);
           }}
         />
         <button className="btn btn-primary" type="submit" disabled={!running || !text.trim()}>
-          Отправить
+          {t("task.send")}
         </button>
       </form>
       {error && (

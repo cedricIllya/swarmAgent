@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ChatMessage, PendingApproval } from "@swarm/contracts";
+import { t } from "@/i18n";
 import { fmtTime } from "./format";
 import { StepText } from "./secret-value";
 
@@ -11,17 +12,22 @@ interface Labels {
   no: string;
 }
 
-const APPROVAL: Labels = { title: "Нужно одобрение", yes: "Да", no: "Нет" };
-/** Агент упёрся в барьер и ждёт человека: человек доделывает в браузере и возвращает управление. */
-const HANDOFF: Labels = { title: "Нужна помощь в браузере", yes: "Я доделал, продолжай", no: "Отменить" };
-const SERVICE_WAIT: Labels = { title: "Жду одобрения в сервисе", yes: "Одобрил, продолжай", no: "Отменить" };
+function approvalLabels(): Labels {
+  return { title: t("approval.title"), yes: t("approval.yes"), no: t("approval.no") };
+}
+function handoffLabels(): Labels {
+  return { title: t("approval.handoffTitle"), yes: t("approval.handoffYes"), no: t("approval.handoffNo") };
+}
+function serviceLabels(): Labels {
+  return { title: t("approval.serviceTitle"), yes: t("approval.serviceYes"), no: t("approval.handoffNo") };
+}
 
 function LiveLink({ url }: { url: string | null | undefined }) {
   if (!url) return null;
   const own = /skyvern\.com/i.test(url);
   return (
     <a className="btn btn-sm" href={url} target="_blank" rel="noopener noreferrer">
-      {own ? "открыть браузер агента" : "открыть страницу"}
+      {own ? t("approval.openBrowser") : t("approval.openPage")}
     </a>
   );
 }
@@ -38,7 +44,7 @@ export function ApprovalBubble({
   busy: boolean;
   onDecide: (approved: boolean) => void;
 }) {
-  const labels = message.serviceWait ? SERVICE_WAIT : message.handoff ? HANDOFF : APPROVAL;
+  const labels = message.serviceWait ? serviceLabels() : message.handoff ? handoffLabels() : approvalLabels();
   return (
     <div className="bubble bubble-agent bubble-approval">
       <div className="small" style={{ color: "var(--warn)", fontWeight: 500 }}>
@@ -56,7 +62,7 @@ export function ApprovalBubble({
           </button>
         </div>
       ) : (
-        <span className="faint small">Решение принято</span>
+        <span className="faint small">{t("approval.decided")}</span>
       )}
       <span className="bubble-time">{fmtTime(message.at)}</span>
     </div>
@@ -75,7 +81,7 @@ export function QuestionCard({
   options,
   busy,
   onAnswer,
-  title = "Нужен ответ",
+  title = t("approval.answerTitle"),
   placeholder,
 }: {
   prompt: string;
@@ -92,7 +98,7 @@ export function QuestionCard({
   const answer = composeAnswer(picked, text);
 
   if (sent) {
-    return <p className="faint small" style={{ margin: "10px 0 0" }}>Ответ отправлен, задача продолжается.</p>;
+    return <p className="faint small" style={{ margin: "10px 0 0" }}>{t("approval.sent")}</p>;
   }
 
   async function submit() {
@@ -102,7 +108,7 @@ export function QuestionCard({
       await onAnswer(answer);
       setSent(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось отправить ответ");
+      setError(e instanceof Error ? e.message : t("logs.replyFailed"));
     }
   }
 
@@ -141,7 +147,7 @@ export function QuestionCard({
           className="textarea"
           value={text}
           disabled={busy}
-          placeholder={placeholder ?? (options.length ? "Вставьте ключ или напишите свой вариант" : "Напишите ответ")}
+          placeholder={placeholder ?? (options.length ? t("approval.placeholderOptions") : t("approval.placeholder"))}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -152,7 +158,7 @@ export function QuestionCard({
         />
         <div className="row">
           <button className="btn btn-sm btn-primary" type="submit" disabled={busy || !answer}>
-            {busy ? "…" : "Ответить"}
+            {busy ? t("common.ellipsis") : t("approval.reply")}
           </button>
         </div>
         {error && (
@@ -188,7 +194,7 @@ export function ApprovalRow({
     );
   }
   const handoff = approval.kind === "handoff";
-  const labels = approval.serviceWait ? SERVICE_WAIT : handoff ? HANDOFF : APPROVAL;
+  const labels = approval.serviceWait ? serviceLabels() : handoff ? handoffLabels() : approvalLabels();
   return (
     <div className="list-item list-item-warn">
       <div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useState } from "react";
+import { t, type MessageKey } from "@/i18n";
 import {
   THEME_CHANGE_EVENT,
   THEME_STORAGE_KEY,
@@ -10,14 +11,14 @@ import {
   type ThemePreference,
 } from "@/lib/theme";
 
-const OPTIONS: { id: ThemePreference; label: string }[] = [
-  { id: "light", label: "Светлая" },
-  { id: "dark", label: "Тёмная" },
-  { id: "system", label: "Как в системе" },
+const OPTIONS: { id: ThemePreference; label: MessageKey }[] = [
+  { id: "light", label: "settings.themeLight" },
+  { id: "dark", label: "settings.themeDark" },
+  { id: "system", label: "settings.themeSystem" },
 ];
 
 function currentThemeLabel(): string {
-  return document.documentElement.dataset.theme === "dark" ? "Включить светлую тему" : "Включить тёмную тему";
+  return document.documentElement.dataset.theme === "dark" ? t("settings.themeToLight") : t("settings.themeToDark");
 }
 
 export function ThemeWatcher() {
@@ -45,7 +46,7 @@ export function ThemeWatcher() {
 }
 
 export function ThemeToggle() {
-  const [label, setLabel] = useState("Сменить тему");
+  const [label, setLabel] = useState(t("settings.themeToggle"));
 
   useLayoutEffect(() => {
     const sync = () => setLabel(currentThemeLabel());
@@ -81,12 +82,12 @@ export function ThemePreference() {
     <section className="card">
       <div className="card-head">
         <div>
-          <h2>Оформление</h2>
-          <span className="muted small">Светлая тема, тёмная или как на устройстве</span>
+          <h2>{t("settings.appearance")}</h2>
+          <span className="muted small">{t("settings.appearanceLead")}</span>
         </div>
       </div>
       <fieldset className="theme-choices">
-        <legend className="sr-only">Тема оформления</legend>
+        <legend className="sr-only">{t("settings.themeLegend")}</legend>
         {OPTIONS.map((option) => (
           <label key={option.id} className="theme-choice">
             <input
@@ -96,7 +97,7 @@ export function ThemePreference() {
               checked={pref === option.id}
               onChange={() => commitTheme(option.id)}
             />
-            {option.label}
+            {t(option.label)}
           </label>
         ))}
       </fieldset>

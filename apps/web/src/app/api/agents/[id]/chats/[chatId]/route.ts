@@ -4,6 +4,7 @@ import { getAgent } from "@swarm/agents";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
 import { awakeRuntime } from "@/lib/runtime-client";
+import { t } from "@/i18n";
 
 async function clientFor(id: string) {
   const viewer = await getViewer();
@@ -11,7 +12,7 @@ async function clientFor(id: string) {
   const agent = await getAgent(db(), viewer.tenant.id, id);
   if (!agent) return { error: NextResponse.json({ error: "not found" }, { status: 404 }) };
   const client = await awakeRuntime(agent);
-  if (!client) return { error: NextResponse.json({ error: "Агент ещё не запущен" }, { status: 409 }) };
+  if (!client) return { error: NextResponse.json({ error: t("errors.agentNotStarted") }, { status: 409 }) };
   return { client };
 }
 

@@ -6,6 +6,7 @@ import { env } from "@/env";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
 import { awakeRuntime } from "@/lib/runtime-client";
+import { t } from "@/i18n";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -24,7 +25,7 @@ export async function DELETE(_req: Request, { params }: Params): Promise<Respons
       await revokeToken(refreshToken);
     } catch (error) {
       console.warn(`[google] revoke: ${String(error)}`);
-      return NextResponse.json({ error: "Не получилось отозвать доступ Google. Попробуйте ещё раз." }, { status: 502 });
+      return NextResponse.json({ error: t("errors.googleRevoke") }, { status: 502 });
     }
   }
 

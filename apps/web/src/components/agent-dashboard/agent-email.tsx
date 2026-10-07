@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { t } from "@/i18n";
 
 /** Адрес агента под именем: моноширинный текст и иконка копирования. */
 export function AgentEmail({ email }: { email: string }) {
@@ -23,8 +24,8 @@ export function AgentEmail({ email }: { email: string }) {
         type="button"
         className="icon-btn"
         onClick={() => void copy()}
-        aria-label={copied ? "Адрес скопирован" : "Скопировать адрес"}
-        title={copied ? "Скопировано" : "Скопировать адрес"}
+        aria-label={copied ? t("agent.addressCopied") : t("agent.copyAddress")}
+        title={copied ? t("common.copied") : t("agent.copyAddress")}
       >
         {copied ? (
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -38,7 +39,7 @@ export function AgentEmail({ email }: { email: string }) {
         )}
       </button>
       <span className={`agent-email-copied${copied ? " show" : ""}`} aria-live="polite">
-        {copied ? "Скопировано" : ""}
+        {copied ? t("common.copied") : ""}
       </span>
     </div>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { t } from "@/i18n";
 import { Linkified } from "./linkified";
 import { splitCodes } from "./secret-text";
 
@@ -20,10 +21,10 @@ export function SecretValue({ kind, value }: { kind: "password" | "code"; value:
 
   return (
     <span className={`secret secret-${kind}`}>
-      <span className="secret-kicker">{kind === "password" ? "Пароль" : "Код"}</span>
+      <span className="secret-kicker">{kind === "password" ? t("secret.password") : t("secret.code")}</span>
       <code className="secret-value">{value}</code>
       <button type="button" className="secret-copy" onClick={() => void copy()}>
-        {copied ? "Скопировано" : "Копировать"}
+        {copied ? t("common.copied") : t("common.copy")}
       </button>
     </span>
   );

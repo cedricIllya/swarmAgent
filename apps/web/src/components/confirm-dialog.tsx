@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/i18n";
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 export interface ConfirmOptions {
@@ -113,10 +114,10 @@ function ConfirmDialog({ options, onSettle }: { options: ConfirmOptions; onSettl
         )}
         <div className="modal-actions">
           <button ref={cancelRef} type="button" className="btn" onClick={() => onSettle(false)}>
-            {options.cancelLabel ?? "Отмена"}
+            {options.cancelLabel ?? t("common.cancel")}
           </button>
           <button type="button" className={`btn ${tone === "danger" ? "btn-danger" : "btn-primary"}`} onClick={() => onSettle(true)}>
-            {options.confirmLabel ?? "Подтвердить"}
+            {options.confirmLabel ?? t("common.confirm")}
           </button>
         </div>
       </div>

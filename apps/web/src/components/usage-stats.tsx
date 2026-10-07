@@ -1,27 +1,26 @@
 import type { TenantUsage } from "@/lib/usage-totals";
 import { usageCaveat } from "@/lib/usage-totals";
+import { formatNumber, t } from "@/i18n";
 import { usd } from "./agent-dashboard/format";
 import { Skeleton } from "./skeleton";
-
-export const USAGE_STAT_LABELS = ["потрачено всеми агентами", "токенов на вход", "токенов на выход"] as const;
 
 /** Деньги и токены по всем агентам тенанта. Подробности по задачам — на карточке агента. */
 export function UsageStats({ usage }: { usage: TenantUsage }) {
   const caveat = usageCaveat(usage.agents);
   return (
-    <section aria-label="Расходы агентов">
+    <section aria-label={t("usage.aria")}>
       <div className="stats">
         <div className="stat-card">
           <span className="stat-value">{usd(usage.totalCostUsd)}</span>
-          <span className="stat-label">{USAGE_STAT_LABELS[0]}</span>
+          <span className="stat-label">{t("usage.tenantSpent")}</span>
         </div>
         <div className="stat-card">
-          <span className="stat-value">{usage.totalPromptTokens.toLocaleString("ru-RU")}</span>
-          <span className="stat-label">{USAGE_STAT_LABELS[1]}</span>
+          <span className="stat-value">{formatNumber(usage.totalPromptTokens)}</span>
+          <span className="stat-label">{t("usage.prompt")}</span>
         </div>
         <div className="stat-card">
-          <span className="stat-value">{usage.totalCompletionTokens.toLocaleString("ru-RU")}</span>
-          <span className="stat-label">{USAGE_STAT_LABELS[2]}</span>
+          <span className="stat-value">{formatNumber(usage.totalCompletionTokens)}</span>
+          <span className="stat-label">{t("usage.completion")}</span>
         </div>
       </div>
       {caveat && (
@@ -36,7 +35,7 @@ export function UsageStats({ usage }: { usage: TenantUsage }) {
 export function UsageStatsSkeleton() {
   return (
     <div className="stats" aria-busy="true">
-      {USAGE_STAT_LABELS.map((label) => (
+      {[t("usage.tenantSpent"), t("usage.prompt"), t("usage.completion")].map((label) => (
         <div key={label} className="stat-card">
           <Skeleton width={96} height={36} />
           <span className="stat-label">{label}</span>

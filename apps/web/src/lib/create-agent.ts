@@ -18,6 +18,7 @@ import { AGENT_VOLUME_GB, FlyClient, FlyError, appNameFor, buildAgentMachineConf
 import { renderAllFiles } from "@swarm/hermes-config";
 import { allocateLocalPart, localPartForOwner } from "@swarm/mail";
 import type { TenantView } from "@swarm/identity";
+import { t } from "@/i18n";
 import { env } from "@/env";
 import { db } from "./db";
 import { provisionVerdict } from "./provision-verdict";
@@ -131,15 +132,15 @@ async function provision(agent: AgentRow, runtimeToken: string, ownerEmail: stri
   const fly = flyClient();
   const appName = appNameFor(agent.id);
 
-  await updateAgent(database, agent.id, { status: "provisioning", statusMessage: "Готовим агента", flyAppName: appName });
+  await updateAgent(database, agent.id, { status: "provisioning", statusMessage: t("status.preparing"), flyAppName: appName });
   await fly.ensureApp(appName);
   await fly.ensureFlycast(appName);
 
-  await updateAgent(database, agent.id, { statusMessage: "Готовим место для данных" });
+  await updateAgent(database, agent.id, { statusMessage: t("status.preparingStorage") });
   const volume = await fly.ensureVolume(appName, "agent_data", AGENT_VOLUME_GB);
   await updateAgent(database, agent.id, { flyVolumeId: volume.id });
 
-  await updateAgent(database, agent.id, { statusMessage: "Запускаем агента" });
+  await updateAgent(database, agent.id, { statusMessage: t("status.starting") });
   const config = await machineConfigFor(agent, runtimeToken, ownerEmail, volume.id);
   const machine = await fly.createMachine(appName, { name: appName, config });
   await updateAgent(database, agent.id, { flyMachineId: machine.id, statusMessage: BOOTING_MESSAGE });
@@ -159,7 +160,7 @@ async function provision(agent: AgentRow, runtimeToken: string, ownerEmail: stri
 
 /** Первый старт машины: Fly готовит два образа, на новом хосте это минуты, а не секунды. */
 const FIRST_BOOT_WAIT_SEC = 600;
-const BOOTING_MESSAGE = "Агент запускается — обычно 1–5 минут";
+const BOOTING_MESSAGE = t("status.booting");
 
 async function markRunning(agentId: string, appName: string): Promise<void> {
   await updateAgent(db(), agentId, {
@@ -248,7 +249,7 @@ export async function pushServicesToTenant(tenantId: string): Promise<void> {
 /** Удаление: Fly app вместе с диском, запись в базе, адрес освобождается. */
 export async function destroyAgent(agent: AgentRow): Promise<void> {
   const database = db();
-  await updateAgent(database, agent.id, { status: "deleting", statusMessage: "Удаляем агента" });
+  await updateAgent(database, agent.id, { status: "deleting", statusMessage: t("status.deletingAgent") });
   if (agent.flyAppName && env.fly.apiToken) {
     await flyClient().destroyApp(agent.flyAppName);
   }

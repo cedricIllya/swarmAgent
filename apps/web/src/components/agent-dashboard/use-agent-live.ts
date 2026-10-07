@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { t } from "@/i18n";
 import type { Agent, ChatMessage, Run, RunStep, RuntimeEvent, RuntimeState } from "@swarm/contracts";
 import { adoptStagedRun, mergeLiveRun } from "./stage-run";
 import { runListKey, transferRunKey } from "./task-log-list";
@@ -204,7 +205,7 @@ export function useAgentLive(initialAgent: Agent) {
       finishedAt: null,
       status: "running",
       trigger: "chat",
-      title: title.replace(/\s+/g, " ").trim().slice(0, 120) || "Задача",
+      title: title.replace(/\s+/g, " ").trim().slice(0, 120) || t("task.defaultTitle"),
       summary: "",
       threadId: id,
     };

@@ -4,6 +4,7 @@ import { getAgent } from "@swarm/agents";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
 import { awakeRuntime } from "@/lib/runtime-client";
+import { t } from "@/i18n";
 
 export async function POST(
   req: Request,
@@ -21,7 +22,7 @@ export async function POST(
   const answer = body.data.answer?.trim() ?? "";
   if (!answer && typeof body.data.approved !== "boolean") return NextResponse.json({ error: "bad input" }, { status: 400 });
   const client = await awakeRuntime(agent);
-  if (!client) return NextResponse.json({ error: "Агент не запущен" }, { status: 409 });
+  if (!client) return NextResponse.json({ error: t("errors.agentNotRunning") }, { status: 409 });
   return NextResponse.json(
     await client.resolveApproval(approvalId, answer ? { answer } : { approved: body.data.approved ?? false }),
   );

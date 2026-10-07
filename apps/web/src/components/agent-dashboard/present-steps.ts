@@ -1,20 +1,21 @@
 import type { RunStep } from "@swarm/contracts";
+import { t, type MessageKey } from "../../i18n";
 
-const PAGE_STATE: Record<string, string> = {
-  accept_button: "Нажимаю «Принять»",
-  email_form: "Ввожу почту",
-  signup_form: "Заполняю регистрацию",
-  password_form: "Ввожу пароль",
-  auth_choice: "Выбираю способ входа",
-  code_prompt: "Жду код из письма",
-  magic_link_sent: "Жду ссылку из письма",
-  logged_in: "Вошёл в аккаунт",
-  captcha: "На странице проверка",
-  expired: "Приглашение истекло",
-  pending_approval: "Жду, пока заявку одобрят",
-  account_exists: "Аккаунт уже есть, вхожу",
-  password_rejected: "Пароль не подошёл",
-  other: "Смотрю страницу",
+const PAGE_STATE: Record<string, MessageKey> = {
+  accept_button: "steps.page.accept_button",
+  email_form: "steps.page.email_form",
+  signup_form: "steps.page.signup_form",
+  password_form: "steps.page.password_form",
+  auth_choice: "steps.page.auth_choice",
+  code_prompt: "steps.page.code_prompt",
+  magic_link_sent: "steps.page.magic_link_sent",
+  logged_in: "steps.page.logged_in",
+  captcha: "steps.page.captcha",
+  expired: "steps.page.expired",
+  pending_approval: "steps.page.pending_approval",
+  account_exists: "steps.page.account_exists",
+  password_rejected: "steps.page.password_rejected",
+  other: "steps.page.other",
 };
 
 const HIDE =
@@ -49,9 +50,9 @@ export function forPerson(text: string): string {
 export function personStatus(message: string, status?: string): string {
   const internal = VENDOR_WORD.test(message) || /\bFly\b/i.test(message) || message === "Удаляем машину";
   if (!internal) return message;
-  if (status === "deleting" || /удал/i.test(message)) return "Удаляем агента";
-  if (status === "failed") return "Не получилось запустить агента";
-  return "Агент запускается — обычно это занимает несколько минут";
+  if (status === "deleting" || /удал/i.test(message)) return t("status.deletingAgent");
+  if (status === "failed") return t("status.startFailed");
+  return t("status.startingLong");
 }
 
 export function presentSteps(steps: RunStep[]): string[] {
@@ -81,60 +82,60 @@ function rewrite(text: string): string | null {
   let m: RegExpMatchArray | null;
 
   m = text.match(/^подключён сервис (.+?) \((?:MCP|API|браузер)\)$/i);
-  if (m?.[1]) return `Подключил ${m[1]}`;
+  if (m?.[1]) return t("steps.connected", { name: m[1] });
 
   m = text.match(/^найден способ входа в (.+?) \((?:MCP|API|браузер)\)$/i);
-  if (m?.[1]) return `Нашёл, как входить в ${m[1]}`;
+  if (m?.[1]) return t("steps.foundLogin", { name: m[1] });
 
   m = text.match(/^сохранённый токен MCP (.+?) сервер не принимает/i);
-  if (m?.[1]) return `Ключ ${m[1]} не подошёл, убрал его`;
+  if (m?.[1]) return t("steps.keyRejected", { name: m[1] });
 
   m = text.match(/^ищу способ входа в ([^(]+?)(?:\s*\([^)]*\))?$/i);
-  if (m?.[1]) return `Ищу, как войти в ${m[1].trim()}`;
+  if (m?.[1]) return t("steps.lookingUp", { name: m[1].trim() });
 
-  if (/^поиск в интернете:/i.test(text)) return "Ищу в интернете";
-  if (/^прочитана документация:/i.test(text)) return "Читаю документацию сервиса";
-  if (/способ входа не найден/i.test(text)) return "Вхожу по ссылке из приглашения";
+  if (/^поиск в интернете:/i.test(text)) return t("steps.searchingWeb");
+  if (/^прочитана документация:/i.test(text)) return t("steps.readingDocs");
+  if (/способ входа не найден/i.test(text)) return t("steps.loginFromInvite");
 
   m = text.match(/^открыт браузер:\s*(.+)$/i);
-  if (m?.[1]) return `Открыл браузер: ${purpose(m[1])}`;
-  if (/^браузер закрыт$/i.test(text)) return "Закрыл браузер";
+  if (m?.[1]) return t("steps.openedBrowser", { purpose: purpose(m[1]) });
+  if (/^браузер закрыт$/i.test(text)) return t("steps.closedBrowser");
 
   m = text.match(/^skyvern\s+(\S+):\s*(https?:\/\/\S+)$/i);
-  if (m?.[1]) return `Открываю браузер: ${purpose(m[1])}`;
+  if (m?.[1]) return t("steps.openingBrowser", { purpose: purpose(m[1]) });
   m = text.match(/^skyvern\s+(\S+):\s*(\S+)$/i);
   if (m) return skyvernStatus(m[2] ?? "", m[1] ?? "");
 
   m = text.match(/^Skyvern:\s*(.+)$/);
   if (m?.[1]) return skyvernStatus(m[1], m[1]);
 
-  if (/^Повторяю вход своим браузером\.?$/i.test(text)) return "Повторяю вход";
+  if (/^Повторяю вход своим браузером\.?$/i.test(text)) return t("steps.retryingLogin");
 
   m = text.match(/^шаг \d+:\s*страницу не удалось разобрать/i);
-  if (m) return "Не удалось разобрать страницу";
+  if (m) return t("steps.pageUnreadable");
 
   m = text.match(/^шаг \d+:\s*([a-z_]+)(?:\s+[—–-]\s*(.+))?$/i);
   const page = m?.[1] ? PAGE_STATE[m[1]] : undefined;
-  if (page) return page;
+  if (page) return t(page);
 
   if (/^открыл приглашение в /i.test(text)) return sentence(text);
-  if (/^перешёл по ссылке из письма/i.test(text)) return "Перешёл по ссылке из письма";
-  if (/^ввёл код из письма/i.test(text)) return "Ввёл код из письма";
+  if (/^перешёл по ссылке из письма/i.test(text)) return t("steps.followedEmailLink");
+  if (/^ввёл код из письма/i.test(text)) return t("steps.enteredEmailCode");
 
   m = text.match(/^новая задача в ветке от\s+(.+)$/i);
-  if (m?.[1]) return `Новое письмо от ${m[1]}`;
+  if (m?.[1]) return t("steps.newEmailFrom", { from: m[1] });
   m = text.match(/^письмо отправлено\s+(.+)$/i);
-  if (m?.[1]) return `Отправил письмо ${m[1]}`;
+  if (m?.[1]) return t("steps.sentEmail", { to: m[1] });
   m = text.match(/^ответ отправлен\s+(.+)$/i);
-  if (m?.[1]) return `Ответил ${m[1]}`;
-  if (/^письмо с вопросом владельцу$/i.test(text)) return "Спросил вас письмом";
+  if (m?.[1]) return t("steps.replied", { to: m[1] });
+  if (/^письмо с вопросом владельцу$/i.test(text)) return t("steps.askedByEmail");
 
   m = text.match(/^(invite|credential|task|verification):\s*(.+)$/i);
   if (m?.[1] && m[2]) {
     const rest = m[2].replace(/\s*\(код\s+[^)]+\)\s*$/i, "").trim();
-    if (/^invite$/i.test(m[1])) return sentence(`Приглашение: ${rest}`);
-    if (/^credential$/i.test(m[1])) return sentence(`Ключ: ${rest}`);
-    if (/^verification$/i.test(m[1])) return sentence(`Подтверждение: ${rest}`);
+    if (/^invite$/i.test(m[1])) return sentence(t("steps.invite", { rest }));
+    if (/^credential$/i.test(m[1])) return sentence(t("steps.credential", { rest }));
+    if (/^verification$/i.test(m[1])) return sentence(t("steps.verification", { rest }));
     return sentence(rest);
   }
 
@@ -151,26 +152,26 @@ function skyvernStatus(status: string, purposeText: string): string | null {
   if (/^(created|queued|running|completed|complete|failed|canceled|cancelled|timed_out|timeout)$/i.test(status)) {
     return null;
   }
-  if (/капч/i.test(status)) return "Не прошёл проверку на странице, нужен человек";
+  if (/капч/i.test(status)) return t("steps.captchaBlocked");
   const phrase = purpose(purposeText).replace(/^принять(?=\s)/i, "принимаю");
   return sentence(phrase);
 }
 
 function purpose(value: string): string {
-  if (value === "signup") return "регистрация";
-  if (value === "login") return "вход";
+  if (value === "signup") return t("steps.purposeSignup");
+  if (value === "login") return t("steps.purposeLogin");
   return value;
 }
 
 function humanError(text: string): string | null {
-  if (/hermes недоступен/i.test(text)) return "Не получилось выполнить задачу";
-  if (/нет следов работы/i.test(text)) return "Не удалось сделать это в сервисе";
-  if (/модель не разобрала/i.test(text)) return "Не разобрал письмо";
-  if (/контекст входа потерян/i.test(text)) return "Не удалось продолжить вход";
-  if (/поиск ключа не удался/i.test(text)) return "Не удалось найти ключ";
-  if (/\/opt\/|node:|^\s*at\s+\S+\s+\(/i.test(text)) return "Что-то пошло не так";
+  if (/hermes недоступен/i.test(text)) return t("steps.error.taskFailed");
+  if (/нет следов работы/i.test(text)) return t("steps.error.serviceFailed");
+  if (/модель не разобрала/i.test(text)) return t("steps.error.emailUnparsed");
+  if (/контекст входа потерян/i.test(text)) return t("steps.error.loginLost");
+  if (/поиск ключа не удался/i.test(text)) return t("steps.error.keyNotFound");
+  if (/\/opt\/|node:|^\s*at\s+\S+\s+\(/i.test(text)) return t("steps.error.generic");
   const clean = tidy(text.replace(VENDOR_WORD, ""));
-  if (!clean || HIDE.test(clean)) return "Что-то пошло не так";
+  if (!clean || HIDE.test(clean)) return t("steps.error.generic");
   return sentence(clean);
 }
 

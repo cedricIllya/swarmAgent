@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import type { Agent, BrowserSession, ChatMessage } from "@swarm/contracts";
+import { t } from "@/i18n";
 import { fmtTime } from "./format";
 
 function actionLine(action: Record<string, unknown>): string {
-  const type = String(action.type ?? "шаг");
+  const type = String(action.type ?? t("browser.step"));
   const extra = action.url ?? action.instruction ?? action.kind ?? "";
   return extra ? `${type}: ${String(extra)}` : type;
 }
@@ -38,7 +39,7 @@ export function SessionShots({
       cancel = true;
     };
   }, [agentId, sessionId]);
-  if (files === null) return <span className="faint small">загружаю кадры</span>;
+  if (files === null) return <span className="faint small">{t("browser.loadingFrames")}</span>;
   if (!files.length) return fallback ? <span className="faint small">{fallback}</span> : null;
   return <BrowserShots agentId={agentId} sessionId={sessionId} files={files} />;
 }
@@ -50,7 +51,7 @@ export function BrowserShots({ agentId, sessionId, files }: { agentId: string; s
     <div className="shot-list">
       {files.map((file, i) => (
         <a key={file} href={`/api/agents/${agentId}/browser-sessions/${sessionId}/shots/${file}`} target="_blank" rel="noopener noreferrer">
-          <img src={`/api/agents/${agentId}/browser-sessions/${sessionId}/shots/${file}`} alt={`шаг ${i + 1}`} />
+          <img src={`/api/agents/${agentId}/browser-sessions/${sessionId}/shots/${file}`} alt={t("browser.stepAlt", { n: i + 1 })} />
         </a>
       ))}
     </div>
@@ -105,7 +106,7 @@ export function BrowserBubble({
         </span>
         {embeddable && session?.liveUrl && (
           <a className="small" href={session.liveUrl} target="_blank" rel="noopener noreferrer">
-            открыть в новой вкладке
+            {t("browser.openTab")}
           </a>
         )}
       </div>
@@ -122,9 +123,9 @@ export function BrowserBubble({
           ) : (
             <div className="approval-actions">
               <a className="btn btn-sm btn-primary" href={session.liveUrl} target="_blank" rel="noopener noreferrer">
-                смотреть браузер
+                {t("browser.watch")}
               </a>
-              <span className="faint small">там же можно взять управление</span>
+              <span className="faint small">{t("browser.takeControl")}</span>
             </div>
           )}
           <BrowserShots agentId={agent.id} sessionId={sessionId} files={shots} />
@@ -143,12 +144,12 @@ export function BrowserBubble({
       ) : (
         <span className="faint small">
           {!session
-            ? "сессия не найдена"
+            ? t("browser.missing")
             : loaded === null
-              ? "загружаю шаги браузера"
+              ? t("browser.loadingSteps")
               : session.finishedAt
-                ? "сессия завершена"
-                : "браузер работает, кадр появится после шага"}
+                ? t("browser.finished")
+                : t("browser.waitingFrame")}
         </span>
       )}
       <span className="bubble-time">{fmtTime(message.at)}</span>

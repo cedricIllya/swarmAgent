@@ -3,10 +3,11 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { intlLocale, t } from "@/i18n";
 import { useConfirm } from "./confirm-dialog";
 
 function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleString(intlLocale, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 export function ServiceAgentChips({
@@ -79,11 +80,11 @@ export function DisconnectServiceButton({
 
   async function remove() {
     if (busy) return;
-    const where = agentName ? ` у агента ${agentName}` : "";
+    const where = agentName ? t("services.disconnectWhere", { name: agentName }) : "";
     const ok = await confirm({
-      title: `Отключить ${serviceName}${where}?`,
-      body: "Агент потеряет вход в этот сервис. Ключ, пароль и сессия браузера будут удалены.",
-      confirmLabel: "Отключить",
+      title: t("services.disconnectTitle", { service: serviceName, where }),
+      body: t("services.disconnectBody"),
+      confirmLabel: t("common.disconnect"),
     });
     if (!ok) return;
     setBusy(true);
@@ -92,7 +93,7 @@ export function DisconnectServiceButton({
       const res = await fetch(`/api/agents/${agentId}/credentials/${encodeURIComponent(slug)}`, { method: "DELETE" });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        onFailed?.(body?.error ?? "Не получилось отключить сервис");
+        onFailed?.(body?.error ?? t("services.disconnectFailed"));
         return;
       }
       onRemoved?.();
@@ -102,12 +103,12 @@ export function DisconnectServiceButton({
     }
   }
 
-  const label = variant === "chip" ? "×" : busy ? "Отключаем…" : "Отключить";
+  const label = variant === "chip" ? "×" : busy ? t("common.disconnecting") : t("common.disconnect");
   return (
     <button
       type="button"
       className={variant === "chip" ? "chip-remove" : "btn btn-sm btn-ghost"}
-      aria-label={`Отключить ${serviceName}${agentName ? ` у ${agentName}` : ""}`}
+      aria-label={t("services.disconnectLabel", { service: serviceName, where: agentName ? t("services.disconnectWhere", { name: agentName }) : "" })}
       disabled={busy}
       onClick={() => void remove()}
     >
@@ -134,11 +135,11 @@ export function DisconnectGoogleButton({
 
   async function remove() {
     if (busy) return;
-    const where = agentName ? ` у агента ${agentName}` : "";
+    const where = agentName ? t("services.disconnectWhere", { name: agentName }) : "";
     const ok = await confirm({
-      title: `Отключить Google${where}?`,
-      body: "Доступ к почте, календарю и документам будет отозван. Чтобы вернуть его, потребуется снова войти в Google.",
-      confirmLabel: "Отключить",
+      title: t("services.googleDisconnectTitle", { where }),
+      body: t("services.googleDisconnectBody"),
+      confirmLabel: t("common.disconnect"),
     });
     if (!ok) return;
 
@@ -149,7 +150,7 @@ export function DisconnectGoogleButton({
       const res = await fetch(`/api/agents/${agentId}/google`, { method: "DELETE" });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        const message = body?.error ?? "Не получилось отключить Google";
+        const message = body?.error ?? t("services.googleDisconnectFailed");
         setError(message);
         onFailed?.(message);
         return;
@@ -164,7 +165,7 @@ export function DisconnectGoogleButton({
   return (
     <>
       <button type="button" className="btn btn-sm btn-ghost" disabled={busy} onClick={() => void remove()}>
-        {busy ? "Отключаем…" : "Отключить"}
+        {busy ? t("common.disconnecting") : t("common.disconnect")}
       </button>
       {error && !onFailed && <span className="faint small">{error}</span>}
     </>

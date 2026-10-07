@@ -1,3 +1,5 @@
+import { t } from "../../i18n";
+
 export type AccessKind = "mcp" | "api" | "browser";
 
 export interface AgentAccess {
@@ -26,7 +28,7 @@ export interface LiveAccess {
 export function accessKindLabel(kind: AccessKind): string {
   if (kind === "mcp") return "MCP";
   if (kind === "api") return "API";
-  return "браузер";
+  return t("access.browser");
 }
 
 /** Подпись тега: где агент смотрит задачи, где канал связи, а где нет. */
@@ -35,15 +37,15 @@ export function taskWatchLabel(
   channel?: "messenger" | null,
 ): { text: string; title: string; ok: boolean } {
   if (channel === "messenger") {
-    return { text: "канал", title: "Сюда можно писать агенту, как на почту или в задачу. Ответ уходит в тот же диалог", ok: true };
+    return { text: t("access.channel"), title: t("access.channelTitle"), ok: true };
   }
   if (watchesTasks === true) {
-    return { text: "задачи", title: "Агент проверяет здесь назначенные задачи", ok: true };
+    return { text: t("access.tasks"), title: t("access.tasksTitle"), ok: true };
   }
   if (watchesTasks === false) {
-    return { text: "без задач", title: "Сервис не для задач. Агент заходит только по прямой просьбе", ok: false };
+    return { text: t("access.noTasks"), title: t("access.noTasksTitle"), ok: false };
   }
-  return { text: "не ясно", title: "Ещё не выяснили, есть ли здесь назначенные задачи", ok: false };
+  return { text: t("access.unknown"), title: t("access.unknownTitle"), ok: false };
 }
 
 function knownWatch(live: boolean | null | undefined, saved: boolean | null | undefined): boolean | null {

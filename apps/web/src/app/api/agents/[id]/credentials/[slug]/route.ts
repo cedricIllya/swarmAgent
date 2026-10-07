@@ -4,6 +4,7 @@ import { deleteCredential } from "@swarm/connections";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
 import { pushServicesToAgent } from "@/lib/create-agent";
+import { t } from "@/i18n";
 
 type Params = { params: Promise<{ id: string; slug: string }> };
 
@@ -34,7 +35,7 @@ export async function DELETE(_req: Request, { params }: Params): Promise<Respons
   } catch (e) {
     console.warn(`[credentials] push: ${String(e)}`);
     return NextResponse.json(
-      { error: "Доступ снят, но агент ещё не подтвердил. Попробуйте ещё раз." },
+      { error: t("errors.accessPending") },
       { status: 502 },
     );
   }

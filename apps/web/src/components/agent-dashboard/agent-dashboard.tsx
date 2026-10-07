@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { Agent } from "@swarm/contracts";
+import { t } from "@/i18n";
 import { useConfirm } from "../confirm-dialog";
 import { StatusBadge } from "../status-badge";
 import { AgentEmail } from "./agent-email";
@@ -29,9 +30,9 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
   async function remove() {
     if (removing) return;
     const ok = await confirm({
-      title: `Удалить агента ${agent.name}?`,
-      body: "Агент и его данные будут удалены, адрес освободится.",
-      confirmLabel: "Удалить",
+      title: t("agent.deleteTitle", { name: agent.name }),
+      body: t("agent.deleteBody"),
+      confirmLabel: t("common.delete"),
     });
     if (!ok) return;
     setRemoving(true);
@@ -43,7 +44,7 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
     }
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     setRemoving(false);
-    setRemoveError(body?.error ?? "Не получилось удалить агента");
+    setRemoveError(body?.error ?? t("agent.deleteFailed"));
   }
 
   return (
@@ -53,14 +54,14 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
           <AgentAvatarControl agent={agent} onUpdated={patchAgent} />
           <div>
             <Link href="/" className="kicker">
-              ← Все агенты
+              {t("agent.back")}
             </Link>
             <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
               <h1>{agent.name}</h1>
               <StatusBadge status={agent.status} />
-              {asleep && <span className="badge">спит</span>}
-              {waking && <span className="badge">просыпается</span>}
-              {state?.busyInBrowser && <span className="badge badge-warn"><span className="badge-dot pulse" />в браузере</span>}
+              {asleep && <span className="badge">{t("status.asleep")}</span>}
+              {waking && <span className="badge">{t("status.waking")}</span>}
+              {state?.busyInBrowser && <span className="badge badge-warn"><span className="badge-dot pulse" />{t("status.inBrowser")}</span>}
             </div>
             <AgentEmail email={agent.email} />
             {agent.statusMessage && (
@@ -72,7 +73,7 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
           </div>
         </div>
         <button className="btn btn-sm btn-danger" type="button" onClick={remove} disabled={removing}>
-          {removing ? "Удаляем…" : "Удалить"}
+          {removing ? t("common.deleting") : t("common.delete")}
         </button>
       </div>
 
@@ -84,13 +85,13 @@ export function AgentDashboard({ initialAgent }: { initialAgent: Agent }) {
 
       {asleep && (
         <div className="notice" style={{ marginBottom: 16 }}>
-          Агент спит и не тратит ресурсы, пока не придёт письмо, задача или вопрос. Место для его данных считается и во сне.
+          {t("agent.asleepNotice")}
         </div>
       )}
 
       {runtimeError && !asleep && (
         <div className="notice notice-warn" style={{ marginBottom: 16 }}>
-          Агент сейчас не отвечает.
+          {t("agent.unreachable")}
         </div>
       )}
 

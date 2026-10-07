@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Agent } from "@swarm/contracts";
+import { t } from "@/i18n";
 import { ModelSelect } from "../model-select";
 
 /**
@@ -44,11 +45,11 @@ export function AgentModelControl({
     setBusy(false);
     if (!res.ok || !json?.agent) {
       setModel(agent.model);
-      setError(json?.error ?? "Не получилось сменить модель");
+      setError(json?.error ?? t("agent.modelSaveFailed"));
       return;
     }
     onUpdated(json.agent);
-    setNote("Модель сохранена. Машина агента перезапускается с новым config.yaml.");
+    setNote(t("agent.modelSaved"));
   }
 
   return (
@@ -67,7 +68,7 @@ export function AgentModelControl({
         <button
           type="button"
           className="model-chip"
-          title="Сменить модель"
+          title={t("agent.changeModel")}
           disabled={busy}
           onClick={() => {
             setError(null);
@@ -75,11 +76,11 @@ export function AgentModelControl({
             setEditing(true);
           }}
         >
-          <span className="model-chip-label">модель</span>
+          <span className="model-chip-label">{t("agent.modelLabel")}</span>
           <span className="mono">{model}</span>
         </button>
       )}
-      {busy && <span className="faint small">Сохраняем…</span>}
+      {busy && <span className="faint small">{t("common.saving")}</span>}
       {note && !error && <span className="faint small">{note}</span>}
       {error && <span className="small" style={{ color: "var(--danger)" }}>{error}</span>}
     </div>

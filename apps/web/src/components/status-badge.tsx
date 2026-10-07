@@ -1,12 +1,13 @@
 import type { AgentStatus } from "@swarm/contracts";
+import { t, type MessageKey } from "@/i18n";
 
-const LABEL: Record<AgentStatus, { text: string; cls: string; pulse?: boolean }> = {
-  creating: { text: "Создаётся", cls: "badge-accent", pulse: true },
-  provisioning: { text: "Поднимаем машину", cls: "badge-accent", pulse: true },
-  running: { text: "Работает", cls: "badge-ok" },
-  stopped: { text: "Остановлен", cls: "" },
-  failed: { text: "Ошибка", cls: "badge-danger" },
-  deleting: { text: "Удаляется", cls: "badge-warn", pulse: true },
+const LABEL: Record<AgentStatus, { key: MessageKey; cls: string; pulse?: boolean }> = {
+  creating: { key: "status.creating", cls: "badge-accent", pulse: true },
+  provisioning: { key: "status.provisioning", cls: "badge-accent", pulse: true },
+  running: { key: "status.running", cls: "badge-ok" },
+  stopped: { key: "status.stopped", cls: "" },
+  failed: { key: "status.failed", cls: "badge-danger" },
+  deleting: { key: "status.deleting", cls: "badge-warn", pulse: true },
 };
 
 export function StatusBadge({ status }: { status: AgentStatus }) {
@@ -14,7 +15,7 @@ export function StatusBadge({ status }: { status: AgentStatus }) {
   return (
     <span className={`badge ${l.cls}`}>
       <span className={`badge-dot ${l.pulse ? "pulse" : ""}`} />
-      {l.text}
+      {t(l.key)}
     </span>
   );
 }

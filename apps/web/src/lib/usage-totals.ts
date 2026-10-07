@@ -1,4 +1,5 @@
 import type { UsageTotals } from "@swarm/contracts";
+import { t } from "../i18n";
 
 /**
  * Откуда цифры агента:
@@ -50,8 +51,8 @@ export function usageCaveat(agents: AgentUsage[]): string | null {
   const saved = agents.some((a) => a.source === "saved");
   const unknown = agents.filter((a) => a.source === "unknown");
   const parts: string[] = [];
-  if (saved) parts.push("Спящие агенты посчитаны по итогам, которые машина отдала перед сном.");
-  if (unknown.length) parts.push(`Не учтены: ${unknown.map((a) => a.name).join(", ")} — машина ещё не отчиталась.`);
+  if (saved) parts.push(t("usage.asleep"));
+  if (unknown.length) parts.push(t("usage.unknown", { names: unknown.map((a) => a.name).join(", ") }));
   return parts.length ? parts.join(" ") : null;
 }
 

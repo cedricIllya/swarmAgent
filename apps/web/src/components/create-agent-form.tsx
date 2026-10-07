@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import type { Agent } from "@swarm/contracts";
+import { t } from "@/i18n";
 import { ModelSelect } from "./model-select";
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4.5";
@@ -25,7 +26,7 @@ export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string;
     const json = (await res.json()) as { agent?: Agent; error?: string };
     setBusy(false);
     if (!res.ok || !json.agent) {
-      setError(json.error ?? "Не получилось");
+      setError(json.error ?? t("common.failed"));
       return;
     }
     onCreated(json.agent);
@@ -33,44 +34,44 @@ export function CreateAgentForm({ ownerLogin, onCreated }: { ownerLogin: string;
 
   return (
     <form onSubmit={submit}>
-      <h2 style={{ marginBottom: 14 }}>Новый агент</h2>
+      <h2 style={{ marginBottom: 14 }}>{t("createAgent.title")}</h2>
       <div className="name-fields">
         <div className="field">
-          <label className="label">Имя</label>
+          <label className="label">{t("createAgent.firstName")}</label>
           <input
             className="input"
             required
             maxLength={40}
             value={firstName}
             onChange={(e) => setFirstName(e.target.value)}
-            placeholder="Владимир"
+            placeholder={t("createAgent.firstPlaceholder")}
             autoComplete="given-name"
           />
         </div>
         <div className="field">
-          <label className="label">Фамилия</label>
+          <label className="label">{t("createAgent.lastName")}</label>
           <input
             className="input"
             required
             maxLength={40}
             value={lastName}
             onChange={(e) => setLastName(e.target.value)}
-            placeholder="Ленин"
+            placeholder={t("createAgent.lastPlaceholder")}
             autoComplete="family-name"
           />
         </div>
       </div>
       <p className="faint small" style={{ margin: "-6px 0 14px" }}>
-        Адрес соберётся из вашего логина, имени и фамилии: Владимир Ленин → {ownerLogin}.vladimir.lenin@…
+        {t("createAgent.addressHint", { login: ownerLogin })}
       </p>
       <div className="field">
-        <label className="label">Модель</label>
+        <label className="label">{t("createAgent.model")}</label>
         <ModelSelect value={model} onChange={setModel} disabled={busy} />
       </div>
       {error && <p className="error">{error}</p>}
       <div className="row" style={{ justifyContent: "flex-end" }}>
         <button className="btn btn-primary" type="submit" disabled={busy || !firstName.trim() || !lastName.trim()}>
-          {busy ? "Создаём…" : "Создать"}
+          {busy ? t("createAgent.creating") : t("createAgent.create")}
         </button>
       </div>
     </form>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { t } from "@/i18n";
 
 export interface ModelOption {
   id: string;
@@ -10,8 +11,8 @@ export interface ModelOption {
 }
 
 function priceLabel(m: ModelOption): string {
-  if (m.promptPerM === null || m.completionPerM === null) return "цена зависит от маршрута";
-  return `$${m.promptPerM.toFixed(2)} / $${m.completionPerM.toFixed(2)} за 1M`;
+  if (m.promptPerM === null || m.completionPerM === null) return t("model.routePrice");
+  return t("model.perMillion", { prompt: m.promptPerM.toFixed(2), completion: m.completionPerM.toFixed(2) });
 }
 
 /** Список моделей OpenRouter с `/api/models`. Грузится один раз на компонент. */

@@ -10,6 +10,7 @@ import {
   type Agent,
   type CreatedAvatar,
 } from "@swarm/contracts";
+import { t, type MessageKey } from "@/i18n";
 
 const TONES = ["#f3d7a1", "#f0c7b0", "#d9e4c8", "#d4e2f0", "#e6d4f0", "#f3e3b8"];
 const FACE = ["#F9C9B6", "#AC6651"];
@@ -130,7 +131,7 @@ export function AgentAvatarControl({
     const json = (await res.json().catch(() => null)) as { agent?: Agent; error?: string } | null;
     setBusy(false);
     if (!res.ok || !json?.agent) {
-      setError(json?.error ?? "Не получилось сохранить аватар");
+      setError(json?.error ?? t("agent.avatarSaveFailed"));
       return;
     }
     onUpdated(json.agent);
@@ -143,7 +144,7 @@ export function AgentAvatarControl({
         className="agent-avatar-btn"
         role="button"
         tabIndex={0}
-        title="Собрать аватар"
+        title={t("agent.buildAvatar")}
         onClick={() => setOpen(true)}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -153,11 +154,11 @@ export function AgentAvatarControl({
         }}
       >
         <AgentFace agent={agent} size="lg" />
-        <span className="agent-avatar-hint">{busy ? "…" : "собрать"}</span>
+        <span className="agent-avatar-hint">{busy ? t("common.ellipsis") : t("agent.build")}</span>
       </div>
       {agent.avatar && (
         <button type="button" className="agent-avatar-clear" disabled={busy} onClick={() => void save(null)}>
-          Убрать
+          {t("agent.removeAvatar")}
         </button>
       )}
       {error && <span className="agent-avatar-error">{error}</span>}
@@ -216,9 +217,16 @@ function AvatarStudio({
     });
   }
 
+  const hairLabel: Record<CreatedAvatar["hairStyle"], MessageKey> = {
+    normal: "avatar.hairNormal",
+    thick: "avatar.hairThick",
+    mohawk: "avatar.hairMohawk",
+    womanLong: "avatar.hairLong",
+    womanShort: "avatar.hairShort",
+  };
   const hairOptions = (draft.sex === "man" ? HAIR_MAN : HAIR_WOMAN).map((id) => ({
     id,
-    label: { normal: "обычные", thick: "густые", mohawk: "ирокез", womanLong: "длинные", womanShort: "короткие" }[id],
+    label: t(hairLabel[id]),
   }));
 
   const sheet = (
@@ -230,40 +238,40 @@ function AvatarStudio({
         aria-labelledby="avatar-studio-title"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <h2 id="avatar-studio-title">Аватар</h2>
+        <h2 id="avatar-studio-title">{t("avatar.title")}</h2>
         <p className="muted small" style={{ marginTop: 4 }}>
-          Соберите лицо для {agent.name}. Случайный вариант можно покрутить и поправить.
+          {t("avatar.lead", { name: agent.name })}
         </p>
         <div className="avatar-studio">
           <div className="avatar-preview">
             <AgentFace agent={preview} size="xl" />
             <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setDraft(freeze({}))}>
-              Случайный
+              {t("avatar.random")}
             </button>
           </div>
           <div className="avatar-options">
-            <Choice label="Пол" value={draft.sex} options={[{ id: "man", label: "мужчина" }, { id: "woman", label: "женщина" }]} onChange={(sex) => patch({ sex })} />
-            <Choice label="Волосы" value={draft.hairStyle} options={hairOptions} onChange={(hairStyle) => patch({ hairStyle })} />
-            <Swatches label="Цвет волос" value={draft.hairColor} colors={HAIR} onChange={(hairColor) => patch({ hairColor })} />
-            <Choice label="Шапка" value={draft.hatStyle} options={[{ id: "none", label: "нет" }, { id: "beanie", label: "шапка" }, { id: "turban", label: "тюрбан" }]} onChange={(hatStyle) => patch({ hatStyle })} />
-            {draft.hatStyle !== "none" && <Swatches label="Цвет шапки" value={draft.hatColor} colors={HAIR} onChange={(hatColor) => patch({ hatColor })} />}
-            <Choice label="Уши" value={draft.earSize} options={[{ id: "small", label: "маленькие" }, { id: "big", label: "большие" }]} onChange={(earSize) => patch({ earSize })} />
-            <Choice label="Глаза" value={draft.eyeStyle} options={[{ id: "circle", label: "круглые" }, { id: "oval", label: "овальные" }, { id: "smile", label: "улыбка" }]} onChange={(eyeStyle) => patch({ eyeStyle })} />
-            <Choice label="Очки" value={draft.glassesStyle} options={[{ id: "none", label: "нет" }, { id: "round", label: "круглые" }, { id: "square", label: "квадратные" }]} onChange={(glassesStyle) => patch({ glassesStyle })} />
-            <Choice label="Нос" value={draft.noseStyle} options={[{ id: "short", label: "короткий" }, { id: "long", label: "длинный" }, { id: "round", label: "круглый" }]} onChange={(noseStyle) => patch({ noseStyle })} />
-            <Choice label="Рот" value={draft.mouthStyle} options={[{ id: "laugh", label: "смех" }, { id: "smile", label: "улыбка" }, { id: "peace", label: "спокойный" }]} onChange={(mouthStyle) => patch({ mouthStyle })} />
-            <Swatches label="Кожа" value={draft.faceColor} colors={FACE} onChange={(faceColor) => patch({ faceColor })} />
-            <Choice label="Одежда" value={draft.shirtStyle} options={[{ id: "hoody", label: "худи" }, { id: "short", label: "футболка" }, { id: "polo", label: "поло" }]} onChange={(shirtStyle) => patch({ shirtStyle })} />
-            <Swatches label="Цвет одежды" value={draft.shirtColor} colors={SHIRT} onChange={(shirtColor) => patch({ shirtColor })} />
-            <Swatches label="Фон" value={draft.bgColor} colors={BG} onChange={(bgColor) => patch({ bgColor })} />
+            <Choice label={t("avatar.sex")} value={draft.sex} options={[{ id: "man", label: t("avatar.man") }, { id: "woman", label: t("avatar.woman") }]} onChange={(sex) => patch({ sex })} />
+            <Choice label={t("avatar.hair")} value={draft.hairStyle} options={hairOptions} onChange={(hairStyle) => patch({ hairStyle })} />
+            <Swatches label={t("avatar.hairColor")} value={draft.hairColor} colors={HAIR} onChange={(hairColor) => patch({ hairColor })} />
+            <Choice label={t("avatar.hat")} value={draft.hatStyle} options={[{ id: "none", label: t("avatar.hatNone") }, { id: "beanie", label: t("avatar.hatBeanie") }, { id: "turban", label: t("avatar.hatTurban") }]} onChange={(hatStyle) => patch({ hatStyle })} />
+            {draft.hatStyle !== "none" && <Swatches label={t("avatar.hatColor")} value={draft.hatColor} colors={HAIR} onChange={(hatColor) => patch({ hatColor })} />}
+            <Choice label={t("avatar.ears")} value={draft.earSize} options={[{ id: "small", label: t("avatar.earsSmall") }, { id: "big", label: t("avatar.earsBig") }]} onChange={(earSize) => patch({ earSize })} />
+            <Choice label={t("avatar.eyes")} value={draft.eyeStyle} options={[{ id: "circle", label: t("avatar.eyesCircle") }, { id: "oval", label: t("avatar.eyesOval") }, { id: "smile", label: t("avatar.eyesSmile") }]} onChange={(eyeStyle) => patch({ eyeStyle })} />
+            <Choice label={t("avatar.glasses")} value={draft.glassesStyle} options={[{ id: "none", label: t("avatar.hatNone") }, { id: "round", label: t("avatar.glassesRound") }, { id: "square", label: t("avatar.glassesSquare") }]} onChange={(glassesStyle) => patch({ glassesStyle })} />
+            <Choice label={t("avatar.nose")} value={draft.noseStyle} options={[{ id: "short", label: t("avatar.noseShort") }, { id: "long", label: t("avatar.noseLong") }, { id: "round", label: t("avatar.noseRound") }]} onChange={(noseStyle) => patch({ noseStyle })} />
+            <Choice label={t("avatar.mouth")} value={draft.mouthStyle} options={[{ id: "laugh", label: t("avatar.mouthLaugh") }, { id: "smile", label: t("avatar.mouthSmile") }, { id: "peace", label: t("avatar.mouthPeace") }]} onChange={(mouthStyle) => patch({ mouthStyle })} />
+            <Swatches label={t("avatar.skin")} value={draft.faceColor} colors={FACE} onChange={(faceColor) => patch({ faceColor })} />
+            <Choice label={t("avatar.clothes")} value={draft.shirtStyle} options={[{ id: "hoody", label: t("avatar.clothesHoody") }, { id: "short", label: t("avatar.clothesShirt") }, { id: "polo", label: t("avatar.clothesPolo") }]} onChange={(shirtStyle) => patch({ shirtStyle })} />
+            <Swatches label={t("avatar.clothesColor")} value={draft.shirtColor} colors={SHIRT} onChange={(shirtColor) => patch({ shirtColor })} />
+            <Swatches label={t("avatar.background")} value={draft.bgColor} colors={BG} onChange={(bgColor) => patch({ bgColor })} />
           </div>
         </div>
         <div className="modal-actions">
           <button type="button" className="btn btn-sm" disabled={busy} onClick={onClose}>
-            Отмена
+            {t("common.cancel")}
           </button>
           <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => onSave(encodeCreatedAvatar(draft))}>
-            {busy ? "Сохраняем…" : "Сохранить"}
+            {busy ? t("common.saving") : t("common.save")}
           </button>
         </div>
       </div>

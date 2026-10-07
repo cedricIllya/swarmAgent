@@ -4,6 +4,7 @@ import { getAgent } from "@swarm/agents";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
 import { awakeRuntime } from "@/lib/runtime-client";
+import { t } from "@/i18n";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string; chatId: string }> }): Promise<Response> {
   const viewer = await getViewer();
@@ -14,17 +15,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const body = z.object({ runId: z.string().min(1) }).safeParse(await req.json().catch(() => null));
   if (!body.success) return NextResponse.json({ error: "bad input" }, { status: 400 });
   const client = await awakeRuntime(agent);
-  if (!client) return NextResponse.json({ error: "Агент ещё не запущен" }, { status: 409 });
+  if (!client) return NextResponse.json({ error: t("errors.agentNotStarted") }, { status: 409 });
   try {
     const r = await client.retryChat(chatId, { runId: body.data.runId, author: viewer.user.email });
     return NextResponse.json(r, { status: 202 });
   } catch (e) {
     const message = e instanceof Error ? e.message : "";
     if (message.includes("→ 409")) {
-      return NextResponse.json({ error: "Сейчас уже выполняется другая задача" }, { status: 409 });
+      return NextResponse.json({ error: t("errors.otherTaskRunning") }, { status: 409 });
     }
     if (message.includes("→ 404")) {
-      return NextResponse.json({ error: "Эту задачу нельзя повторить" }, { status: 404 });
+      return NextResponse.json({ error: t("errors.taskNotRetryable") }, { status: 404 });
     }
     throw e;
   }

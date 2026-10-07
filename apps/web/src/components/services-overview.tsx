@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Agent } from "@swarm/contracts";
 import type { TenantConnection } from "@swarm/connections";
+import { t } from "@/i18n";
 import { accessKindLabel } from "./agent-dashboard/agent-access";
 import { TaskWatchTag } from "./task-watch-tag";
 import { AgentFace } from "./agent-avatar";
@@ -25,27 +26,27 @@ export function ServicesOverview({ agents, connections }: { agents: Agent[]; con
     <>
       <div className="page-head">
         <div>
-          <span className="kicker">Рабочее пространство</span>
-          <h1>Подключённые сервисы</h1>
-          <p className="lead">Куда у ваших агентов уже есть доступ.</p>
+          <span className="kicker">{t("common.workspace")}</span>
+          <h1>{t("services.title")}</h1>
+          <p className="lead">{t("services.lead")}</p>
         </div>
       </div>
 
       <div className="stats">
         <div className="stat-card">
           <span className="stat-value">{serviceCount}</span>
-          <span className="stat-label">сервисов</span>
+          <span className="stat-label">{t("services.statServices")}</span>
         </div>
         <div className="stat-card">
           <span className="stat-value">{totalLinks}</span>
-          <span className="stat-label">подключений</span>
+          <span className="stat-label">{t("services.statConnections")}</span>
         </div>
         <div className="stat-card">
           <span className="stat-value">
             {agentsWithAccess.size}
             <span className="stat-of"> / {agents.length}</span>
           </span>
-          <span className="stat-label">агентов с доступом</span>
+          <span className="stat-label">{t("services.statAgents")}</span>
         </div>
       </div>
 
@@ -60,8 +61,8 @@ export function ServicesOverview({ agents, connections }: { agents: Agent[]; con
         <section className="card">
           <div className="card-head">
             <div>
-              <h2>Из каталога</h2>
-              <span className="muted small">Сервисы, в которые агенты вошли сами — по приглашению или ключу</span>
+              <h2>{t("services.catalogTitle")}</h2>
+              <span className="muted small">{t("services.catalogLead")}</span>
             </div>
             <span className="badge">{catalog.length}</span>
           </div>
@@ -88,17 +89,17 @@ function GoogleCard({ agents }: { agents: Agent[] }) {
           </span>
           <div>
             <h2>Google Workspace</h2>
-            <span className="muted small">Почта, календарь и документы — подключается отдельно для каждого агента</span>
+            <span className="muted small">{t("services.googleLead")}</span>
           </div>
         </div>
         <span className={`badge ${connected.length ? "badge-ok" : ""}`}>
-          {connected.length ? `${connected.length} из ${agents.length}` : "не подключён"}
+          {connected.length ? t("common.countOf", { count: connected.length, total: agents.length }) : t("common.notConnected")}
         </span>
       </div>
 
       {agents.length === 0 ? (
         <p className="faint small" style={{ margin: 0 }}>
-          Сначала <Link href="/">создайте агента</Link> — Google подключается к конкретному агенту.
+          {t("services.googleEmptyBefore")} <Link href="/">{t("services.googleEmptyLink")}</Link> {t("services.googleEmptyAfter")}
         </p>
       ) : (
         <div className="agent-links">
@@ -108,10 +109,10 @@ function GoogleCard({ agents }: { agents: Agent[] }) {
                 <AgentFace agent={a} size="sm" />
                 {a.name}
               </Link>
-              <span className="agent-link-meta mono">{a.googleEmail ?? "аккаунт Google"}</span>
+              <span className="agent-link-meta mono">{a.googleEmail ?? t("common.googleAccount")}</span>
               <div className="row" style={{ gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
                 <a className="btn btn-sm btn-ghost" href={`/api/agents/${a.id}/google`}>
-                  Переподключить
+                  {t("common.reconnect")}
                 </a>
                 <DisconnectGoogleButton agentId={a.id} agentName={a.name} />
               </div>
@@ -123,9 +124,9 @@ function GoogleCard({ agents }: { agents: Agent[] }) {
                 <AgentFace agent={a} size="sm" />
                 {a.name}
               </Link>
-              <span className="agent-link-meta">не подключён</span>
+              <span className="agent-link-meta">{t("common.notConnected")}</span>
               <a className="btn btn-sm" href={`/api/agents/${a.id}/google`}>
-                Подключить
+                {t("common.connect")}
               </a>
             </div>
           ))}
@@ -148,17 +149,17 @@ function SlackCard({ agents, connection }: { agents: Agent[]; connection: Tenant
           </span>
           <div>
             <h2>Slack</h2>
-            <span className="muted small">Личные сообщения и упоминания приходят агенту сразу</span>
+            <span className="muted small">{t("services.slackLead")}</span>
           </div>
         </div>
         <span className={`badge ${connected.length ? "badge-ok" : ""}`}>
-          {connected.length ? `${connected.length} из ${agents.length}` : "не подключён"}
+          {connected.length ? t("common.countOf", { count: connected.length, total: agents.length }) : t("common.notConnected")}
         </span>
       </div>
 
       {agents.length === 0 ? (
         <p className="faint small" style={{ margin: 0 }}>
-          Сначала <Link href="/">создайте агента</Link> — Slack подключается к конкретному агенту.
+          {t("services.googleEmptyBefore")} <Link href="/">{t("services.googleEmptyLink")}</Link> {t("services.slackEmptyAfter")}
         </p>
       ) : (
         <div className="agent-links">
@@ -168,10 +169,10 @@ function SlackCard({ agents, connection }: { agents: Agent[]; connection: Tenant
                 <AgentFace agent={agent} size="sm" />
                 {agent.name}
               </Link>
-              <span className="agent-link-meta">подключён</span>
+              <span className="agent-link-meta">{t("common.connected")}</span>
               <div className="row" style={{ gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
                 <a className="btn btn-sm btn-ghost" href={`/api/agents/${agent.id}/slack`}>
-                  Переподключить
+                  {t("common.reconnect")}
                 </a>
                 <DisconnectServiceButton agentId={agent.id} slug="slack" serviceName="Slack" agentName={agent.name} />
               </div>
@@ -183,9 +184,9 @@ function SlackCard({ agents, connection }: { agents: Agent[]; connection: Tenant
                 <AgentFace agent={agent} size="sm" />
                 {agent.name}
               </Link>
-              <span className="agent-link-meta">не подключён</span>
+              <span className="agent-link-meta">{t("common.notConnected")}</span>
               <a className="btn btn-sm" href={`/api/agents/${agent.id}/slack`}>
-                Подключить
+                {t("common.connect")}
               </a>
             </div>
           ))}
@@ -223,42 +224,42 @@ function EmptyState({ agents }: { agents: Agent[] }) {
         <span />
         <span />
       </div>
-      <h2>Пока агенты никуда не вошли</h2>
+      <h2>{t("services.emptyTitle")}</h2>
       <p className="muted" style={{ maxWidth: 520, margin: "6px auto 18px" }}>
-        Сервисы появляются здесь сами, как только агент получит доступ. Для этого есть два пути:
+        {t("services.emptyLead")}
       </p>
       <div className="how-grid">
         <div className="how">
           <span className="how-num">1</span>
           <div>
-            <strong>Приглашение на почту</strong>
+            <strong>{t("services.inviteTitle")}</strong>
             <p className="muted small" style={{ margin: "2px 0 0" }}>
-              Пригласите агента в сервис на его адрес
+              {t("services.inviteBefore")}
               {first ? (
                 <>
                   {" "}
-                  — например, <code>{first.email}</code>
+                  {t("services.inviteExample")} <code>{first.email}</code>
                 </>
               ) : (
                 ""
               )}
-              . Он примет инвайт и сохранит вход.
+              {t("services.inviteAfter")}
             </p>
           </div>
         </div>
         <div className="how">
           <span className="how-num">2</span>
           <div>
-            <strong>Ссылка и ключ в задаче</strong>
+            <strong>{t("services.keyTitle")}</strong>
             <p className="muted small" style={{ margin: "2px 0 0" }}>
-              Вставьте агенту ссылку на сервис и API-ключ или токен. Он разберётся, как войти.
+              {t("services.keyBody")}
             </p>
           </div>
         </div>
       </div>
       {first && (
         <Link href={`/agents/${first.id}`} className="btn btn-primary" style={{ marginTop: 20 }}>
-          Открыть агента {first.name}
+          {t("services.openAgent", { name: first.name })}
         </Link>
       )}
     </section>

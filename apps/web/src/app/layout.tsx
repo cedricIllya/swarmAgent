@@ -2,17 +2,18 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { ConfirmProvider } from "@/components/confirm-dialog";
 import { ThemeWatcher } from "@/components/theme-toggle";
+import { locale, t } from "@/i18n";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Swarm Agent",
-  description: "Агенты с собственной почтой",
+  description: t("meta.description"),
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="ru" suppressHydrationWarning>
+    <html lang={locale} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>

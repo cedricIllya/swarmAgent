@@ -3,6 +3,7 @@ import { getAgent } from "@swarm/agents";
 import { getViewer } from "@/lib/session";
 import { db } from "@/lib/db";
 import { awakeRuntime } from "@/lib/runtime-client";
+import { t } from "@/i18n";
 
 /** Проксирует ролик с машины агента: сам runtime снаружи недоступен. */
 export async function GET(
@@ -15,9 +16,9 @@ export async function GET(
   const agent = await getAgent(db(), viewer.tenant.id, id);
   if (!agent) return NextResponse.json({ error: "not found" }, { status: 404 });
   const client = await awakeRuntime(agent, 120_000);
-  if (!client) return NextResponse.json({ error: "Агент не запущен" }, { status: 409 });
+  if (!client) return NextResponse.json({ error: t("errors.agentNotRunning") }, { status: 409 });
   const upstream = await client.video(sessionId);
-  if (!upstream.ok || !upstream.body) return NextResponse.json({ error: "Видео нет" }, { status: 404 });
+  if (!upstream.ok || !upstream.body) return NextResponse.json({ error: t("errors.noVideo") }, { status: 404 });
   return new Response(upstream.body, {
     headers: {
       "Content-Type": upstream.headers.get("content-type") ?? "video/mp4",

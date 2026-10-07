@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Agent } from "@swarm/contracts";
+import { t } from "@/i18n";
 import { DisconnectGoogleButton, DisconnectServiceButton } from "../disconnect-service";
 import { TaskWatchTag } from "../task-watch-tag";
 import { accessKindLabel, type AgentAccess } from "./agent-access";
@@ -23,8 +24,8 @@ export function EmailCard({
   return (
     <section className="card">
       <div className="card-head">
-        <h2>Подключение сервисов</h2>
-        <span className="muted small">Пришлите инвайт на адрес агента или вставьте ссылку и ключ в задачу</span>
+        <h2>{t("services.cardTitle")}</h2>
+        <span className="muted small">{t("services.cardLead")}</span>
       </div>
       {error && (
         <p className="notice notice-warn" style={{ margin: "0 0 14px" }}>
@@ -36,7 +37,7 @@ export function EmailCard({
       ) : catalog.length === 0 ? (
         services.some((service) => service.slug === "slack") ? null : (
           <p className="faint small" style={{ margin: "0 0 14px" }}>
-            Пока ни одного сервиса.
+            {t("services.noneYet")}
           </p>
         )
       ) : (
@@ -72,14 +73,14 @@ export function EmailCard({
         <span className="muted small row" style={{ gap: 8 }}>
           Google:
           {agent.googleConnected ? (
-            <span className="badge badge-ok">{agent.googleEmail ?? "подключён"}</span>
+            <span className="badge badge-ok">{agent.googleEmail ?? t("common.connected")}</span>
           ) : (
-            <span className="badge">не подключён</span>
+            <span className="badge">{t("common.notConnected")}</span>
           )}
         </span>
         <div className="row" style={{ gap: 8 }}>
           <a className="btn btn-sm" href={`/api/agents/${agent.id}/google`}>
-            {agent.googleConnected ? "Переподключить Google" : "Подключить Google"}
+            {agent.googleConnected ? t("services.reconnectGoogle") : t("services.connectGoogle")}
           </a>
           {agent.googleConnected && <DisconnectGoogleButton agentId={agent.id} onFailed={setError} />}
         </div>
@@ -106,11 +107,11 @@ function SlackRow({
     <div className="row" style={{ justifyContent: "space-between", marginTop: 10 }}>
       <span className="muted small row" style={{ gap: 8 }}>
         Slack:
-        {slack ? <span className="badge badge-ok">{label || "подключён"}</span> : <span className="badge">не подключён</span>}
+        {slack ? <span className="badge badge-ok">{label || t("common.connected")}</span> : <span className="badge">{t("common.notConnected")}</span>}
       </span>
       <div className="row" style={{ gap: 8 }}>
         <a className="btn btn-sm" href={`/api/agents/${agentId}/slack`}>
-          {slack ? "Переподключить Slack" : "Подключить Slack"}
+          {slack ? t("services.reconnectSlack") : t("services.connectSlack")}
         </a>
         {slack && (
           <DisconnectServiceButton

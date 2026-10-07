@@ -23,18 +23,18 @@ describe("presentSteps", () => {
     ]);
 
     expect(lines).toEqual([
-      "Ищу, как войти в Linear",
+      "Looking for a way into Linear",
       "Открыл приглашение в Linear",
-      "Ввожу почту",
-      "Подключил Linear",
+      "Entering the email",
+      "Connected Linear",
       "Принимаю приглашение",
-      "Не получилось выполнить задачу",
+      "Couldn't complete the task",
     ]);
   });
 
   it("не тащит служебные строки в расходы", () => {
     expect(presentDetail("чат: task")).toBeNull();
-    expect(presentDetail("поиск в интернете: 3 источник(ов)")).toBe("Ищу в интернете");
+    expect(presentDetail("поиск в интернете: 3 источник(ов)")).toBe("Searching the web");
   });
 
   it("схлопывает одинаковые заметки расхода", () => {
@@ -46,13 +46,13 @@ describe("presentSteps", () => {
         "поиск в интернете: ещё раз",
         "нашёл 3 задачи",
       ]),
-    ).toEqual(["Ищу в интернете", "Нашёл 3 задачи"]);
+    ).toEqual(["Searching the web", "Нашёл 3 задачи"]);
   });
 
   it("убирает имена внутренней кухни из ответа и статуса", () => {
     expect(forPerson("Создал задачу в Linear. Hermes сходил в Skyvern.")).toBe("Создал задачу в Linear.");
     expect(personStatus("Машина создана, Fly готовит образы Hermes и runtime — обычно 1–5 минут")).toBe(
-      "Агент запускается — обычно это занимает несколько минут",
+      "The agent is starting — this usually takes a few minutes",
     );
     expect(personStatus("Ждёт письмо")).toBe("Ждёт письмо");
   });

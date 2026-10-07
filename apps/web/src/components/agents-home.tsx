@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 import type { Agent } from "@swarm/contracts";
+import { t } from "@/i18n";
 import { StatusBadge } from "./status-badge";
 import { CreateAgentForm } from "./create-agent-form";
 import { AgentFace } from "./agent-avatar";
@@ -36,12 +37,12 @@ export function AgentsHome({
     <>
       <div className="page-head">
         <div>
-          <span className="kicker">Рабочее пространство</span>
-          <h1>Агенты</h1>
-          <p className="lead">У каждого — свой адрес для приглашений и своя машина.</p>
+          <span className="kicker">{t("common.workspace")}</span>
+          <h1>{t("home.title")}</h1>
+          <p className="lead">{t("home.lead")}</p>
         </div>
         <button className="btn btn-primary" onClick={() => setOpen((v) => !v)}>
-          {open ? "Скрыть" : "Создать агента"}
+          {open ? t("home.hide") : t("home.create")}
         </button>
       </div>
 
@@ -64,9 +65,9 @@ export function AgentsHome({
             <span />
             <span />
           </div>
-          <h2>Агентов пока нет</h2>
+          <h2>{t("home.emptyTitle")}</h2>
           <p className="muted" style={{ margin: "6px 0 0" }}>
-            Создайте первого — он получит адрес вида <code>{ownerLogin}.имя.фамилия@домен</code>.
+            {t("home.emptyBody")} <code>{t("home.emptyExample", { login: ownerLogin })}</code>.
           </p>
         </div>
       ) : (

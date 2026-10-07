@@ -47,16 +47,16 @@ describe("accessKindLabel", () => {
   it("называет способ по-русски там, где это слово", () => {
     expect(accessKindLabel("mcp")).toBe("MCP");
     expect(accessKindLabel("api")).toBe("API");
-    expect(accessKindLabel("browser")).toBe("браузер");
+    expect(accessKindLabel("browser")).toBe("browser");
   });
 });
 
 describe("taskWatchLabel", () => {
   it("называет три состояния", () => {
-    expect(taskWatchLabel(true).text).toBe("задачи");
-    expect(taskWatchLabel(false).text).toBe("без задач");
-    expect(taskWatchLabel(null).text).toBe("не ясно");
-    expect(taskWatchLabel(undefined).text).toBe("не ясно");
-    expect(taskWatchLabel(false, "messenger").text).toBe("канал");
+    expect(taskWatchLabel(true).text).toBe("tasks");
+    expect(taskWatchLabel(false).text).toBe("no tasks");
+    expect(taskWatchLabel(null).text).toBe("unclear");
+    expect(taskWatchLabel(undefined).text).toBe("unclear");
+    expect(taskWatchLabel(false, "messenger").text).toBe("channel");
   });
 });

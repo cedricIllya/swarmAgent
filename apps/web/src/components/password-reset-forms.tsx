@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent, type ReactNode } from "react";
+import { t } from "@/i18n";
 import { authClient } from "@/lib/auth-client";
 
 function Shell({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
@@ -19,7 +20,7 @@ function Shell({ title, subtitle, children }: { title: string; subtitle: string;
         </p>
         {children}
         <p className="muted small" style={{ textAlign: "center", marginTop: 14, marginBottom: 0 }}>
-          <Link href="/login">Вернуться ко входу</Link>
+          <Link href="/login">{t("auth.backToSignIn")}</Link>
         </p>
       </div>
     </div>
@@ -39,7 +40,7 @@ export function ForgotPasswordForm({ initialEmail }: { initialEmail: string }) {
     const res = await authClient.requestPasswordReset({ email, redirectTo: "/reset-password" });
     setBusy(false);
     if (res.error) {
-      setError(res.error.message ?? "Не получилось");
+      setError(res.error.message ?? t("common.failed"));
       return;
     }
     setSent(true);
@@ -47,24 +48,24 @@ export function ForgotPasswordForm({ initialEmail }: { initialEmail: string }) {
 
   if (sent) {
     return (
-      <Shell title="Проверьте почту" subtitle={`Если аккаунт ${email} существует, мы отправили на него ссылку для нового пароля.`}>
+      <Shell title={t("auth.checkEmail")} subtitle={t("auth.checkEmailBody", { email })}>
         <p className="faint small" style={{ margin: 0 }}>
-          Ссылка действует час. Письма нет — загляните в спам или запросите ещё раз.
+          {t("auth.linkLifetime")}
         </p>
       </Shell>
     );
   }
 
   return (
-    <Shell title="Сброс пароля" subtitle="Пришлём ссылку, по которой можно задать новый пароль.">
+    <Shell title={t("auth.resetTitle")} subtitle={t("auth.resetSubtitle")}>
       <form onSubmit={submit}>
         <div className="field">
-          <label className="label">Email</label>
+          <label className="label">{t("common.email")}</label>
           <input className="input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
         </div>
         {error && <p className="error">{error}</p>}
         <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: "100%", marginTop: 6 }}>
-          {busy ? "…" : "Отправить ссылку"}
+          {busy ? t("common.ellipsis") : t("auth.sendLink")}
         </button>
       </form>
     </Shell>
@@ -80,9 +81,9 @@ export function ResetPasswordForm({ token, invalid }: { token: string | null; in
 
   if (invalid || !token) {
     return (
-      <Shell title="Ссылка недействительна" subtitle="Она устарела или уже использована.">
+      <Shell title={t("auth.invalidLink")} subtitle={t("auth.invalidLinkBody")}>
         <Link className="btn btn-primary" href="/forgot-password" style={{ width: "100%" }}>
-          Запросить новую ссылку
+          {t("auth.requestNewLink")}
         </Link>
       </Shell>
     );
@@ -91,7 +92,7 @@ export function ResetPasswordForm({ token, invalid }: { token: string | null; in
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (password !== confirm) {
-      setError("Пароли не совпадают");
+      setError(t("auth.passwordsMismatch"));
       return;
     }
     setBusy(true);
@@ -99,17 +100,17 @@ export function ResetPasswordForm({ token, invalid }: { token: string | null; in
     const res = await authClient.resetPassword({ newPassword: password, token: token! });
     setBusy(false);
     if (res.error) {
-      setError(res.error.message ?? "Не получилось");
+      setError(res.error.message ?? t("common.failed"));
       return;
     }
     router.push("/login?reset=1");
   }
 
   return (
-    <Shell title="Новый пароль" subtitle="После смены все открытые сессии завершатся.">
+    <Shell title={t("auth.newPassword")} subtitle={t("auth.newPasswordBody")}>
       <form onSubmit={submit}>
         <div className="field">
-          <label className="label">Пароль</label>
+          <label className="label">{t("common.password")}</label>
           <input
             className="input"
             type="password"
@@ -121,7 +122,7 @@ export function ResetPasswordForm({ token, invalid }: { token: string | null; in
           />
         </div>
         <div className="field">
-          <label className="label">Ещё раз</label>
+          <label className="label">{t("auth.again")}</label>
           <input
             className="input"
             type="password"
@@ -134,7 +135,7 @@ export function ResetPasswordForm({ token, invalid }: { token: string | null; in
         </div>
         {error && <p className="error">{error}</p>}
         <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: "100%", marginTop: 6 }}>
-          {busy ? "…" : "Сохранить пароль"}
+          {busy ? t("common.ellipsis") : t("auth.savePassword")}
         </button>
       </form>
     </Shell>

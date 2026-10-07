@@ -1,21 +1,23 @@
 import type { RuntimeState, UsageByTask } from "@swarm/contracts";
+import { formatNumber, t, type MessageKey } from "@/i18n";
 import { UsageBodySkeleton } from "../skeleton";
 import { usd } from "./format";
 import { presentDetails } from "./present-steps";
 
-const ACTION_LABEL: Record<string, string> = {
-  "hermes.turn": "работа агента",
-  "hermes.tick": "обход сервисов",
-  "hermes.approval": "после решения человека",
-  "hermes.question": "после ответа человека",
-  "stagehand.llm": "браузер",
-  "classify.email": "разбор письма",
-  "classify.email.in-browser": "разбор письма во время браузера",
-  "classify.chat": "разбор сообщения",
+const ACTION_KEY: Record<string, MessageKey> = {
+  "hermes.turn": "usage.action.hermesTurn",
+  "hermes.tick": "usage.action.hermesTick",
+  "hermes.approval": "usage.action.hermesApproval",
+  "hermes.question": "usage.action.hermesQuestion",
+  "stagehand.llm": "usage.action.stagehandLlm",
+  "classify.email": "usage.action.classifyEmail",
+  "classify.email.in-browser": "usage.action.classifyEmailBrowser",
+  "classify.chat": "usage.action.classifyChat",
 };
 
 function actionLabel(action: string): string {
-  return ACTION_LABEL[action] ?? "действие";
+  const key = ACTION_KEY[action];
+  return key ? t(key) : t("usage.action.other");
 }
 
 export function UsageCard({ state, pending }: { state: RuntimeState | null; pending: boolean }) {
@@ -23,8 +25,8 @@ export function UsageCard({ state, pending }: { state: RuntimeState | null; pend
   return (
     <section className="card" aria-busy={pending}>
       <div className="card-head">
-        <h2>Токены и деньги</h2>
-        <span className="muted small">По задачам</span>
+        <h2>{t("usage.title")}</h2>
+        <span className="muted small">{t("usage.byTask")}</span>
       </div>
       {pending ? (
         <UsageBodySkeleton />
@@ -33,28 +35,28 @@ export function UsageCard({ state, pending }: { state: RuntimeState | null; pend
           <div className="row" style={{ gap: 32, marginBottom: 16 }}>
             <div className="stat">
               <span className="stat-value">{usd(u?.totalCostUsd ?? 0)}</span>
-              <span className="stat-label">всего</span>
+              <span className="stat-label">{t("usage.total")}</span>
             </div>
             <div className="stat">
-              <span className="stat-value">{(u?.totalPromptTokens ?? 0).toLocaleString("ru-RU")}</span>
-              <span className="stat-label">токенов на вход</span>
+              <span className="stat-value">{formatNumber(u?.totalPromptTokens ?? 0)}</span>
+              <span className="stat-label">{t("usage.prompt")}</span>
             </div>
             <div className="stat">
-              <span className="stat-value">{(u?.totalCompletionTokens ?? 0).toLocaleString("ru-RU")}</span>
-              <span className="stat-label">токенов на выход</span>
+              <span className="stat-value">{formatNumber(u?.totalCompletionTokens ?? 0)}</span>
+              <span className="stat-label">{t("usage.completion")}</span>
             </div>
           </div>
           {!u?.tasks.length ? (
-            <p className="faint small" style={{ margin: 0 }}>Расходов ещё нет.</p>
+            <p className="faint small" style={{ margin: 0 }}>{t("usage.empty")}</p>
           ) : (
             <table className="table">
               <thead>
                 <tr>
-                  <th>Задача / действие</th>
-                  <th className="num">Вызовов</th>
-                  <th className="num">Вход</th>
-                  <th className="num">Выход</th>
-                  <th className="num">Стоимость</th>
+                  <th>{t("usage.taskAction")}</th>
+                  <th className="num">{t("usage.calls")}</th>
+                  <th className="num">{t("usage.input")}</th>
+                  <th className="num">{t("usage.output")}</th>
+                  <th className="num">{t("usage.cost")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -78,8 +80,8 @@ function TaskRows({ task }: { task: UsageByTask }) {
       <tr>
         <td>{task.taskTitle || task.taskId}</td>
         <td className="num">{task.calls}</td>
-        <td className="num">{task.promptTokens.toLocaleString("ru-RU")}</td>
-        <td className="num">{task.completionTokens.toLocaleString("ru-RU")}</td>
+        <td className="num">{formatNumber(task.promptTokens)}</td>
+        <td className="num">{formatNumber(task.completionTokens)}</td>
         <td className="num">{usd(task.costUsd)}</td>
       </tr>
       {breakdown &&
@@ -96,8 +98,8 @@ function TaskRows({ task }: { task: UsageByTask }) {
               )}
             </td>
             <td className="num">{a.calls}</td>
-            <td className="num">{a.promptTokens.toLocaleString("ru-RU")}</td>
-            <td className="num">{a.completionTokens.toLocaleString("ru-RU")}</td>
+            <td className="num">{formatNumber(a.promptTokens)}</td>
+            <td className="num">{formatNumber(a.completionTokens)}</td>
             <td className="num">{usd(a.costUsd)}</td>
           </tr>
         ))}

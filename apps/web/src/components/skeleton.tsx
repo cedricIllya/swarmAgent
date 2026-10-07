@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { t } from "@/i18n";
 
 export function Skeleton({
   width,
@@ -59,7 +60,7 @@ export function ListSkeleton({ count = 2 }: { count?: number }) {
   );
 }
 
-const USAGE_LABELS = ["всего", "токенов на вход", "токенов на выход"] as const;
+const USAGE_LABELS = ["usage.total", "usage.prompt", "usage.completion"] as const;
 
 export function UsageBodySkeleton() {
   return (
@@ -68,18 +69,18 @@ export function UsageBodySkeleton() {
         {USAGE_LABELS.map((label) => (
           <div className="stat" key={label}>
             <Skeleton width={96} height={36} />
-            <span className="stat-label">{label}</span>
+            <span className="stat-label">{t(label)}</span>
           </div>
         ))}
       </div>
       <table className="table">
         <thead>
           <tr>
-            <th>Задача / действие</th>
-            <th className="num">Вызовов</th>
-            <th className="num">Вход</th>
-            <th className="num">Выход</th>
-            <th className="num">Стоимость</th>
+            <th>{t("usage.taskAction")}</th>
+            <th className="num">{t("usage.calls")}</th>
+            <th className="num">{t("usage.input")}</th>
+            <th className="num">{t("usage.output")}</th>
+            <th className="num">{t("usage.cost")}</th>
           </tr>
         </thead>
         <tbody>
@@ -120,7 +121,7 @@ function CardHeadSkeleton({ title, aside }: { title: number; aside?: number }) {
 export function DashboardSkeleton() {
   return (
     <div aria-busy="true">
-      <span className="sr-only">Загрузка агента</span>
+      <span className="sr-only">{t("common.loadingAgent")}</span>
       <PageHeadSkeleton kicker={112} title={220} detail={240} action={84} />
 
       <section className="card">
@@ -164,10 +165,10 @@ export function DashboardSkeleton() {
 export function HomeSkeleton() {
   return (
     <div aria-busy="true">
-      <span className="sr-only">Загрузка</span>
+      <span className="sr-only">{t("common.loading")}</span>
       <PageHeadSkeleton kicker={172} title={118} lead={460} action={156} />
       <div className="stats">
-        {["потрачено всеми агентами", "токенов на вход", "токенов на выход"].map((label) => (
+        {[t("usage.tenantSpent"), t("usage.prompt"), t("usage.completion")].map((label) => (
           <div key={label} className="stat-card">
             <Skeleton width={96} height={36} />
             <span className="stat-label">{label}</span>
@@ -195,10 +196,10 @@ export function HomeSkeleton() {
 export function ServicesSkeleton() {
   return (
     <div aria-busy="true">
-      <span className="sr-only">Загрузка</span>
+      <span className="sr-only">{t("common.loading")}</span>
       <PageHeadSkeleton kicker={172} title={340} lead={520} />
       <div className="stats">
-        {["сервисов", "подключений", "агентов с доступом"].map((label) => (
+        {[t("services.statServices"), t("services.statConnections"), t("services.statAgents")].map((label) => (
           <div key={label} className="stat-card">
             <Skeleton width={48} height={36} />
             <span className="stat-label">{label}</span>
@@ -248,7 +249,7 @@ export function ServicesSkeleton() {
 export function SettingsSkeleton() {
   return (
     <div aria-busy="true">
-      <span className="sr-only">Загрузка</span>
+      <span className="sr-only">{t("common.loading")}</span>
       <PageHeadSkeleton kicker={72} title={160} lead={360} />
       <section className="card">
         <div className="card-head">
@@ -258,7 +259,7 @@ export function SettingsSkeleton() {
           </div>
         </div>
         <div className="facts">
-          {["Имя", "Email", "Пространство"].map((label) => (
+          {["name", "email", "space"].map((label) => (
             <div key={label}>
               <Skeleton width={88} height={14} />
               <Skeleton width={180} height={16} />

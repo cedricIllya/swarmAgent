@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import type { Agent, BrowserSession, ChatMessage, PendingApproval, Run, RunStep, RuntimeState, UserQuestion } from "@swarm/contracts";
 import { parseUserQuestion } from "@swarm/contracts";
+import { count, t, type MessageKey } from "@/i18n";
 import { ApprovalRow, QuestionCard } from "./approval-bubbles";
 import { SessionShots } from "./browser-bubble";
 import { fmtTime } from "./format";
@@ -15,21 +16,31 @@ import { servicesForRun } from "./task-services";
 import { ListSkeleton, Skeleton } from "../skeleton";
 import { partitionTaskLog, waitingOnPerson, type TaskLogTone } from "./task-log-list";
 
-const STATUS_LABEL: Record<Run["status"], { text: string; cls: string }> = {
-  queued: { text: "в очереди", cls: "" },
-  running: { text: "идёт", cls: "badge-accent" },
-  waiting_approval: { text: "ждёт одобрения", cls: "badge-warn" },
-  done: { text: "готово", cls: "badge-ok" },
-  failed: { text: "ошибка", cls: "badge-danger" },
-  escalated: { text: "нужен человек", cls: "badge-warn" },
-  canceled: { text: "остановлено", cls: "" },
+const STATUS_CLASS: Record<Run["status"], string> = {
+  queued: "",
+  running: "badge-accent",
+  waiting_approval: "badge-warn",
+  done: "badge-ok",
+  failed: "badge-danger",
+  escalated: "badge-warn",
+  canceled: "",
 };
 
-const TRIGGER_LABEL: Record<Run["trigger"], string> = {
-  email: "письмо",
-  chat: "задача",
-  cron: "по расписанию",
-  approval: "одобрение",
+const STATUS_KEY: Record<Run["status"], MessageKey> = {
+  queued: "runs.status.queued",
+  running: "runs.status.running",
+  waiting_approval: "runs.status.waiting_approval",
+  done: "runs.status.done",
+  failed: "runs.status.failed",
+  escalated: "runs.status.escalated",
+  canceled: "runs.status.canceled",
+};
+
+const TRIGGER_KEY: Record<Run["trigger"], MessageKey> = {
+  email: "runs.trigger.email",
+  chat: "runs.trigger.chat",
+  cron: "runs.trigger.cron",
+  approval: "runs.trigger.approval",
 };
 
 function mergeSteps(loaded: RunStep[] | null, live: RunStep[]): RunStep[] {
@@ -156,7 +167,7 @@ export function LogsCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ answer: text }),
       });
-      if (!res.ok) throw new Error("Не удалось отправить ответ");
+      if (!res.ok) throw new Error(t("logs.replyFailed"));
     } finally {
       setDeciding(null);
     }
@@ -198,17 +209,17 @@ export function LogsCard({
   return (
     <section className="card" aria-busy={pending}>
       <div className="card-head">
-        <h2>Журнал задач</h2>
+        <h2>{t("logs.title")}</h2>
         {pending ? (
           <Skeleton width={64} height={14} />
         ) : (
           <div className="row" style={{ gap: 8 }}>
             {openRuns.length > 0 && (
               <span className={`badge ${openNeedsPerson ? "badge-warn" : "badge-accent"}`}>
-                {openRuns.length} в работе
+                {t("logs.inProgressCount", { count: openRuns.length })}
               </span>
             )}
-            <span className="muted small">{plural(runs.length, "задача", "задачи", "задач")}</span>
+            <span className="muted small">{count(runs.length, "tasks")}</span>
           </div>
         )}
       </div>
@@ -216,14 +227,14 @@ export function LogsCard({
         <ListSkeleton />
       ) : runs.length === 0 ? (
         <p className="faint small" style={{ margin: 0 }}>
-          Задач ещё не было.
+          {t("logs.empty")}
         </p>
       ) : (
         <>
           {openRuns.length > 0 && (
             <div className="run-section">
               <div className="run-section-label">
-                <span>В работе</span>
+                <span>{t("logs.inProgress")}</span>
                 <span>{openRuns.length}</span>
               </div>
               <div className="list">{openRuns.map(({ run, tone }) => renderRun(run, tone))}</div>
@@ -233,7 +244,7 @@ export function LogsCard({
             (openRuns.length > 0 ? (
               <details className="run-archive">
                 <summary className="run-archive-summary">
-                  <span>Завершённые</span>
+                  <span>{t("logs.settled")}</span>
                   <span className="run-archive-count">{settledRuns.length}</span>
                 </summary>
                 <div className="list">{settledRuns.map(({ run, tone }) => renderRun(run, tone))}</div>
@@ -247,17 +258,17 @@ export function LogsCard({
       <div className="logs-access">
         <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
           <div className="run-block-label" style={{ marginBottom: 0 }}>
-            Доступы
+            {t("logs.access")}
           </div>
           <Link href="/services" className="small">
-            Все сервисы →
+            {t("logs.allServices")}
           </Link>
         </div>
         {pending || !accessReady ? (
           <ListSkeleton count={1} />
         ) : accesses.length === 0 ? (
           <p className="faint small" style={{ margin: 0 }}>
-            Пока ничего. Пришлите приглашение на <code>{agent.email}</code> или вставьте ссылку и ключ в задачу.
+            {t("logs.accessEmptyBefore")} <code>{agent.email}</code> {t("logs.accessEmptyAfter")}
           </p>
         ) : (
           <div className="list">
@@ -400,7 +411,7 @@ function RunItem({
       const res = await fetch(`/api/agents/${agent.id}/runs/${run.id}/cancel`, { method: "POST" });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        setActionError(data?.error ?? "Не удалось остановить");
+        setActionError(data?.error ?? t("logs.stopFailed"));
       }
     } finally {
       setStopping(false);
@@ -421,7 +432,7 @@ function RunItem({
     setRetrying(false);
     if (!res.ok) {
       const data = (await res.json().catch(() => null)) as { error?: string } | null;
-      setActionError(data?.error ?? "Не удалось повторить");
+      setActionError(data?.error ?? t("logs.retryFailed"));
     }
   }
 
@@ -435,7 +446,7 @@ function RunItem({
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(data?.error ?? "Не удалось отправить ответ");
+        throw new Error(data?.error ?? t("logs.replyFailed"));
       }
     } finally {
       setReplying(false);
@@ -462,7 +473,7 @@ function RunItem({
       ? questionInRun(run.summary, history)
       : null;
   const awaitsPerson = waitingOnPerson(run.status, pendingQuestion || Boolean(followup) || approvals.length > 0);
-  const st = awaitsPerson ? { text: "в работе", cls: "badge-warn" } : STATUS_LABEL[run.status];
+  const st = awaitsPerson ? { text: t("logs.inProgressBadge"), cls: "badge-warn" } : { text: t(STATUS_KEY[run.status]), cls: STATUS_CLASS[run.status] };
 
   const toneNow: RunTone = pendingQuestion || followup ? "attention" : tone;
 
@@ -511,7 +522,7 @@ function RunItem({
   // Задача ещё в работе: без карточки с кнопками человек пишет решение, и агент продолжает её же.
   const escalation =
     run.status === "escalated" && !local && agent.status === "running" && approvals.length === 0 && !followup && !threadBusy
-      ? summary || "Задача в работе и ждёт вашего решения."
+      ? summary || t("logs.inProgressWaiting")
       : null;
 
   return (
@@ -535,8 +546,8 @@ function RunItem({
         <div className="run-summary-main">
           <div className="run-title">{run.title}</div>
           <div className="faint small">
-            {fmtTime(run.startedAt)} · {TRIGGER_LABEL[run.trigger]}
-            {sessions.length ? ` · браузер ×${sessions.length}` : ""}
+            {fmtTime(run.startedAt)} · {t(TRIGGER_KEY[run.trigger])}
+            {sessions.length ? t("logs.browserCount", { count: sessions.length }) : ""}
             {waitNote(run, approvals.length > 0, pendingQuestion, Boolean(followup))}
             {usedServices.length ? ` · ${usedServices.map((s) => s.name).join(", ")}` : ""}
           </div>
@@ -544,12 +555,12 @@ function RunItem({
         <div className="run-summary-side">
           {canRetry && (
             <button type="button" className="btn btn-ghost btn-sm" disabled={retrying} onClick={(e) => void retry(e)}>
-              {retrying ? "…" : "Повторить"}
+              {retrying ? t("common.ellipsis") : t("logs.retry")}
             </button>
           )}
           {canStop && (
             <button type="button" className="btn btn-ghost btn-sm" disabled={stopping} onClick={(e) => void stop(e)}>
-              {stopping ? "…" : "Остановить"}
+              {stopping ? t("common.ellipsis") : t("logs.stop")}
             </button>
           )}
           <span className={`badge ${st.cls}`}>
@@ -582,7 +593,7 @@ function RunItem({
                   });
                   if (!res.ok) {
                     const data = (await res.json().catch(() => null)) as { error?: string } | null;
-                    throw new Error(data?.error ?? "Не удалось отправить ответ");
+                    throw new Error(data?.error ?? t("logs.replyFailed"));
                   }
                 } finally {
                   setReplying(false);
@@ -597,11 +608,11 @@ function RunItem({
       {escalation && (
         <div className="list" style={{ marginTop: 10 }}>
           <QuestionCard
-            title="Нужен человек"
+            title={t("logs.needsPerson")}
             prompt={escalation}
             options={[]}
             busy={replying}
-            placeholder="Напишите, что сделали или как поступить — агент продолжит. Или остановите задачу."
+            placeholder={t("logs.needsPersonPlaceholder")}
             onAnswer={answerRun}
           />
         </div>
@@ -621,7 +632,7 @@ function RunItem({
       )}
       {usedServices.length > 0 && (
         <div className="run-block">
-          <div className="run-block-label">Сервисы</div>
+          <div className="run-block-label">{t("logs.services")}</div>
           <div className="service-chips">
             {usedServices.map((s) => (
               <span key={s.slug} className="service-chip">
@@ -638,13 +649,13 @@ function RunItem({
       )}
       {history.length > 0 && (
         <div className="run-block">
-          <div className="run-block-label">История</div>
+          <div className="run-block-label">{t("logs.history")}</div>
           {history.map((m, i) => {
             const text = m.role === "user" ? m.text : forPerson(m.text);
             if (!text) return null;
             return (
               <div key={`${m.at}-${i}`} className="history-line">
-                <span className="history-role">{m.role === "user" ? m.author || "Вы" : "Агент"}</span>
+                <span className="history-role">{m.role === "user" ? m.author || t("common.you") : t("common.agent")}</span>
                 <div>
                   <StepText text={text} />
                 </div>
@@ -675,22 +686,22 @@ function RunItem({
       {sessions.map((s) => (
         <div key={s.id} style={{ marginTop: 12 }}>
           <div className="small muted">
-            браузер · {sessionPurpose(s.purpose)} · {fmtTime(s.startedAt)}
+            {t("access.browser")} · {sessionPurpose(s.purpose)} · {fmtTime(s.startedAt)}
           </div>
           {s.hasVideo ? (
             <video controls preload="none" src={`/api/agents/${agent.id}/browser-sessions/${s.id}/video`} />
           ) : !s.finishedAt && s.liveUrl ? (
             <a className="small" href={s.liveUrl} target="_blank" rel="noopener noreferrer">
-              сессия идёт — смотреть браузер
+              {t("logs.sessionLive")}
             </a>
           ) : s.provider !== "skyvern" ? (
             <SessionShots
               agentId={agent.id}
               sessionId={s.id}
-              fallback={s.finishedAt ? "кадров нет" : "кадр появится после шага"}
+              fallback={s.finishedAt ? t("logs.noFrames") : t("logs.frameAfterStep")}
             />
           ) : (
-            <span className="faint small">{s.finishedAt ? "видео недоступно" : "сессия идёт, видео появится после"}</span>
+            <span className="faint small">{s.finishedAt ? t("logs.videoUnavailable") : t("logs.videoAfter")}</span>
           )}
         </div>
       ))}
@@ -705,8 +716,8 @@ function questionInRun(summary: string, messages: ChatMessage[]): UserQuestion |
 }
 
 function sessionPurpose(purpose: string): string {
-  if (purpose === "signup") return "регистрация";
-  if (purpose === "login") return "вход";
+  if (purpose === "signup") return t("logs.purposeSignup");
+  if (purpose === "login") return t("logs.purposeLogin");
   return purpose;
 }
 
@@ -726,10 +737,10 @@ function visibleOpenRow(rows: Map<string, HTMLDetailsElement>): { key: string; t
 }
 
 function waitNote(run: Run, hasApproval: boolean, pendingQuestion: boolean, followup: boolean): string {
-  if (hasApproval) return pendingQuestion ? " · ждёт ответа" : " · ждёт человека";
-  if (followup) return " · ждёт ответа";
-  if (run.status === "escalated") return " · ждёт решения";
-  if (run.status === "waiting_approval") return " · ждёт одобрения";
+  if (hasApproval) return pendingQuestion ? t("logs.waitAnswer") : t("logs.waitPerson");
+  if (followup) return t("logs.waitAnswer");
+  if (run.status === "escalated") return t("logs.waitDecision");
+  if (run.status === "waiting_approval") return t("logs.waitApproval");
   return "";
 }
 
@@ -752,11 +763,4 @@ function followupQuestion(run: Run, runs: Run[], messages: ChatMessage[]): boole
   );
   if (threadBusy) return false;
   return Boolean(questionInRun(run.summary, messages.filter((message) => message.kind !== "browser")));
-}
-
-function plural(n: number, one: string, few: string, many: string): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  const word = mod10 === 1 && mod100 !== 11 ? one : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? few : many;
-  return `${n} ${word}`;
 }

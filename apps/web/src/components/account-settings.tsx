@@ -1,15 +1,8 @@
 import type { Viewer } from "@/lib/session";
 import type { DeletionPreview } from "@/lib/delete-account";
+import { count, t } from "@/i18n";
 import { DeleteAccountForm } from "./delete-account-form";
 import { ThemePreference } from "./theme-toggle";
-
-function plural(n: number, one: string, few: string, many: string): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return `${n} ${one}`;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return `${n} ${few}`;
-  return `${n} ${many}`;
-}
 
 export function AccountSettings({ viewer, preview }: { viewer: Viewer; preview: DeletionPreview }) {
   const agentsTotal = preview.tenants.reduce((n, t) => n + t.agents, 0);
@@ -18,30 +11,30 @@ export function AccountSettings({ viewer, preview }: { viewer: Viewer; preview: 
     <>
       <div className="page-head">
         <div>
-          <span className="kicker">Аккаунт</span>
-          <h1>Настройки</h1>
-          <p className="lead">Кто вы в системе и что с этим можно сделать.</p>
+          <span className="kicker">{t("settings.kicker")}</span>
+          <h1>{t("settings.title")}</h1>
+          <p className="lead">{t("settings.lead")}</p>
         </div>
       </div>
 
       <section className="card">
         <div className="card-head">
           <div>
-            <h2>Профиль</h2>
-            <span className="muted small">Данные, под которыми вы входите</span>
+            <h2>{t("settings.profile")}</h2>
+            <span className="muted small">{t("settings.profileLead")}</span>
           </div>
         </div>
         <dl className="facts">
           <div>
-            <dt>Имя</dt>
+            <dt>{t("common.name")}</dt>
             <dd>{viewer.user.name}</dd>
           </div>
           <div>
-            <dt>Email</dt>
+            <dt>{t("common.email")}</dt>
             <dd className="mono">{viewer.user.email}</dd>
           </div>
           <div>
-            <dt>Пространство</dt>
+            <dt>{t("settings.space")}</dt>
             <dd>{viewer.tenant.name}</dd>
           </div>
         </dl>
@@ -52,35 +45,33 @@ export function AccountSettings({ viewer, preview }: { viewer: Viewer; preview: 
       <section className="card card-danger">
         <div className="card-head">
           <div>
-            <h2>Удалить аккаунт</h2>
-            <span className="muted small">Необратимо. Восстановить ничего не получится.</span>
+            <h2>{t("settings.dangerTitle")}</h2>
+            <span className="muted small">{t("settings.dangerLead")}</span>
           </div>
         </div>
 
         <p className="muted small" style={{ marginTop: 0 }}>
-          Вместе с аккаунтом исчезнут:
+          {t("settings.dangerGone")}
         </p>
         <ul className="muted small deletion-list">
-          {preview.tenants.map((t) => (
-            <li key={t.id}>
-              пространство <strong>{t.name}</strong>
-              {t.agents > 0 ? (
+          {preview.tenants.map((tenant) => (
+            <li key={tenant.id}>
+              {t("settings.spaceNamed")} <strong>{tenant.name}</strong>
+              {tenant.agents > 0 ? (
                 <>
                   {" "}
-                  и {plural(t.agents, "агент", "агента", "агентов")} в нём — машины, диски, история чатов и все сохранённые
-                  входы в сервисы
+                  {t("settings.agentsInIt", { agents: count(tenant.agents, "agents") })}
                 </>
               ) : (
-                " (агентов нет)"
+                ` ${t("settings.noAgents")}`
               )}
             </li>
           ))}
-          <li>ваш вход, пароль и активные сессии</li>
+          <li>{t("settings.credentials")}</li>
         </ul>
         {preview.sharedTenants.length > 0 && (
           <p className="muted small">
-            Из общих пространств ({preview.sharedTenants.map((t) => t.name).join(", ")}) вы просто выйдете — они останутся
-            другим участникам.
+            {t("settings.sharedLeave", { names: preview.sharedTenants.map((tenant) => tenant.name).join(", ") })}
           </p>
         )}
 

@@ -1,5 +1,6 @@
 import { createAuth, type Auth } from "@swarm/identity";
 import { sendViaMailgun } from "@swarm/mail";
+import { t } from "@/i18n";
 import { env } from "@/env";
 import { purgeUserSpaces } from "./delete-account";
 
@@ -15,14 +16,8 @@ async function sendResetPassword({ email, url }: { email: string; name: string; 
   const domain = env.agentsDomain;
   await sendViaMailgun({ apiKey, region: env.mailgun.region, domain }, `Swarm Agent <no-reply@${domain}>`, {
     to: email,
-    subject: "Сброс пароля Swarm Agent",
-    text: [
-      "Кто-то запросил сброс пароля для этого адреса.",
-      "",
-      `Задать новый пароль: ${url}`,
-      "",
-      "Ссылка действует час. Если это были не вы, просто проигнорируйте письмо.",
-    ].join("\n"),
+    subject: t("mail.resetSubject"),
+    text: [t("mail.resetIntro"), "", t("mail.resetLink", { url }), "", t("mail.resetIgnore")].join("\n"),
   });
 }
 

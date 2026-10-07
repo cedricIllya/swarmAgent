@@ -51,7 +51,7 @@ describe("usageCaveat", () => {
   });
 
   it("предупреждает про спящих", () => {
-    expect(usageCaveat([agent({ source: "saved" })])).toMatch(/перед сном/);
+    expect(usageCaveat([agent({ source: "saved" })])).toMatch(/before it went to sleep/);
   });
 
   it("называет тех, кого не учли", () => {
@@ -60,8 +60,8 @@ describe("usageCaveat", () => {
       agent({ id: "agt_2", name: "Пётр", source: "unknown", at: null }),
       agent({ id: "agt_3", source: "saved" }),
     ]);
-    expect(text).toMatch(/Не учтены: Анна, Пётр/);
-    expect(text).toMatch(/перед сном/);
+    expect(text).toMatch(/Not included: Анна, Пётр/);
+    expect(text).toMatch(/before it went to sleep/);
   });
 });
 

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { count, t } from "@/i18n";
 import { authClient } from "@/lib/auth-client";
 import { useConfirm } from "@/components/confirm-dialog";
 
@@ -15,12 +16,12 @@ export function DeleteAccountForm({ email, agentsTotal }: { email: string; agent
     e.preventDefault();
     if (busy) return;
     const ok = await confirm({
-      title: "Удалить аккаунт навсегда?",
+      title: t("settings.deleteTitle"),
       body:
         agentsTotal > 0
-          ? `Аккаунт ${email} исчезнет вместе с ${agentsTotal} агентами: машины, диски и история будут уничтожены.`
-          : `Аккаунт ${email} и все связанные данные будут удалены.`,
-      confirmLabel: "Удалить аккаунт",
+          ? t("settings.deleteWithAgents", { email, agents: count(agentsTotal, "agents") })
+          : t("settings.deleteOnly", { email }),
+      confirmLabel: t("settings.deleteConfirm"),
     });
     if (!ok) return;
 
@@ -29,7 +30,7 @@ export function DeleteAccountForm({ email, agentsTotal }: { email: string; agent
     const res = await authClient.deleteUser();
     if (res.error) {
       setBusy(false);
-      setError(res.error.message ?? "Не получилось удалить аккаунт");
+      setError(res.error.message ?? t("settings.deleteFailed"));
       return;
     }
     router.push("/login?deleted=1");
@@ -40,11 +41,11 @@ export function DeleteAccountForm({ email, agentsTotal }: { email: string; agent
     <form onSubmit={submit} className="delete-account-form">
       {error && <p className="error">{error}</p>}
       <button className="btn btn-danger" type="submit" disabled={busy}>
-        {busy ? "Удаляем…" : "Удалить аккаунт навсегда"}
+        {busy ? t("common.deleting") : t("settings.deleteButton")}
       </button>
       {busy && agentsTotal > 0 && (
         <p className="muted small" style={{ marginBottom: 0 }}>
-          Сносим машины агентов, это может занять до минуты.
+          {t("settings.deletingMachines")}
         </p>
       )}
     </form>

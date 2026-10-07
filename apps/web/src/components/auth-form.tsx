@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { t } from "@/i18n";
 import { authClient } from "@/lib/auth-client";
 
 export function AuthForm({ mode, notice = null }: { mode: "login" | "register"; notice?: string | null }) {
@@ -21,7 +22,7 @@ export function AuthForm({ mode, notice = null }: { mode: "login" | "register"; 
     e.preventDefault();
     setError(null);
     if (mode === "register" && password !== passwordAgain) {
-      setError("Пароли не совпадают");
+      setError(t("auth.passwordsMismatch"));
       return;
     }
     setBusy(true);
@@ -31,7 +32,7 @@ export function AuthForm({ mode, notice = null }: { mode: "login" | "register"; 
         : await authClient.signUp.email({ email, password, name: name || email.split("@")[0] || "User" });
     setBusy(false);
     if (res.error) {
-      setError(res.error.message ?? "Не получилось");
+      setError(res.error.message ?? t("common.failed"));
       return;
     }
     router.push("/");
@@ -45,9 +46,9 @@ export function AuthForm({ mode, notice = null }: { mode: "login" | "register"; 
           <span className="brand-mark" aria-hidden />
           Swarm
         </div>
-        <h1 style={{ marginBottom: 6 }}>{mode === "login" ? "Вход" : "Регистрация"}</h1>
+        <h1 style={{ marginBottom: 6 }}>{mode === "login" ? t("auth.signIn") : t("auth.signUp")}</h1>
         <p className="muted small" style={{ marginTop: 0, marginBottom: 18 }}>
-          {mode === "login" ? "С возвращением." : "Личное пространство создастся автоматически."}
+          {mode === "login" ? t("auth.welcomeBack") : t("auth.spaceCreated")}
         </p>
         {notice && (
           <div className="notice" style={{ marginBottom: 16 }}>
@@ -56,20 +57,20 @@ export function AuthForm({ mode, notice = null }: { mode: "login" | "register"; 
         )}
         {mode === "register" && (
           <div className="field">
-            <label className="label">Имя</label>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Как к вам обращаться" />
+            <label className="label">{t("common.name")}</label>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("auth.namePlaceholder")} />
           </div>
         )}
         <div className="field">
-          <label className="label">Email</label>
+          <label className="label">{t("common.email")}</label>
           <input className="input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
         </div>
         <div className="field">
           <div className="row" style={{ justifyContent: "space-between" }}>
-            <label className="label">Пароль</label>
+            <label className="label">{t("common.password")}</label>
             {mode === "login" && (
               <Link className="small" href={email ? `/forgot-password?email=${encodeURIComponent(email)}` : "/forgot-password"}>
-                Забыли пароль?
+                {t("auth.forgotPassword")}
               </Link>
             )}
           </div>
@@ -96,7 +97,7 @@ export function AuthForm({ mode, notice = null }: { mode: "login" | "register"; 
         </div>
         {mode === "register" && (
           <div className="field">
-            <label className="label">Пароль ещё раз</label>
+            <label className="label">{t("auth.passwordAgain")}</label>
             <PasswordField
               value={passwordAgain}
               onChange={setPasswordAgain}
@@ -105,21 +106,21 @@ export function AuthForm({ mode, notice = null }: { mode: "login" | "register"; 
               autoComplete="new-password"
               minLength={8}
             />
-            {mismatch && <p className="error">Пароли не совпадают</p>}
+            {mismatch && <p className="error">{t("auth.passwordsMismatch")}</p>}
           </div>
         )}
         {error && <p className="error">{error}</p>}
         <button className="btn btn-primary" type="submit" disabled={busy || mismatch} style={{ width: "100%", marginTop: 6 }}>
-          {busy ? "…" : mode === "login" ? "Войти" : "Создать аккаунт"}
+          {busy ? t("common.ellipsis") : mode === "login" ? t("auth.signInAction") : t("auth.signUpAction")}
         </button>
         <p className="muted small" style={{ textAlign: "center", marginTop: 14, marginBottom: 0 }}>
           {mode === "login" ? (
             <>
-              Нет аккаунта? <Link href="/register">Зарегистрироваться</Link>
+              {t("auth.noAccount")} <Link href="/register">{t("auth.register")}</Link>
             </>
           ) : (
             <>
-              Уже есть аккаунт? <Link href="/login">Войти</Link>
+              {t("auth.hasAccount")} <Link href="/login">{t("auth.signIn")}</Link>
             </>
           )}
         </p>
@@ -155,7 +156,7 @@ function PasswordField({
         onChange={(e) => onChange(e.target.value)}
         autoComplete={autoComplete}
       />
-      <button type="button" className="password-toggle" onClick={onToggle} aria-label={revealed ? "Скрыть пароль" : "Показать пароль"}>
+      <button type="button" className="password-toggle" onClick={onToggle} aria-label={revealed ? t("auth.hidePassword") : t("auth.showPassword")}>
         <EyeIcon off={revealed} />
       </button>
     </div>
