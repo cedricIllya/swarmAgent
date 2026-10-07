@@ -82,7 +82,7 @@ export class RuntimeClient {
   }
 
   state(): Promise<RuntimeState> {
-    return this.call("GET", "/state", undefined, 20_000);
+    return this.call("GET", "/state", undefined, 40_000);
   }
 
   deliverEmail(body: DeliverEmailRequest): Promise<{ accepted: boolean }> {

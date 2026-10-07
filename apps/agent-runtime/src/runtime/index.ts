@@ -47,6 +47,9 @@ export class AgentRuntime {
   autonomous: boolean;
   /** Abort текущих ходов Hermes по id задачи. */
   private readonly aborts = new Map<string, AbortController>();
+  /** Последний собранный /state. Пока новый сбор идёт, карточка получает его, а не таймаут. */
+  private stateSnapshot: { at: number; state: RuntimeState } | null = null;
+  private stateJob: Promise<RuntimeState> | null = null;
 
   constructor(readonly cfg: RuntimeConfig) {
     this.store = new Store(cfg.dataDir);
@@ -271,6 +274,28 @@ export class AgentRuntime {
   }
 
   async state(): Promise<RuntimeState> {
+    const snap = this.stateSnapshot;
+    const fresh = snap !== null && Date.now() - snap.at < 5_000;
+    if (fresh) return snap.state;
+    if (!this.stateJob) {
+      const started = Date.now();
+      this.stateJob = this.loadState()
+        .then((state) => {
+          this.stateSnapshot = { at: Date.now(), state };
+          // #region agent log
+          console.log(`[debug-105c57] state built ms=${Date.now() - started} runs=${state.runs.length}`);
+          // #endregion
+          return state;
+        })
+        .finally(() => {
+          this.stateJob = null;
+        });
+    }
+    if (snap) return snap.state;
+    return this.stateJob;
+  }
+
+  private async loadState(): Promise<RuntimeState> {
     const [runs, chats, browserSessions, pendingApprovals, usage, connectedServices] = await Promise.all([
       this.store.listRuns(100),
       this.store.chats.list(),

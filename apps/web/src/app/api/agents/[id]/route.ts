@@ -40,7 +40,7 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
     }
   }
   // #region agent log
-  if (runtimeError || asleep) console.log(`[debug-105c57] detail ${agent.id} wake=${wake} fly=${flyState} asleep=${asleep} error=${runtimeError?.slice(0, 160) ?? ""}`);
+  console.log(`[debug-105c57] detail ${agent.id} wake=${wake} fly=${flyState} asleep=${asleep} runs=${state?.runs.length ?? "null"} error=${runtimeError?.slice(0, 160) ?? ""}`);
   // #endregion
   return NextResponse.json({ agent: toAgentView(agent), state, runtimeError, asleep, waking });
 }
