@@ -70,6 +70,19 @@ export function hearSlack(args: {
   return out;
 }
 
+function slackForm(body: Record<string, unknown>): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(body)) {
+    if (value === undefined || value === null) continue;
+    params.set(key, typeof value === "boolean" ? (value ? "true" : "false") : String(value));
+  }
+  return params.toString();
+}
+
+/**
+ * Тело — form, не JSON. У `conversations.list` Slack молча игнорирует `types` в JSON
+ * и отдаёт только публичные каналы, поэтому личные сообщения бот не видит.
+ */
 async function slackCall<T extends SlackOk>(
   token: string,
   method: string,
@@ -80,9 +93,9 @@ async function slackCall<T extends SlackOk>(
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json; charset=utf-8",
+      "Content-Type": "application/x-www-form-urlencoded",
     },
-    body: JSON.stringify(body),
+    body: slackForm(body),
   });
   const data = (await res.json()) as T;
   if (!data.ok) throw new Error(data.error || `slack ${method}`);

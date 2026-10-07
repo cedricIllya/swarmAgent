@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Run, ServiceRecipe } from "@swarm/contracts";
-import { hearSlack, slackPlainText } from "../../src/channels/slack";
+import { hearSlack, slackConversations, slackPlainText } from "../../src/channels/slack";
 import { acceptSlackEvent, listenMessengers } from "../../src/channels/listen";
 import { Store } from "../../src/store";
 import type { AgentRuntime } from "../../src/runtime";
@@ -41,6 +41,26 @@ describe("hearSlack", () => {
     expect(heard[0]?.text).toBe("посмотри отчёт");
     expect(heard[0]?.threadTs).toBe("100.000002");
     expect(heard[0]?.threadKey).toBe("slack:T1:C1:100.000002");
+  });
+});
+
+describe("slackConversations", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("просит личные диалоги формой: в JSON Slack отбрасывает types", async () => {
+    let contentType = "";
+    let body = "";
+    vi.stubGlobal("fetch", async (_url: string, init?: RequestInit) => {
+      contentType = String((init?.headers as Record<string, string>)["Content-Type"] ?? "");
+      body = String(init?.body ?? "");
+      return new Response(JSON.stringify({ ok: true, channels: [{ id: "D1", is_im: true }] }));
+    });
+    const found = await slackConversations("xoxb-test", globalThis.fetch);
+    expect(contentType).toBe("application/x-www-form-urlencoded");
+    expect(new URLSearchParams(body).get("types")).toContain("im");
+    expect(found).toEqual([{ id: "D1", im: true }]);
   });
 });
 
@@ -82,7 +102,7 @@ describe("listenMessengers", () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       const method = String(url).split("/").pop();
-      const body = JSON.parse(String(init?.body ?? "{}")) as { channel?: string };
+      const body = Object.fromEntries(new URLSearchParams(String(init?.body ?? ""))) as { channel?: string };
       calls.push(method ?? "");
       const payload =
         method === "auth.test"
