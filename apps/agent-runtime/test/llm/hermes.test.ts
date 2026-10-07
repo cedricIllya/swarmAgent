@@ -25,6 +25,19 @@ describe("hermesSessionCostUsd", () => {
     expect(hermesSessionCostUsd({ actual_cost_usd: 0, estimated_cost_usd: 0.42 })).toBe(0.42);
     expect(hermesSessionCostUsd({})).toBe(0);
   });
+
+  it("читает стоимость из обёртки GET /api/sessions/:id", () => {
+    expect(
+      hermesSessionCostUsd({
+        session: { actual_cost_usd: 0, estimated_cost_usd: 12.4 },
+      }),
+    ).toBe(12.4);
+    expect(
+      hermesSessionCostUsd({
+        session: { actual_cost_usd: 18.2, estimated_cost_usd: 12.4 },
+      }),
+    ).toBe(18.2);
+  });
 });
 
 describe("stripToolMarkup", () => {
@@ -167,6 +180,22 @@ describe("HermesClient cost", () => {
     const c = client(fetchImpl);
     expect((await c.run("a", { sessionId: "s", model: "m" })).costUsd).toBeCloseTo(1.25);
     expect((await c.run("b", { sessionId: "s", model: "m" })).costUsd).toBeCloseTo(0.25);
+  });
+
+  it("берёт стоимость из вложенного session, как отдаёт текущий api_server", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).endsWith("/chat/completions")) {
+        return json(
+          { choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 2_000_000, completion_tokens: 10 } },
+          200,
+          { "X-Hermes-Session-Id": "api-wrapped" },
+        );
+      }
+      return json({ object: "hermes.session", session: { estimated_cost_usd: 95.8, actual_cost_usd: 0 } });
+    });
+    const r = await client(fetchImpl as unknown as typeof fetch).run("a", { sessionId: "s", model: "m" });
+    expect(r.promptTokens).toBe(2_000_000);
+    expect(r.costUsd).toBe(95.8);
   });
 
   it("keeps a cost already present on the completion", async () => {

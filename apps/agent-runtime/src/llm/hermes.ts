@@ -15,11 +15,15 @@ export interface HermesClientOptions {
  * Сумма, которую Hermes записал в сессию. `actual_cost_usd` появляется после
  * сверки с провайдером; пока её нет, берём оценку `estimated_cost_usd`.
  * В `/v1/chat/completions` этих полей нет: там только токены.
+ * `GET /api/sessions/:id` отдаёт их внутри `session`, старый ответ клал на корень.
  */
-export function hermesSessionCostUsd(session: {
+export function hermesSessionCostUsd(body: {
   actual_cost_usd?: unknown;
   estimated_cost_usd?: unknown;
+  session?: { actual_cost_usd?: unknown; estimated_cost_usd?: unknown } | null;
 }): number {
+  const nested = body.session;
+  const session = nested && typeof nested === "object" ? nested : body;
   const actual = positive(session.actual_cost_usd);
   if (actual > 0) return actual;
   return positive(session.estimated_cost_usd);
