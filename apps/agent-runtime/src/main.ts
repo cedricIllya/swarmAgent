@@ -1,3 +1,4 @@
+import { request as httpRequest } from "node:http";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { timingSafeEqual } from "node:crypto";
@@ -65,4 +66,26 @@ startIdleWatch(rt);
 // `::` слушает оба стека, 127.0.0.1 для healthcheck и Hermes тоже остаётся.
 serve({ fetch: app.fetch, port: cfg.port, hostname: "::" }, () => {
   log("main", "runtime запущен", { port: cfg.port, agentId: cfg.agentId, email: cfg.email });
+  watchListener(cfg.port);
 });
+
+/**
+ * После suspend сокет остаётся закрытым, а процесс — живым: Fly не перезапускает
+ * контейнер, пока тот сам не завершится. Отказ своего порта — сигнал выйти.
+ */
+function watchListener(port: number): void {
+  setInterval(() => {
+    const req = httpRequest({ host: "127.0.0.1", port, path: "/health", timeout: 2_000 }, (res) => {
+      res.resume();
+    });
+    req.on("timeout", () => req.destroy());
+    req.on("error", (e: NodeJS.ErrnoException) => {
+      if (e.code !== "ECONNREFUSED") return;
+      // #region agent log
+      console.log(`[debug-105c57] port ${port} refused, exiting for restart`);
+      // #endregion
+      process.exit(1);
+    });
+    req.end();
+  }, 10_000);
+}
