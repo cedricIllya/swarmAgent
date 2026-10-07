@@ -39,6 +39,31 @@ const CLOSE_TIMEOUT_MS = 10 * 1000;
 /** SPA после domcontentloaded ещё белая: ждём затишья сети и первого текста, но не дольше этого. */
 const SETTLE_MS = 8 * 1000;
 const TEXT_POLL_MS = 400;
+/** Медленная страница на одном ядре не укладывается в 15 с Stagehand по умолчанию. */
+const NAV_TIMEOUT_MS = 30_000;
+/** У `page.goto` к таймауту перехода Stagehand добавляет 10 с на сам RPC. */
+const NAV_BACKSTOP_MS = NAV_TIMEOUT_MS + 12_000;
+/** `page.evaluate` и `page.screenshot` в Stagehand без своего предела: зависшая страница держит задачу. */
+const PAGE_OP_TIMEOUT_MS = 8_000;
+const SHOT_TIMEOUT_MS = 8_000;
+const LAUNCH_TIMEOUT_MS = 45_000;
+/**
+ * Мало ядер: site-per-process плодит процессы и страница перестаёт отвечать.
+ * Hang monitor показывает диалог «страница зависла» и блокирует переход.
+ */
+const CHROME_ARGS = [
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+  "--no-first-run",
+  "--no-default-browser-check",
+  "--disable-background-networking",
+  "--disable-component-update",
+  "--disable-hang-monitor",
+  "--disable-renderer-backgrounding",
+  "--disable-background-timer-throttling",
+  "--renderer-process-limit=2",
+  "--disable-features=Translate,BackForwardCache,IsolateOrigins,site-per-process",
+];
 
 type SettlePage = {
   waitForLoadState(state: "load" | "domcontentloaded" | "networkidle", timeout?: number): Promise<void>;
@@ -103,42 +128,129 @@ export function pageReading(url: string, text: string, fields: Array<{ label: st
 export async function settlePage(page: SettlePage, opts: { network: boolean; budgetMs?: number }): Promise<void> {
   const budget = opts.budgetMs ?? SETTLE_MS;
   const until = Date.now() + budget;
-  if (opts.network) await page.waitForLoadState("networkidle", budget).catch(() => undefined);
-  while (!(await hasVisibleText(page))) {
-    if (Date.now() >= until) return;
-    await page.waitForTimeout(TEXT_POLL_MS);
+  const left = () => until - Date.now();
+  if (opts.network) {
+    const ms = Math.max(1, left());
+    await withTimeout("settle.network", ms + 50, page.waitForLoadState("networkidle", ms)).catch(() => undefined);
+  }
+  for (;;) {
+    const slice = Math.max(1, Math.min(2_000, Math.max(left(), 1)));
+    let visible: boolean;
+    try {
+      visible = await withTimeout("settle.text", slice, hasVisibleText(page));
+    } catch {
+      if (left() <= 0) return;
+      continue;
+    }
+    if (visible || left() <= 0) return;
+    const pause = Math.min(TEXT_POLL_MS, left());
+    try {
+      await withTimeout("settle.sleep", pause + 500, page.waitForTimeout(pause));
+    } catch {
+      return;
+    }
   }
 }
 
-/** Закрытие Stagehand зависло: процесс Chromium с этим профилем ещё жив и держит единственное ядро. */
-function killProfileBrowser(profile: string): number {
-  let n = 0;
-  let pids: string[] = [];
-  try {
-    pids = readdirSync("/proc").filter((name) => /^\d+$/.test(name));
-  } catch {
-    return 0;
+/**
+ * Что делать после сбоя перехода.
+ * `retry-page` — та же сессия, новая вкладка (обрыв сети, редирект).
+ * `relaunch` — Chromium уже не отвечает, сессию надо поднять заново.
+ */
+export function browserFailure(error: unknown): "retry-page" | "relaunch" | "fatal" {
+  const text = errorText(error);
+  if (/ERR_NAME_NOT_RESOLVED|ERR_CERT_|Сессия браузера закрыта|профиль браузера занят/i.test(text)) return "fatal";
+  if (/\b(launch|activePage|pages|newPage|ping):|Chrome exited|debugging port|RPC client is closed|browser has been closed|Session closed|initialization timed out/i.test(text)) {
+    return "relaunch";
   }
+  if (/ERR_ABORTED|ERR_CONNECTION_|ERR_NETWORK_CHANGED|ERR_EMPTY_RESPONSE|ERR_SOCKET_NOT_CONNECTED|ERR_TIMED_OUT|ERR_INTERNET_DISCONNECTED|ERR_FAILED|chrome-error:|страница не открылась|\bgoto:|RPC response timed out: page\.goto|frame detached|Target closed|target closed/i.test(text)) {
+    return "retry-page";
+  }
+  return "fatal";
+}
+
+function errorText(error: unknown): string {
+  if (error instanceof AggregateError) return [error.message, ...error.errors.map(errorText)].join(" ");
+  if (error instanceof Error) return `${error.message} ${error.cause ? errorText(error.cause) : ""}`;
+  return String(error);
+}
+
+/** Закрытие зависло: Chromium с этим профилем ещё жив и держит ядро. Linux — /proc, macOS — ps. */
+function killProfileBrowser(profile: string): number {
+  const pids = process.platform === "linux" ? linuxChromePids(profile) : darwinChromePids(profile);
+  let n = 0;
   for (const pid of pids) {
-    let cmd = "";
+    if (pid === process.pid || pid <= 0) continue;
     try {
-      cmd = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-    } catch {
-      continue;
-    }
-    if (!cmd.includes(profile)) continue;
-    try {
-      process.kill(Number(pid), "SIGKILL");
+      process.kill(pid, "SIGKILL");
       n += 1;
     } catch {
       // уже завершился
+    }
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      // не лидер группы
     }
   }
   return n;
 }
 
+function linuxChromePids(profile: string): number[] {
+  let names: string[] = [];
+  try {
+    names = readdirSync("/proc").filter((name) => /^\d+$/.test(name));
+  } catch {
+    return [];
+  }
+  const pids: number[] = [];
+  for (const name of names) {
+    let cmd = "";
+    try {
+      cmd = readFileSync(`/proc/${name}/cmdline`, "utf8");
+    } catch {
+      continue;
+    }
+    if (!cmdlineUsesProfile(cmd, profile)) continue;
+    pids.push(Number(name));
+  }
+  return pids;
+}
+
+function darwinChromePids(profile: string): number[] {
+  let out = "";
+  try {
+    out = execFileSync("ps", ["-axww", "-o", "pid=,command="], { encoding: "utf8", timeout: 3_000 });
+  } catch {
+    return [];
+  }
+  return chromePidsFromPs(out, profile);
+}
+
+/** Строки `ps -o pid=,command=`: Chromium, у которого в командной строке этот профиль. */
+export function chromePidsFromPs(output: string, profile: string): number[] {
+  const pids: number[] = [];
+  for (const line of output.split("\n")) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+    const pid = m?.[1];
+    const cmd = m?.[2];
+    if (!pid || !cmd || !cmdlineUsesProfile(cmd, profile)) continue;
+    pids.push(Number(pid));
+  }
+  return pids;
+}
+
+function cmdlineUsesProfile(cmd: string, profile: string): boolean {
+  return cmd.includes(profile) && /chrom/i.test(cmd);
+}
+
 async function withTimeout<T>(what: string, ms: number, p: Promise<T>): Promise<T> {
   let timer: NodeJS.Timeout | null = null;
+  // Поздний отказ исходного обещания после гонки остаётся обработанным.
+  p.then(
+    () => undefined,
+    () => undefined,
+  );
   const bomb = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`${what}: шаг браузера не завершился за ${Math.round(ms / 1000)} с`)), ms);
   });
@@ -233,6 +345,8 @@ export class ManagedBrowserSession {
   private readonly profile: string;
   private readonly ephemeral: boolean;
   private releaseProfile: (() => void) | null = null;
+  /** После срыва перехода следующая команда идёт в новую вкладку, а не в зависшую. */
+  private useNewest = false;
 
   constructor(
     private readonly deps: BrowserDeps,
@@ -267,9 +381,6 @@ export class ManagedBrowserSession {
       if (args.url) await s.goto(args.url);
     } catch (e) {
       // Сессия ещё не в реестре runtime: без закрытия здесь Chromium и замок профиля живут до рестарта машины.
-      // #region agent log
-      console.log(`[debug-105c57] browser open failed, closing ${id}: ${String(e).slice(0, 160)}`);
-      // #endregion
       await s.close().catch(() => undefined);
       throw e;
     }
@@ -279,20 +390,31 @@ export class ManagedBrowserSession {
   private async connect(): Promise<void> {
     this.releaseProfile = await acquireProfile(this.profile);
     try {
+      const stale = killProfileBrowser(this.profile);
+      if (stale) warn("browser", "снял зависший Chromium перед запуском", { n: stale, profile: this.profile });
       await mkdir(this.profile, { recursive: true });
       for (const name of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
         await rm(path.join(this.profile, name), { force: true }).catch(() => undefined);
       }
       const executablePath = chromeExecutable();
-      this.browser = await localBrowser.launch({
-        headless: true,
-        executablePath,
-        userDataDir: this.profile,
-        preserveUserDataDir: true,
-        chromiumSandbox: process.getuid?.() !== 0,
-        viewport: { width: 1280, height: 800 },
-        args: ["--disable-dev-shm-usage", "--disable-gpu", "--no-first-run", "--no-default-browser-check", ...userAgentArg(executablePath)],
-      });
+      try {
+        this.browser = await withTimeout(
+          "launch",
+          LAUNCH_TIMEOUT_MS,
+          localBrowser.launch({
+            headless: true,
+            executablePath,
+            userDataDir: this.profile,
+            preserveUserDataDir: true,
+            chromiumSandbox: process.getuid?.() !== 0,
+            viewport: { width: 1280, height: 800 },
+            args: [...CHROME_ARGS, ...userAgentArg(executablePath)],
+          }),
+        );
+      } catch (e) {
+        killProfileBrowser(this.profile);
+        throw e;
+      }
       this.stagehand = await Stagehand.create({
         browser: this.browser,
         model: { generate: (params: LLMGenerateParams) => this.generate(params) },
@@ -303,6 +425,17 @@ export class ManagedBrowserSession {
       throw e;
     }
     await this.action({ type: "open", purpose: this.meta.purpose });
+  }
+
+  /** Браузер ещё принимает команды. Мёртвую сессию вызывающий закрывает и поднимает заново. */
+  async ready(): Promise<boolean> {
+    if (this.closed || !this.browser) return false;
+    try {
+      await withTimeout("ping", PAGE_OP_TIMEOUT_MS, this.browser.context.pages());
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Cookies из другой сессии (Skyvern) — в живой контекст, без второго запуска на том же профиле. */
@@ -319,7 +452,10 @@ export class ManagedBrowserSession {
   async read(): Promise<PageReading> {
     const page = await this.page();
     await this.settled();
-    const raw = (await page.evaluate(PAGE_READ_SCRIPT)) as { text: string; fields: Array<{ label: string; value: string }> };
+    const raw = (await withTimeout("read", 10_000, page.evaluate(PAGE_READ_SCRIPT))) as {
+      text: string;
+      fields: Array<{ label: string; value: string }>;
+    };
     const reading = pageReading(await page.url(), raw.text, raw.fields);
     await this.action({ type: "read", url: reading.url, textChars: reading.text.length, fields: reading.fields.length, tokens: reading.tokens.length });
     return reading;
@@ -373,16 +509,47 @@ export class ManagedBrowserSession {
 
   private async page() {
     if (!this.browser || this.closed) throw new Error("Сессия браузера закрыта");
-    const pages = await this.browser.context.pages();
-    return pages[0] ?? (await this.browser.context.newPage());
+    if (this.useNewest) {
+      const pages = await withTimeout("pages", PAGE_OP_TIMEOUT_MS, this.browser.context.pages());
+      const newest = pages.at(-1);
+      if (newest) return newest;
+    }
+    const active = await withTimeout("activePage", PAGE_OP_TIMEOUT_MS, this.browser.context.activePage());
+    if (active) return active;
+    const pages = await withTimeout("pages", PAGE_OP_TIMEOUT_MS, this.browser.context.pages());
+    return pages.at(-1) ?? (await withTimeout("newPage", PAGE_OP_TIMEOUT_MS, this.browser.context.newPage()));
+  }
+
+  /** Зависшая вкладка остаётся: закрытие такой вкладки само не возвращается. Новая становится активной. */
+  private async replacePage(): Promise<void> {
+    if (!this.browser || this.closed) return;
+    const page = await withTimeout("newPage", PAGE_OP_TIMEOUT_MS, this.browser.context.newPage());
+    this.useNewest = true;
+    await withTimeout("activePage", PAGE_OP_TIMEOUT_MS, this.browser.context.setActivePage(page)).catch(() => undefined);
   }
 
   async goto(url: string): Promise<void> {
-    const page = await this.page();
-    await page.goto(url, { waitUntil: "domcontentloaded" });
-    await settlePage(page, { network: true });
-    await this.action({ type: "goto", url });
-    await this.shot();
+    let last: unknown;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const page = await this.page();
+        await withTimeout("goto", NAV_BACKSTOP_MS, page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS }));
+        const landed = await withTimeout("url", 5_000, page.url()).catch(() => "");
+        if (/^chrome-error:/i.test(landed)) throw new Error(`страница не открылась: ${landed}`);
+        await settlePage(page, { network: true }).catch(() => undefined);
+        await this.action({ type: "goto", url });
+        await this.shot();
+        this.useNewest = false;
+        return;
+      } catch (e) {
+        last = e;
+        const kind = browserFailure(e);
+        warn("browser", "переход не удался", { url, attempt, error: String(e) });
+        if (attempt >= 2 || kind !== "retry-page") break;
+        await this.replacePage().catch(() => undefined);
+      }
+    }
+    throw last instanceof Error ? last : new Error(String(last));
   }
 
   /** Перед чтением страницы моделью: после клика SPA дорисовывается не сразу. */
@@ -410,14 +577,15 @@ export class ManagedBrowserSession {
     if (this.closed || this.shotN >= 30) return;
     try {
       const page = await this.page();
-      const buf = await page.screenshot({ type: "jpeg", quality: 55 });
+      const buf = await withTimeout("screenshot", SHOT_TIMEOUT_MS, page.screenshot({ type: "jpeg", quality: 55, animations: "disabled" }));
       const file = shotFile(`${this.shotN + 1}.jpg`);
       if (!file) return;
       this.shotN += 1;
       const dir = path.join(this.deps.store.dir("browser-sessions", this.id, "shots"));
       await mkdir(dir, { recursive: true });
       await writeFile(path.join(dir, file), buf);
-      await this.action({ type: "screenshot", file, url: page.url() });
+      const url = await withTimeout("url", 5_000, page.url()).catch(() => "");
+      await this.action({ type: "screenshot", file, url });
     } catch (e) {
       warn("browser", "скриншот не сохранился", { error: String(e) });
     }
@@ -443,7 +611,7 @@ export class ManagedBrowserSession {
   }
 
   async currentUrl(): Promise<string> {
-    return await (await this.page()).url();
+    return await withTimeout("url", 5_000, (await this.page()).url());
   }
 
   /**
@@ -521,9 +689,7 @@ export class ManagedBrowserSession {
     }
     if (stuck) {
       const killed = killProfileBrowser(this.profile);
-      // #region agent log
-      console.log(`[debug-105c57] killed stuck chromium ${this.id} n=${killed}`);
-      // #endregion
+      if (killed) warn("browser", "убил зависший Chromium", { id: this.id, n: killed });
     }
     this.releaseProfile?.();
     this.releaseProfile = null;

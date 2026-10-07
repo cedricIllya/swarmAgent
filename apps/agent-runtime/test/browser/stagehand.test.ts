@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { desktopUserAgent, pageReading, settlePage, tokenCandidates } from "../../src/browser/stagehand";
+import { browserFailure, chromePidsFromPs, desktopUserAgent, pageReading, settlePage, tokenCandidates } from "../../src/browser/stagehand";
 import { acquireProfile } from "../../src/browser/profile-lock";
 
 describe("tokenCandidates", () => {
@@ -88,6 +88,40 @@ describe("settlePage", () => {
     await settlePage(f.page, { network: true, budgetMs: 1 });
     expect(f.calls[0]).toBe("load:networkidle");
     expect(f.calls.filter((c) => c === "text").length).toBeGreaterThan(0);
+  });
+
+  it("зависшая оценка страницы отпускается в пределах бюджета", async () => {
+    const page = {
+      async waitForLoadState() {},
+      evaluate: <R,>() => new Promise<R>(() => {}),
+      async waitForTimeout() {},
+    };
+    const started = Date.now();
+    await settlePage(page, { network: false, budgetMs: 350 });
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+});
+
+describe("browserFailure", () => {
+  it("обрыв сети и ошибка вкладки — новая вкладка, мёртвый Chromium — новый запуск", () => {
+    expect(browserFailure(new Error("net::ERR_ABORTED"))).toBe("retry-page");
+    expect(browserFailure(new Error("страница не открылась: chrome-error://chromewebdata/"))).toBe("retry-page");
+    expect(browserFailure(new Error("RPC response timed out: page.goto"))).toBe("retry-page");
+    expect(browserFailure(new Error("Chrome exited before its debugging port was ready with code 21"))).toBe("relaunch");
+    expect(browserFailure(new Error("launch: шаг браузера не завершился за 45 с"))).toBe("relaunch");
+    expect(browserFailure(new Error("ERR_NAME_NOT_RESOLVED"))).toBe("fatal");
+    expect(browserFailure(new Error("Сессия браузера закрыта"))).toBe("fatal");
+  });
+});
+
+describe("chromePidsFromPs", () => {
+  it("берёт только Chromium с этим профилем", () => {
+    const out = [
+      "  10 /usr/bin/chromium --user-data-dir=/data/browser-profiles/trello",
+      "  11 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/data/browser-profiles/other",
+      "  12 node /data/browser-profiles/trello/server.js",
+    ].join("\n");
+    expect(chromePidsFromPs(out, "/data/browser-profiles/trello")).toEqual([10]);
   });
 });
 

@@ -1,5 +1,5 @@
 import type { Run, ServiceCredential } from "@swarm/contracts";
-import { chromeAvailable, chromeExecutable, ManagedBrowserSession, serviceProfileDir, type BrowserDeps } from "../browser/stagehand";
+import { browserFailure, chromeAvailable, chromeExecutable, ManagedBrowserSession, serviceProfileDir, type BrowserDeps } from "../browser/stagehand";
 import { acceptInvite, type AcceptInviteResult } from "../browser/invite";
 import { applyStorageToProfile } from "../browser/session-transfer";
 import { OWNER_OUTAGE } from "../onboarding/connect";
@@ -43,38 +43,77 @@ export class BrowserControl {
 
   async open(run: Run, args: { purpose: string; serviceSlug: string | null; url?: string }): Promise<ManagedBrowserSession> {
     const { rt } = this;
-    const reuse = async (s: ManagedBrowserSession) => {
-      if (args.url) await s.goto(args.url);
-      return s;
-    };
     if (args.serviceSlug) {
       for (const open of this.sessions.values()) {
         if (open.serviceSlug !== args.serviceSlug) continue;
-        return reuse(open);
+        const kept = await this.reuse(open, args.url);
+        if (kept) return kept;
+        break;
       }
       const pending = this.opening.get(args.serviceSlug);
-      if (pending) return reuse(await pending);
+      if (pending) {
+        try {
+          const kept = await this.reuse(await pending, args.url);
+          if (kept) return kept;
+        } catch (e) {
+          warn("browser", "параллельное открытие сорвалось, запускаю заново", { error: String(e) });
+        }
+      }
     }
     const slug = args.serviceSlug;
-    const job = (async () => {
-      try {
-        const s = await ManagedBrowserSession.open(this.deps(), rt.taskRef(run), { runId: run.id, ...args });
-        this.sessions.set(s.id, s);
-        await rt.step(run.id, "browser", `открыт браузер: ${args.purpose}`, { sessionId: s.id });
-        await rt.announceBrowser(run, s.meta);
-        return s;
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        await rt.step(run.id, "error", `браузер не открылся: ${message.slice(0, 180)}`).catch(() => undefined);
-        throw e;
-      }
-    })();
+    const job = this.launch(run, args);
     if (slug) this.opening.set(slug, job);
     try {
       return await job;
     } finally {
       if (slug && this.opening.get(slug) === job) this.opening.delete(slug);
     }
+  }
+
+  /** Живая сессия того же сервиса. Мёртвый Chromium закрываем, чтобы следующий запуск взял профиль. */
+  private async reuse(s: ManagedBrowserSession, url?: string): Promise<ManagedBrowserSession | null> {
+    if (!(await s.ready())) {
+      warn("browser", "сессия не отвечает, закрываю", { id: s.id });
+      await this.close(s.id).catch(() => undefined);
+      return null;
+    }
+    if (!url) return s;
+    try {
+      await s.goto(url);
+      return s;
+    } catch (e) {
+      if (browserFailure(e) !== "relaunch") {
+        const message = e instanceof Error ? e.message : String(e);
+        await this.rt.step(s.meta.runId, "error", `страница не открылась: ${message.slice(0, 180)}`).catch(() => undefined);
+        throw e;
+      }
+      warn("browser", "сессия умерла на переходе, закрываю", { id: s.id, error: String(e) });
+      await this.close(s.id).catch(() => undefined);
+      return null;
+    }
+  }
+
+  private launch(run: Run, args: { purpose: string; serviceSlug: string | null; url?: string }): Promise<ManagedBrowserSession> {
+    const { rt } = this;
+    return (async () => {
+      let last: unknown;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const s = await ManagedBrowserSession.open(this.deps(), rt.taskRef(run), { runId: run.id, ...args });
+          this.sessions.set(s.id, s);
+          await rt.step(run.id, "browser", `открыт браузер: ${args.purpose}`, { sessionId: s.id });
+          await rt.announceBrowser(run, s.meta);
+          return s;
+        } catch (e) {
+          last = e;
+          if (attempt === 2 || browserFailure(e) !== "relaunch") break;
+          warn("browser", "повтор запуска браузера", { attempt, error: String(e) });
+        }
+      }
+      const message = last instanceof Error ? last.message : String(last);
+      await rt.step(run.id, "error", `браузер не открылся: ${message.slice(0, 180)}`).catch(() => undefined);
+      throw last;
+    })();
   }
 
   async close(sessionId: string): Promise<void> {
