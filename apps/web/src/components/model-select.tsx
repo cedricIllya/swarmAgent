@@ -27,7 +27,7 @@ export function useModelOptions(): ModelOption[] {
   return models;
 }
 
-/** Селект моделей OpenRouter без поиска. */
+/** Селект моделей OpenRouter: список уже обрезан до самых популярных. */
 export function ModelSelect({
   value,
   onChange,
@@ -46,7 +46,6 @@ export function ModelSelect({
   className?: string;
 }) {
   const models = useModelOptions();
-  const shown = models.slice(0, 60);
 
   return (
     <select
@@ -58,8 +57,8 @@ export function ModelSelect({
       disabled={disabled}
       autoFocus={autoFocus}
     >
-      {!shown.some((m) => m.id === value) && <option value={value}>{value}</option>}
-      {shown.map((m) => (
+      {!models.some((m) => m.id === value) && <option value={value}>{value}</option>}
+      {models.map((m) => (
         <option key={m.id} value={m.id}>
           {m.name} — {priceLabel(m)}
         </option>

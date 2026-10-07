@@ -85,7 +85,6 @@ export const en = {
   home: {
     title: "Agents",
     lead: "Each one has its own invite address and its own machine.",
-    hide: "Hide",
     create: "Create agent",
     emptyTitle: "No agents yet",
     emptyBody: "Create the first one — it gets an address like",

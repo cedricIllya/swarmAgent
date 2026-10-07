@@ -1550,6 +1550,9 @@ html[data-theme="dark"] .theme-toggle .theme-icon-moon {
   text-align: center;
   color: var(--danger);
 }
+.modal-create {
+  max-width: 520px;
+}
 .modal-avatar {
   max-width: 560px;
   max-height: min(760px, calc(100vh - 48px));

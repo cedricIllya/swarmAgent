@@ -5,7 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { Agent } from "@swarm/contracts";
 import { t } from "@/i18n";
 import { StatusBadge } from "./status-badge";
-import { CreateAgentForm } from "./create-agent-form";
+import { CreateAgentDialog } from "./create-agent-form";
 import { AgentFace } from "./agent-avatar";
 import { personStatus } from "./agent-dashboard/present-steps";
 
@@ -41,21 +41,20 @@ export function AgentsHome({
           <h1>{t("home.title")}</h1>
           <p className="lead">{t("home.lead")}</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setOpen((v) => !v)}>
-          {open ? t("home.hide") : t("home.create")}
+        <button className="btn btn-primary" onClick={() => setOpen(true)}>
+          {t("home.create")}
         </button>
       </div>
 
       {open && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <CreateAgentForm
-            ownerLogin={ownerLogin}
-            onCreated={(a) => {
-              setAgents((prev) => [a, ...prev]);
-              setOpen(false);
-            }}
-          />
-        </div>
+        <CreateAgentDialog
+          ownerLogin={ownerLogin}
+          onClose={() => setOpen(false)}
+          onCreated={(a) => {
+            setAgents((prev) => [a, ...prev]);
+            setOpen(false);
+          }}
+        />
       )}
 
       {agents.length === 0 ? (
