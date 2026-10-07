@@ -24,7 +24,11 @@ function run(status: Run["status"], summary = ATLASSIAN): Run {
   };
 }
 
-function rt(current: Run | null, approvals: Array<{ runId: string }> = []): { mock: AgentRuntime; chats: string[] } {
+function rt(
+  current: Run | null,
+  approvals: Array<{ runId: string }> = [],
+  runs: Run[] = [],
+): { mock: AgentRuntime; chats: string[] } {
   let saved: Run | null = current;
   const chats: string[] = [];
   const mock = {
@@ -34,6 +38,7 @@ function rt(current: Run | null, approvals: Array<{ runId: string }> = []): { mo
         saved = next;
       },
       listApprovals: async () => approvals,
+      listRuns: async () => runs,
     },
     chatIdForRun: async () => "chat_system",
     addChat: vi.fn(async (msg: { text: string }) => {
@@ -70,9 +75,25 @@ describe("takeFinishedAnswer", () => {
     expect(await takeFinishedAnswer(mock, "run_mail", "Да")).toBeNull();
   });
 
-  it("refuses a summary that is not a question", async () => {
-    const { mock } = rt(run("failed", "Это информационное письмо, задачи нет."));
-    expect(await takeFinishedAnswer(mock, "run_mail", "ок")).toBeNull();
+  it("reopens a finished task when the owner writes how to help", async () => {
+    const { mock, chats } = rt(run("done", "Не получилось войти: капча."));
+    const think = vi.fn(async () => ({ text: "вошёл", usedFallback: false, startedAt: "2026-10-06T22:51:00.000Z" }));
+    mock.think = think;
+    const taken = await takeFinishedAnswer(mock, "run_mail", "Капчу прошёл, попробуй ещё раз");
+    expect(taken?.kind).toBe("followup");
+    expect(taken?.question).toBe("Не получилось войти: капча.");
+    expect(taken?.run.status).toBe("running");
+    expect(chats).toEqual(["Капчу прошёл, попробуй ещё раз"]);
+    await continueFinishedAnswer(mock, taken!);
+    expect(String(think.mock.calls[0]?.[1])).toContain("Капчу прошёл, попробуй ещё раз");
+  });
+
+  it("waits while another task in the same thread is still running", async () => {
+    const current = run("failed", "Не получилось войти: капча.");
+    const other = run("running", "");
+    other.id = "run_other";
+    const { mock } = rt(current, [], [current, other]);
+    expect(await takeFinishedAnswer(mock, "run_mail", "попробуй ещё раз")).toBeNull();
   });
 
   it("continues an escalated task from the owner's note even without a numbered question", async () => {

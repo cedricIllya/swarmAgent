@@ -83,6 +83,8 @@ export function QuestionCard({
   onAnswer,
   title = t("approval.answerTitle"),
   placeholder,
+  submitLabel,
+  quiet = false,
 }: {
   prompt: string;
   options: string[];
@@ -90,6 +92,8 @@ export function QuestionCard({
   onAnswer: (text: string) => void | Promise<void>;
   title?: string;
   placeholder?: string;
+  submitLabel?: string;
+  quiet?: boolean;
 }) {
   const [picked, setPicked] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -113,8 +117,8 @@ export function QuestionCard({
   }
 
   return (
-    <div className="list-item list-item-warn question-row">
-      <div className="small" style={{ color: "var(--warn)", fontWeight: 500 }}>
+    <div className={`list-item question-row${quiet ? "" : " list-item-warn"}`}>
+      <div className="small" style={quiet ? { fontWeight: 500 } : { color: "var(--warn)", fontWeight: 500 }}>
         {title}
       </div>
       <div style={{ whiteSpace: "pre-wrap" }}>
@@ -158,7 +162,7 @@ export function QuestionCard({
         />
         <div className="row">
           <button className="btn btn-sm btn-primary" type="submit" disabled={busy || !answer}>
-            {busy ? t("common.ellipsis") : t("approval.reply")}
+            {busy ? t("common.ellipsis") : (submitLabel ?? t("approval.reply"))}
           </button>
         </div>
         {error && (

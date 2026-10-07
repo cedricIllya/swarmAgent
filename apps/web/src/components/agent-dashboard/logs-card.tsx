@@ -524,6 +524,14 @@ function RunItem({
     run.status === "escalated" && !local && agent.status === "running" && approvals.length === 0 && !followup && !threadBusy
       ? summary || t("logs.inProgressWaiting")
       : null;
+  const canContinue =
+    agent.status === "running" &&
+    !local &&
+    (run.status === "done" || run.status === "failed" || run.status === "canceled") &&
+    approvals.length === 0 &&
+    !followup &&
+    !pendingQuestion &&
+    !threadBusy;
 
   return (
     <details
@@ -670,6 +678,20 @@ function RunItem({
         <p className="small" style={{ margin: "10px 0 0", whiteSpace: "pre-wrap" }}>
           <StepText text={summary} />
         </p>
+      )}
+      {canContinue && (
+        <div className="list" style={{ marginTop: 10 }}>
+          <QuestionCard
+            quiet
+            title={t("logs.continueTitle")}
+            prompt={t("logs.continueLead")}
+            options={[]}
+            placeholder={t("logs.continuePlaceholder")}
+            submitLabel={t("task.send")}
+            busy={replying}
+            onAnswer={answerRun}
+          />
+        </div>
       )}
       <div className="steps">
         {loaded === null && liveSteps.length === 0 && (
