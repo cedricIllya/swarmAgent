@@ -3,7 +3,7 @@ import { FlyClient } from "@swarm/fly";
 import { env } from "@/env";
 
 const ASLEEP = new Set(["suspended", "stopped", "suspending"]);
-const WAKING = new Set(["starting", "created"]);
+const WAKING = new Set(["starting", "created", "replacing"]);
 
 /** Пока срок не вышел, запрос «усни» игнорируется: работа только началась. */
 const holdUntil = new Map<string, number>();

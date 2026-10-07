@@ -57,11 +57,17 @@ export class BrowserControl {
     }
     const slug = args.serviceSlug;
     const job = (async () => {
-      const s = await ManagedBrowserSession.open(this.deps(), rt.taskRef(run), { runId: run.id, ...args });
-      this.sessions.set(s.id, s);
-      await rt.step(run.id, "browser", `открыт браузер: ${args.purpose}`, { sessionId: s.id });
-      await rt.announceBrowser(run, s.meta);
-      return s;
+      try {
+        const s = await ManagedBrowserSession.open(this.deps(), rt.taskRef(run), { runId: run.id, ...args });
+        this.sessions.set(s.id, s);
+        await rt.step(run.id, "browser", `открыт браузер: ${args.purpose}`, { sessionId: s.id });
+        await rt.announceBrowser(run, s.meta);
+        return s;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        await rt.step(run.id, "error", `браузер не открылся: ${message.slice(0, 180)}`).catch(() => undefined);
+        throw e;
+      }
     })();
     if (slug) this.opening.set(slug, job);
     try {

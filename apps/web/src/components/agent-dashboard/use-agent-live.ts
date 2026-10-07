@@ -40,7 +40,7 @@ export function useAgentLive(initialAgent: Agent) {
       const next = (await res.json()) as Detail;
       setDetail((prev) => {
         // Спящая и зависшая машина состояния не отдают: последний журнал остаётся на экране.
-        const keepState = sseAlive.current || (!next.state && (next.asleep || Boolean(next.runtimeError)));
+        const keepState = sseAlive.current || (!next.state && (next.asleep || next.waking || Boolean(next.runtimeError)));
         const prevRuns = prev.state?.runs.length ?? null;
         const nextRuns = next.state?.runs.length ?? null;
         // #region agent log
@@ -191,7 +191,7 @@ export function useAgentLive(initialAgent: Agent) {
     return () => source.close();
   }, [initialAgent.id]);
 
-  const livePending = detail.state === null && !settled;
+  const livePending = detail.state === null && (!settled || Boolean(detail.runtimeError) || Boolean(detail.waking) || Boolean(detail.asleep));
   const patchAgent = useCallback((agent: Agent) => {
     setDetail((prev) => ({ ...prev, agent }));
   }, []);
