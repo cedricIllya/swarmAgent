@@ -2,12 +2,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { DeliverSlackEventRequest, ServiceRecipe } from "@swarm/contracts";
 
 /**
- * Бот Slack для агента. События приходят на `{APP_URL}/webhooks/slack`,
- * установка — на `{APP_URL}/api/slack/callback`.
- * Права покрывают личные сообщения, упоминания и запасной опрос истории.
+ * Аккаунт Slack, от имени которого говорит агент. События приходят на
+ * `{APP_URL}/webhooks/slack`, согласие — на `{APP_URL}/api/slack/callback`.
+ * Это пользовательские права: токен пишет и читает как человек, который его выдал.
+ * В одной команде может быть несколько таких аккаунтов.
  */
-export const SLACK_BOT_SCOPES = [
-  "app_mentions:read",
+export const SLACK_USER_SCOPES = [
   "channels:history",
   "channels:read",
   "chat:write",
@@ -36,7 +36,7 @@ export function slackRedirectUri(appUrl: string): string {
 export function buildSlackConsentUrl(cfg: SlackOAuthConfig, state: string): string {
   const url = new URL("https://slack.com/oauth/v2/authorize");
   url.searchParams.set("client_id", cfg.clientId);
-  url.searchParams.set("scope", SLACK_BOT_SCOPES.join(","));
+  url.searchParams.set("user_scope", SLACK_USER_SCOPES.join(","));
   url.searchParams.set("redirect_uri", cfg.redirectUri);
   url.searchParams.set("state", state);
   return url.toString();
@@ -57,13 +57,15 @@ export function slackServiceRecipe(): ServiceRecipe {
 }
 
 export interface SlackInstall {
-  botToken: string;
+  userToken: string;
+  userId: string;
   scope: string;
   teamId: string;
   teamName: string;
+  displayName: string;
 }
 
-/** Код установки меняется на bot token. `ok: false` — ошибка Slack, не HTTP. */
+/** Код согласия меняется на user token того, кто его подтвердил. `ok: false` — ошибка Slack, не HTTP. */
 export async function exchangeSlackCode(cfg: SlackOAuthConfig, code: string): Promise<SlackInstall> {
   const fetchImpl = cfg.fetchImpl ?? fetch;
   const basic = Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`).toString("base64");
@@ -78,23 +80,28 @@ export async function exchangeSlackCode(cfg: SlackOAuthConfig, code: string): Pr
   const data = (await res.json().catch(() => null)) as {
     ok?: boolean;
     error?: string;
-    access_token?: string;
-    scope?: string;
+    authed_user?: { id?: string; access_token?: string; scope?: string };
     team?: { id?: string; name?: string };
   } | null;
-  if (!res.ok || !data?.ok || !data.access_token || !data.team?.id) {
+  const user = data?.authed_user;
+  if (!res.ok || !data?.ok || !user?.access_token || !user.id || !data.team?.id) {
     throw new Error(data?.error || `slack oauth ${res.status}`);
   }
   return {
-    botToken: data.access_token,
-    scope: data.scope ?? SLACK_BOT_SCOPES.join(","),
+    userToken: user.access_token,
+    userId: user.id,
+    scope: user.scope ?? SLACK_USER_SCOPES.join(","),
     teamId: data.team.id,
     teamName: data.team.name?.trim() || data.team.id,
+    displayName: await slackDisplayName(user.access_token, user.id, fetchImpl),
   };
 }
 
-/** `team_id` из auth.test. Пусто — токен не от Web API. */
-export async function slackTeamId(token: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+/** Кто выдал токен. Пусто — токен не от Web API. */
+export async function slackAuth(
+  token: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ userId: string; teamId: string } | null> {
   try {
     const res = await fetchImpl("https://slack.com/api/auth.test", {
       method: "POST",
@@ -102,10 +109,27 @@ export async function slackTeamId(token: string, fetchImpl: typeof fetch = fetch
       body: "{}",
       signal: AbortSignal.timeout(8_000),
     });
-    const data = (await res.json()) as { ok?: boolean; team_id?: string };
-    return data.ok && data.team_id ? data.team_id : null;
+    const data = (await res.json()) as { ok?: boolean; user_id?: string; team_id?: string };
+    if (!data.ok || !data.user_id) return null;
+    return { userId: data.user_id, teamId: data.team_id ?? "" };
   } catch {
     return null;
+  }
+}
+
+async function slackDisplayName(token: string, userId: string, fetchImpl: typeof fetch): Promise<string> {
+  try {
+    const res = await fetchImpl("https://slack.com/api/users.info", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ user: userId }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    const data = (await res.json()) as { ok?: boolean; user?: { real_name?: string; profile?: { display_name?: string } } };
+    const name = data.ok ? data.user?.profile?.display_name?.trim() || data.user?.real_name?.trim() : "";
+    return name || userId;
+  } catch {
+    return userId;
   }
 }
 
@@ -137,11 +161,42 @@ export function verifySlackSignature(args: {
 
 export type SlackNotice =
   | { kind: "challenge"; challenge: string }
-  | { kind: "uninstall"; teamId: string }
-  | { kind: "message"; event: DeliverSlackEventRequest }
+  | { kind: "uninstall"; teamId: string; userIds: string[] }
+  | { kind: "message"; userIds: string[]; event: DeliverSlackEventRequest }
   | { kind: "ignore" };
 
-/** Что делать с телом Events API. Свои сообщения бота сюда не доходят — машину из-за них не будим. */
+function uniqueIds(ids: string[]): string[] {
+  return [...new Set(ids.filter(Boolean))];
+}
+
+/** Кому видно событие и кого в нём упомянули. По этим id ищем агентов. */
+function slackAudience(envelope: Record<string, unknown>, text: string): string[] {
+  const ids: string[] = [];
+  const rows = envelope.authorizations;
+  if (Array.isArray(rows)) {
+    for (const row of rows) {
+      if (!row || typeof row !== "object") continue;
+      const id = (row as Record<string, unknown>).user_id;
+      if (typeof id === "string") ids.push(id);
+    }
+  }
+  for (const match of text.matchAll(/<@([UW][A-Z0-9]+)>/g)) ids.push(match[1] ?? "");
+  return uniqueIds(ids);
+}
+
+function revokedUserIds(tokens: unknown): string[] {
+  if (!tokens || typeof tokens !== "object") return [];
+  const bag = tokens as Record<string, unknown>;
+  const ids: string[] = [];
+  for (const key of ["oauth", "bot"]) {
+    const list = bag[key];
+    if (!Array.isArray(list)) continue;
+    for (const id of list) if (typeof id === "string") ids.push(id);
+  }
+  return uniqueIds(ids);
+}
+
+/** Что делать с телом Events API. Сообщения бота сюда не доходят — машину из-за них не будим. */
 export function parseSlackEnvelope(raw: string): SlackNotice {
   let body: unknown;
   try {
@@ -161,7 +216,8 @@ export function parseSlackEnvelope(raw: string): SlackNotice {
   const event = envelope.event;
   if (!teamId || !event || typeof event !== "object") return { kind: "ignore" };
   const ev = event as Record<string, unknown>;
-  if (ev.type === "app_uninstalled" || ev.type === "tokens_revoked") return { kind: "uninstall", teamId };
+  if (ev.type === "app_uninstalled") return { kind: "uninstall", teamId, userIds: [] };
+  if (ev.type === "tokens_revoked") return { kind: "uninstall", teamId, userIds: revokedUserIds(ev.tokens) };
   if (ev.type !== "message" && ev.type !== "app_mention") return { kind: "ignore" };
   if (typeof ev.bot_id === "string" || typeof ev.subtype === "string") return { kind: "ignore" };
   if (typeof ev.user !== "string" || typeof ev.channel !== "string" || typeof ev.ts !== "string") return { kind: "ignore" };
@@ -171,6 +227,7 @@ export function parseSlackEnvelope(raw: string): SlackNotice {
   if (!eventId) return { kind: "ignore" };
   return {
     kind: "message",
+    userIds: slackAudience(envelope, text),
     event: {
       eventId,
       teamId,

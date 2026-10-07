@@ -8,13 +8,15 @@ import { db } from "@/lib/db";
 import { pushServicesToAgent } from "@/lib/create-agent";
 import { exchangeSlackCode, slackRedirectUri, slackServiceRecipe } from "@/lib/slack";
 
-/** Callback Slack: bot token шифруется в доступ агента, команда становится ключом вебхука. */
+/**
+ * Callback Slack. Браузер агента приходит сюда без сессии владельца:
+ * state зашифрован и живёт 15 минут. Если владелец всё же открыл ссылку сам,
+ * тенант сессии должен совпасть.
+ */
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const stateRaw = url.searchParams.get("state");
-  const viewer = await getViewer();
-  if (!viewer) return NextResponse.redirect(new URL("/login", env.appUrl));
   if (!code || !stateRaw) return NextResponse.redirect(new URL("/?error=slack_denied", env.appUrl));
 
   let state: { agentId: string; tenantId: string; at: number };
@@ -23,10 +25,11 @@ export async function GET(req: Request): Promise<Response> {
   } catch {
     return NextResponse.redirect(new URL("/?error=slack_state", env.appUrl));
   }
-  if (state.tenantId !== viewer.tenant.id || Date.now() - state.at > 15 * 60 * 1000) {
+  const viewer = await getViewer();
+  if ((viewer && viewer.tenant.id !== state.tenantId) || Date.now() - state.at > 15 * 60 * 1000) {
     return NextResponse.redirect(new URL("/?error=slack_state", env.appUrl));
   }
-  const agent = await getAgent(db(), viewer.tenant.id, state.agentId);
+  const agent = await getAgent(db(), state.tenantId, state.agentId);
   if (!agent) return NextResponse.redirect(new URL("/?error=agent_missing", env.appUrl));
 
   const clientId = env.slack.clientId;
@@ -46,7 +49,7 @@ export async function GET(req: Request): Promise<Response> {
     return NextResponse.redirect(new URL(`/agents/${agent.id}?error=slack_exchange`, env.appUrl));
   }
 
-  const owner = await findSlackInstall(db(), installed.teamId);
+  const owner = await findSlackInstall(db(), installed.userId);
   if (owner && owner.agentId !== agent.id) {
     return NextResponse.redirect(new URL(`/agents/${agent.id}?error=slack_taken`, env.appUrl));
   }
@@ -58,10 +61,10 @@ export async function GET(req: Request): Promise<Response> {
     {
       slug: "slack",
       kind: "api",
-      token: installed.botToken,
-      oauth: { accessToken: installed.botToken, scope: installed.scope },
-      accountName: installed.teamName,
-      externalKey: installed.teamId,
+      token: installed.userToken,
+      oauth: { accessToken: installed.userToken, scope: installed.scope },
+      accountName: installed.displayName,
+      externalKey: installed.userId,
     },
   );
   try {

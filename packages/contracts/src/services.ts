@@ -191,7 +191,7 @@ export const ServiceCredentialSchema = z.object({
   password: z.string().optional(),
   /**
    * Внешний ключ установки, по которому webhook находит агента.
-   * У Slack это id команды. В шифрованное тело не кладётся — только в колонку.
+   * У Slack это id пользователя. В шифрованное тело не кладётся — только в колонку.
    */
   externalKey: z.string().min(1).max(64).optional(),
   /**

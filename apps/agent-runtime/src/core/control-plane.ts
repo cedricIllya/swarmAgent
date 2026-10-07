@@ -37,6 +37,19 @@ export class ControlPlaneClient {
     return this.post("/api/runtime/send-email", mail);
   }
 
+  /** Страница разрешения Slack. Пусто — control plane без клиента Slack или недоступен. */
+  async slackConsent(): Promise<string | null> {
+    if (!this.enabled) return null;
+    try {
+      const data = await this.post<{ url?: string }>("/api/runtime/slack-consent", {});
+      const url = data.url?.trim() ?? "";
+      return url.startsWith("https://") ? url : null;
+    } catch (e) {
+      warn("control-plane", "не удалось получить разрешение Slack", { error: String(e) });
+      return null;
+    }
+  }
+
   async report(report: RuntimeReport): Promise<void> {
     try {
       await this.post("/api/runtime/report", report);

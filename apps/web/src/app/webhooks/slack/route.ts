@@ -1,9 +1,7 @@
 import { after, NextResponse } from "next/server";
-import { findSlackInstall } from "@swarm/connections";
 import { env } from "@/env";
-import { db } from "@/lib/db";
 import { parseSlackEnvelope, verifySlackSignature } from "@/lib/slack";
-import { acceptSlack, disconnectSlackTeam } from "@/lib/slack-delivery";
+import { acceptSlack, disconnectSlackTeam, disconnectSlackUser, slackRecipients } from "@/lib/slack-delivery";
 
 /**
  * Events API Slack. Подпись проверяется до разбора.
@@ -33,15 +31,16 @@ export async function POST(req: Request): Promise<Response> {
 
   after(async () => {
     if (notice.kind === "uninstall") {
-      await disconnectSlackTeam(notice.teamId);
+      if (notice.userIds.length === 0) await disconnectSlackTeam(notice.teamId);
+      else for (const userId of notice.userIds) await disconnectSlackUser(userId);
       return;
     }
-    const install = await findSlackInstall(db(), notice.event.teamId);
-    if (!install) {
-      console.warn(`[webhooks/slack] нет агента для команды ${notice.event.teamId}`);
+    const installs = await slackRecipients(notice.userIds, notice.event.teamId);
+    if (installs.length === 0) {
+      console.warn(`[webhooks/slack] нет агента для ${notice.userIds.join(",") || notice.event.teamId}`);
       return;
     }
-    await acceptSlack(install.agentId, notice.event);
+    for (const install of installs) await acceptSlack(install.agentId, notice.event);
   });
   return NextResponse.json({ ok: true });
 }

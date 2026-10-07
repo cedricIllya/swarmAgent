@@ -81,9 +81,30 @@ export async function retrySlack(): Promise<void> {
   await queue.drain((item) => deliverSlack(item.agentId, item.event));
 }
 
-/** Приложение сняли в Slack — секрет этого агента больше не действителен. */
-export async function disconnectSlackTeam(teamId: string): Promise<void> {
-  const install = await findSlackInstall(db(), teamId);
+/**
+ * Кому отдать событие. Сначала пользователи из `authorizations` и упоминаний:
+ * в одной команде так живут несколько агентов. Никого не нашли — старая установка,
+ * где ключом ещё записан id команды.
+ */
+export async function slackRecipients(
+  userIds: string[],
+  teamId: string,
+): Promise<Array<{ agentId: string; tenantId: string; slug: string }>> {
+  const found: Array<{ agentId: string; tenantId: string; slug: string }> = [];
+  const seen = new Set<string>();
+  for (const id of userIds) {
+    const install = await findSlackInstall(db(), id);
+    if (!install || seen.has(install.agentId)) continue;
+    seen.add(install.agentId);
+    found.push(install);
+  }
+  if (found.length > 0) return found;
+  const legacy = await findSlackInstall(db(), teamId);
+  return legacy ? [legacy] : [];
+}
+
+async function dropSlackInstall(key: string): Promise<void> {
+  const install = await findSlackInstall(db(), key);
   if (!install) return;
   await deleteCredential(db(), install.agentId, install.slug);
   const agent = await getAgentById(db(), install.agentId);
@@ -91,6 +112,16 @@ export async function disconnectSlackTeam(teamId: string): Promise<void> {
   try {
     await pushServicesToAgent(agent);
   } catch (e) {
-    console.warn(`[slack] снимок после отключения ${teamId}: ${e instanceof Error ? e.message : String(e)}`);
+    console.warn(`[slack] снимок после отключения ${key}: ${e instanceof Error ? e.message : String(e)}`);
   }
+}
+
+/** Пользователь отозвал токен — секрет этого агента больше не действителен. */
+export async function disconnectSlackUser(userId: string): Promise<void> {
+  await dropSlackInstall(userId);
+}
+
+/** Приложение сняли целиком. Попадает в установку, где ключом ещё служит id команды. */
+export async function disconnectSlackTeam(teamId: string): Promise<void> {
+  await dropSlackInstall(teamId);
 }

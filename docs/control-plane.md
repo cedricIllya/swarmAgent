@@ -37,14 +37,13 @@
 | DELETE | `/api/agents/:id/credentials/:slug` | Снимает доступ этого агента. Свежий снимок уходит на машину: секрет, MCP и профиль браузера пропадают. |
 | GET | `/api/agents/:id/google` | Редирект на согласие Google. |
 | GET | `/api/google/callback` | Код меняется на refresh token, токен шифруется в базу, `google_token.json` кладётся на машину. |
-| GET | `/api/agents/:id/slack` | Редирект на установку Slack. |
-| GET | `/api/slack/callback` | Bot token пишется в доступ `slack`, id команды — в `external_key`. Снимок уходит на машину. |
+| GET | `/api/slack/callback` | User token пишется в доступ `slack`, id пользователя — в `external_key`. Снимок уходит на машину. |
 | GET | `/api/models` | Модели OpenRouter, у которых есть tools. Кэш 10 минут. |
 | * | `/api/auth/*` | better-auth. |
 
 Google OAuth: Gmail, Calendar, Drive и email. `state` — зашифрованный `{ agentId, tenantId, at }`, живёт 15 минут и должен совпасть с тенантом сессии. Свой `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, redirect `{APP_URL}/api/google/callback`.
 
-Slack OAuth устроен так же. `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET`, redirect `{APP_URL}/api/slack/callback`. В приложении Slack Request URL — `{APP_URL}/webhooks/slack`, события бота — `message.im`, `app_mention` и `app_uninstalled`. Одна команда Slack принадлежит одному агенту.
+Отдельной кнопки Slack нет: агента приглашают в команду по почте. Если callback `{APP_URL}/api/slack/callback` получает код, user token пишется в доступ, а ключ вебхука — id пользователя, поэтому в одной команде может быть несколько агентов. `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET`. В приложении Slack Request URL — `{APP_URL}/webhooks/slack`, события на пользователя — `message.im`, `message.channels`, `message.groups`, `message.mpim` и `app_uninstalled`. Старая установка, где ключом ещё записан id команды, получает событие, только если по пользователю агент не нашёлся.
 
 ## API для runtime
 
@@ -55,8 +54,9 @@ Slack OAuth устроен так же. `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET
 | POST | `/api/runtime/send-email` | Письмо с адреса этого агента через Mailgun. |
 | POST | `/api/runtime/report` | `type: recipe` пишет общий каталог, и снимок рассылается запущенным агентам тенанта. `type: credential` пишет секрет этого агента, и свежий снимок получает только он. |
 | POST | `/api/runtime/suspend` | Усыпить машину этого агента. Ответ уходит сразу, `suspend` — после него. В теле `{ usage? }` — итоги `usage.jsonl`; они пишутся в `agents.usage_*`, и отчёт с меньшим числом токенов уже сохранённый не затирает. |
+| POST | `/api/runtime/slack-consent` | Ссылка разрешения Slack для браузера этого агента. Без `SLACK_CLIENT_ID` — 503. |
 
-Почта снаружи — `POST /webhooks/email`. Правила входа в [почте](mail.md). Slack снаружи — `POST /webhooks/slack`: подпись `SLACK_SIGNING_SECRET`, `url_verification` отвечает `challenge`, `message.im` и `app_mention` будят агента этой команды. Снятие приложения удаляет доступ.
+Почта снаружи — `POST /webhooks/email`. Правила входа в [почте](mail.md). Slack снаружи — `POST /webhooks/slack`: подпись `SLACK_SIGNING_SECRET`, `url_verification` отвечает `challenge`. Сообщение будит агентов, чей id есть в `authorizations` или в упоминании. Отзыв токена удаляет доступ этого пользователя. Снятие приложения удаляет установку, ключ которой — id команды.
 
 ## Создание агента
 

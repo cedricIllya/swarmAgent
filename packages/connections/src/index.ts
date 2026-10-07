@@ -159,7 +159,7 @@ export async function upsertCredential(db: Db, owner: CredentialOwner, credentia
     });
 }
 
-/** Агент, чей Slack установлен в этой команде. Секрет не расшифровывается. */
+/** Агент с этим ключом Slack: id пользователя или, у старой установки, id команды. Секрет не расшифровывается. */
 export async function findSlackInstall(
   db: Db,
   teamId: string,

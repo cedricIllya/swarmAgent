@@ -213,7 +213,7 @@ export const serviceCredentials = pgTable(
     /** Зашифрованный JSON ServiceCredential без slug/kind и без externalKey. */
     secretEnc: text("secret_enc").notNull(),
     accountEmail: text("account_email"),
-    /** Id установки снаружи. У Slack — id команды, по нему приходит webhook. */
+    /** Id установки снаружи. У Slack — id пользователя, по нему приходит webhook. */
     externalKey: text("external_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

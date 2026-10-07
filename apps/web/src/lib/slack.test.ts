@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { exchangeSlackCode, parseSlackEnvelope, verifySlackSignature } from "./slack";
+import { buildSlackConsentUrl, exchangeSlackCode, parseSlackEnvelope, verifySlackSignature } from "./slack";
 
 const secret = "8f742231b10e8888abcd99yyyzzz85a5";
 
@@ -56,7 +56,30 @@ describe("parseSlackEnvelope", () => {
     expect(parseSlackEnvelope(JSON.stringify({ type: "event_callback", team_id: "T1", event: { type: "app_uninstalled" } }))).toEqual({
       kind: "uninstall",
       teamId: "T1",
+      userIds: [],
     });
+    expect(
+      parseSlackEnvelope(
+        JSON.stringify({
+          type: "event_callback",
+          team_id: "T1",
+          event: { type: "tokens_revoked", tokens: { oauth: ["U9"], bot: [] } },
+        }),
+      ),
+    ).toEqual({ kind: "uninstall", teamId: "T1", userIds: ["U9"] });
+  });
+
+  it("зовёт агента, которому видно событие, и того, кого упомянули", () => {
+    const notice = parseSlackEnvelope(
+      JSON.stringify({
+        type: "event_callback",
+        team_id: "T1",
+        event_id: "Ev3",
+        authorizations: [{ user_id: "UAGENT" }],
+        event: { type: "message", channel: "C1", channel_type: "channel", user: "UHUMAN", text: "посмотри <@UOTHER> отчёт", ts: "1.4" },
+      }),
+    );
+    expect(notice).toMatchObject({ kind: "message", userIds: ["UAGENT", "UOTHER"] });
   });
 
   it("не будит агента из-за своего сообщения", () => {
@@ -73,23 +96,38 @@ describe("parseSlackEnvelope", () => {
   });
 });
 
+describe("buildSlackConsentUrl", () => {
+  it("просит пользовательские права, а не права бота", () => {
+    const url = new URL(
+      buildSlackConsentUrl({ clientId: "id", clientSecret: "secret", redirectUri: "https://app.example/api/slack/callback" }, "state"),
+    );
+    expect(url.searchParams.get("user_scope")).toContain("chat:write");
+    expect(url.searchParams.get("user_scope")).toContain("im:history");
+    expect(url.searchParams.get("scope")).toBeNull();
+  });
+});
+
 describe("exchangeSlackCode", () => {
-  it("берёт bot token и команду из oauth.v2.access", async () => {
-    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) =>
-      new Response(
+  it("берёт user token и имя того, кто подтвердил доступ", async () => {
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
+      const href = String(url);
+      if (href.includes("users.info")) {
+        return new Response(JSON.stringify({ ok: true, user: { real_name: "Ада", profile: { display_name: "Ада" } } }));
+      }
+      return new Response(
         JSON.stringify({
           ok: true,
-          access_token: "xoxb-1",
-          scope: "chat:write",
+          authed_user: { id: "U9", access_token: "xoxp-1", scope: "chat:write,im:history" },
           team: { id: "T9", name: "Acme" },
         }),
-      ),
-    );
+        { status: 200 },
+      );
+    });
     const installed = await exchangeSlackCode(
       { clientId: "id", clientSecret: "secret", redirectUri: "https://app.example/api/slack/callback", fetchImpl },
       "code",
     );
-    expect(installed).toMatchObject({ botToken: "xoxb-1", teamId: "T9", teamName: "Acme" });
+    expect(installed).toMatchObject({ userToken: "xoxp-1", userId: "U9", teamId: "T9", teamName: "Acme", displayName: "Ада" });
     const init = fetchImpl.mock.calls[0]?.[1];
     expect(init?.headers).toMatchObject({ Authorization: `Basic ${Buffer.from("id:secret").toString("base64")}` });
   });

@@ -20,7 +20,6 @@ export function EmailCard({
   onRemoved: (slug: string) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
-  const catalog = services.filter((service) => service.slug !== "slack");
   return (
     <section className="card">
       <div className="card-head">
@@ -34,15 +33,13 @@ export function EmailCard({
       )}
       {pending ? (
         <ListSkeleton count={1} />
-      ) : catalog.length === 0 ? (
-        services.some((service) => service.slug === "slack") ? null : (
-          <p className="faint small" style={{ margin: "0 0 14px" }}>
-            {t("services.noneYet")}
-          </p>
-        )
+      ) : services.length === 0 ? (
+        <p className="faint small" style={{ margin: "0 0 14px" }}>
+          {t("services.noneYet")}
+        </p>
       ) : (
         <div className="list" style={{ marginBottom: 14 }}>
-          {catalog.map((service) => (
+          {services.map((service) => (
             <div key={service.slug} className="list-item">
               <div className="row" style={{ justifyContent: "space-between", gap: 8, width: "100%" }}>
                 <div>
@@ -85,44 +82,6 @@ export function EmailCard({
           {agent.googleConnected && <DisconnectGoogleButton agentId={agent.id} onFailed={setError} />}
         </div>
       </div>
-      <SlackRow agentId={agent.id} services={services} onRemoved={onRemoved} onFailed={setError} />
     </section>
-  );
-}
-
-function SlackRow({
-  agentId,
-  services,
-  onRemoved,
-  onFailed,
-}: {
-  agentId: string;
-  services: AgentAccess[];
-  onRemoved: (slug: string) => void;
-  onFailed: (message: string | null) => void;
-}) {
-  const slack = services.find((service) => service.slug === "slack");
-  const label = slack?.accountName || slack?.accountEmail;
-  return (
-    <div className="row" style={{ justifyContent: "space-between", marginTop: 10 }}>
-      <span className="muted small row" style={{ gap: 8 }}>
-        Slack:
-        {slack ? <span className="badge badge-ok">{label || t("common.connected")}</span> : <span className="badge">{t("common.notConnected")}</span>}
-      </span>
-      <div className="row" style={{ gap: 8 }}>
-        <a className="btn btn-sm" href={`/api/agents/${agentId}/slack`}>
-          {slack ? t("services.reconnectSlack") : t("services.connectSlack")}
-        </a>
-        {slack && (
-          <DisconnectServiceButton
-            agentId={agentId}
-            slug="slack"
-            serviceName="Slack"
-            onRemoved={() => onRemoved("slack")}
-            onFailed={onFailed}
-          />
-        )}
-      </div>
-    </div>
   );
 }

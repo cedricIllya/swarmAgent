@@ -178,16 +178,16 @@ async function cachedIdentity(rt: AgentRuntime, slug: string, token: string): Pr
   return fresh;
 }
 
-/** Команда Slack пишется в доступ, чтобы webhook нашёл этого агента. */
-async function rememberTeam(rt: AgentRuntime, cred: ServiceCredential, teamId: string): Promise<void> {
-  if (cred.externalKey === teamId || !rt.services?.applyReport) return;
+/** Id пользователя Slack пишется в доступ, чтобы webhook нашёл этого агента среди других в той же команде. */
+async function rememberSlackUser(rt: AgentRuntime, cred: ServiceCredential, userId: string): Promise<void> {
+  if (cred.externalKey === userId || !rt.services?.applyReport) return;
   try {
     await rt.services.applyReport(
-      { type: "credential", credential: { slug: cred.slug, kind: cred.kind, externalKey: teamId } },
+      { type: "credential", credential: { slug: cred.slug, kind: cred.kind, externalKey: userId } },
       { quiet: true },
     );
   } catch (e) {
-    warn("channel", "команду Slack не записал", { slug: cred.slug, error: String(e) });
+    warn("channel", "пользователя Slack не записал", { slug: cred.slug, error: String(e) });
   }
 }
 
@@ -198,7 +198,7 @@ async function pullSlack(rt: AgentRuntime, recipe: ServiceRecipe, cred: ServiceC
     warn("channel", "токен Slack не принимает auth.test, сообщения не читаются", { slug: recipe.slug });
     return 0;
   }
-  await rememberTeam(rt, cred, identity.teamId);
+  await rememberSlackUser(rt, cred, identity.userId);
   const state = await readState(rt);
   const seen = new Set(state.seen);
   let heard = 0;
@@ -309,7 +309,7 @@ export async function acceptSlackEvent(rt: AgentRuntime, inbound: DeliverSlackEv
   if (!recipe || !cred || !token) return "unavailable";
   const identity = await cachedIdentity(rt, recipe.slug, token);
   if (!identity) return "unavailable";
-  await rememberTeam(rt, cred, identity.teamId);
+  await rememberSlackUser(rt, cred, identity.userId);
   const event = inbound.event;
   const heard = hearSlack({
     teamId: identity.teamId,

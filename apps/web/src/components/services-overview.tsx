@@ -5,15 +5,14 @@ import { t } from "@/i18n";
 import { accessKindLabel } from "./agent-dashboard/agent-access";
 import { TaskWatchTag } from "./task-watch-tag";
 import { AgentFace } from "./agent-avatar";
-import { DisconnectGoogleButton, DisconnectServiceButton, ServiceAgentChips } from "./disconnect-service";
+import { DisconnectGoogleButton, ServiceAgentChips } from "./disconnect-service";
 
 function initials(name: string): string {
   return name.trim().slice(0, 1).toUpperCase() || "?";
 }
 
 export function ServicesOverview({ agents, connections }: { agents: Agent[]; connections: TenantConnection[] }) {
-  const slack = connections.find((connection) => connection.slug === "slack");
-  const catalog = connections.filter((connection) => connection.slug !== "slack");
+  const catalog = connections;
   const googleAgents = agents.filter((a) => a.googleConnected);
   const totalLinks = connections.reduce((n, c) => n + c.agents.length, 0) + googleAgents.length;
   const agentsWithAccess = new Set<string>([
@@ -51,12 +50,9 @@ export function ServicesOverview({ agents, connections }: { agents: Agent[]; con
       </div>
 
       <GoogleCard agents={agents} />
-      <SlackCard agents={agents} connection={slack} />
 
       {catalog.length === 0 ? (
-        connections.length === 0 ? (
-          <EmptyState agents={agents} />
-        ) : null
+        <EmptyState agents={agents} />
       ) : (
         <section className="card">
           <div className="card-head">
@@ -126,66 +122,6 @@ function GoogleCard({ agents }: { agents: Agent[] }) {
               </Link>
               <span className="agent-link-meta">{t("common.notConnected")}</span>
               <a className="btn btn-sm" href={`/api/agents/${a.id}/google`}>
-                {t("common.connect")}
-              </a>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function SlackCard({ agents, connection }: { agents: Agent[]; connection: TenantConnection | undefined }) {
-  const linked = new Set(connection?.agents.map((agent) => agent.agentId) ?? []);
-  const connected = agents.filter((agent) => linked.has(agent.id));
-  const rest = agents.filter((agent) => !linked.has(agent.id));
-  return (
-    <section className="card">
-      <div className="card-head">
-        <div className="row" style={{ gap: 12 }}>
-          <span className="avatar avatar-slack" aria-hidden>
-            S
-          </span>
-          <div>
-            <h2>Slack</h2>
-            <span className="muted small">{t("services.slackLead")}</span>
-          </div>
-        </div>
-        <span className={`badge ${connected.length ? "badge-ok" : ""}`}>
-          {connected.length ? t("common.countOf", { count: connected.length, total: agents.length }) : t("common.notConnected")}
-        </span>
-      </div>
-
-      {agents.length === 0 ? (
-        <p className="faint small" style={{ margin: 0 }}>
-          {t("services.googleEmptyBefore")} <Link href="/">{t("services.googleEmptyLink")}</Link> {t("services.slackEmptyAfter")}
-        </p>
-      ) : (
-        <div className="agent-links">
-          {connected.map((agent) => (
-            <div key={agent.id} className="agent-link">
-              <Link href={`/agents/${agent.id}`} className="agent-link-name">
-                <AgentFace agent={agent} size="sm" />
-                {agent.name}
-              </Link>
-              <span className="agent-link-meta">{t("common.connected")}</span>
-              <div className="row" style={{ gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                <a className="btn btn-sm btn-ghost" href={`/api/agents/${agent.id}/slack`}>
-                  {t("common.reconnect")}
-                </a>
-                <DisconnectServiceButton agentId={agent.id} slug="slack" serviceName="Slack" agentName={agent.name} />
-              </div>
-            </div>
-          ))}
-          {rest.map((agent) => (
-            <div key={agent.id} className="agent-link agent-link-off">
-              <Link href={`/agents/${agent.id}`} className="agent-link-name">
-                <AgentFace agent={agent} size="sm" />
-                {agent.name}
-              </Link>
-              <span className="agent-link-meta">{t("common.notConnected")}</span>
-              <a className="btn btn-sm" href={`/api/agents/${agent.id}/slack`}>
                 {t("common.connect")}
               </a>
             </div>

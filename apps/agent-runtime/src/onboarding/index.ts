@@ -27,6 +27,14 @@ import type { AgentRuntime } from "../runtime";
 import type { HandoffContext, ResumeConnect } from "../runtime/handoffs";
 import { finishServiceThink } from "../tasks/service-work";
 import { mcpTokenCheck } from "./report-guard";
+import {
+  grantSlackAccess,
+  isSlackConnect,
+  SLACK_ADMIN,
+  SLACK_ALLOW,
+  SLACK_GRANT_PROMPT,
+  SLACK_GRANT_SCHEMA,
+} from "../channels/slack-connect";
 import { warn } from "../core/log";
 
 /**
@@ -353,6 +361,78 @@ async function connectInvite(
     return { invite, engine };
   };
 
+  /**
+   * Аккаунт Slack уже есть. Браузер, в котором агент вошёл, открывает разрешение
+   * и нажимает «Разрешить». Одобрение администратора или кнопка, которую агент
+   * не нажал, становятся задачей в журнале.
+   */
+  const settleSlack = async (
+    invite: AcceptInviteResult,
+    password: string | null,
+    close: () => Promise<void>,
+    ctx: Omit<HandoffContext, "url" | "slug" | "service" | "discovery">,
+    liveBrowser: boolean,
+    approve: (url: string) => Promise<unknown>,
+  ): Promise<{ invite: AcceptInviteResult | null; engine: EngineResult }> => {
+    if (password) await rememberPassword(rt, run, "slack", password);
+    await rt.step(run.id, "note", "Открываю разрешение Slack от аккаунта агента");
+    const grant = await grantSlackAccess({
+      consentUrl: await rt.controlPlane.slackConsent(),
+      hasToken: async () => {
+        const snap = await rt.store.readServices();
+        return Boolean(snap?.credentials.some((item) => item.slug === "slack" && (item.token || item.oauth?.accessToken)));
+      },
+      approve,
+    });
+    if (grant.status === "ready") {
+      await close();
+      await rt.step(run.id, "note", "Slack подключён: агент отвечает от своего аккаунта");
+      return {
+        invite,
+        engine: { status: "ready", mode: "api", reason: "Slack подключён от аккаунта агента", liveUrl: null, handoffId: null },
+      };
+    }
+    if (grant.status === "unconfigured") {
+      await close();
+      await rt.step(run.id, "error", "Slack не настроен на сервере");
+      return {
+        invite,
+        engine: toEngine(
+          decideConnection({
+            onboard: "runtime",
+            inviteUrl: args.url,
+            landedUrl: invite.finalUrl,
+            passwordTyped: Boolean(password),
+            password,
+            barrierKind: null,
+            notes: OWNER_OUTAGE,
+            apiBaseUrl: null,
+            apiKeyUsable: false,
+            proof: "not_tried",
+            mcpReady: false,
+          }),
+          null,
+        ),
+      };
+    }
+    const park = grant.status === "admin" || !liveBrowser;
+    const decision = decideConnection({
+      onboard: "blocked",
+      inviteUrl: args.url,
+      landedUrl: invite.finalUrl || args.url,
+      passwordTyped: Boolean(password),
+      password,
+      barrierKind: park ? "pending_approval" : "other",
+      notes: grant.status === "admin" ? SLACK_ADMIN : SLACK_ALLOW,
+      apiBaseUrl: null,
+      apiKeyUsable: false,
+      proof: "not_tried",
+      mcpReady: false,
+    });
+    if (decision.closeBrowser) await close();
+    return escalate(decision, invite, ctx);
+  };
+
   // Повтор после своего браузера остаётся в нём: Skyvern эту сессию не продолжает.
   if (rt.skyvern && !isOwnBrowser(resume?.provider)) {
     const skyvern = rt.skyvern;
@@ -416,6 +496,23 @@ async function connectInvite(
         // Пароль уже стоит в сервисе. Сохранить до поиска ключа: обрыв, остановка или перезапуск
         // машины не должны оставить аккаунт с паролем, которого никто не знает.
         if (invite.password) await rememberPassword(rt, run, args.slug, invite.password);
+        if (isSlackConnect(args.url, args.slug)) {
+          const password = invite.password ?? (resume ? typed : null);
+          return settleSlack(invite, password, close, handoffCtx, true, async (url) => {
+            const extracted = await skyvern.extract({
+              runId: run.id,
+              url,
+              prompt: SLACK_GRANT_PROMPT,
+              purpose: "разрешить Slack",
+              schema: SLACK_GRANT_SCHEMA,
+              browserSessionId: session.browserSessionId,
+              maxSteps: 12,
+              service: args.service,
+              onStep: (text, data) => rt.step(run.id, "browser", text, data),
+            });
+            return extracted.output;
+          });
+        }
         let sought = {
           token: null as string | null,
           proof: "not_tried" as Proof,
@@ -524,6 +621,26 @@ async function connectInvite(
     const pending = invite.barrierKind === "pending_approval" || looksLikeServiceApprovalWait(invite.notes);
     const landed = invite.status === "accepted" && !pending;
     const password = landed || pending ? (invite.password ?? stored ?? (resume ? typed : null)) : null;
+    if (landed && isSlackConnect(args.url, args.slug)) {
+      return settleSlack(
+        invite,
+        password,
+        async () => undefined,
+        { provider: "local", browserSessionId: null, password, liveUrl: null },
+        false,
+        async (url) => {
+          if (!rt.browser.available) return { outcome: "stuck", notes: SLACK_ALLOW };
+          const session = await rt.browser.open(run, { purpose: "разрешить Slack", serviceSlug: args.slug, url });
+          try {
+            await session.goto(url);
+            await session.act("Нажми Allow или «Разрешить», если такая кнопка есть. Если нужен администратор — остановись.");
+            return await session.extract("Чем кончилась страница разрешения Slack? Поле outcome: allowed, admin или stuck.", SLACK_GRANT_SCHEMA);
+          } finally {
+            await rt.browser.close(session.id).catch(() => undefined);
+          }
+        },
+      );
+    }
     const decision = decideConnection({
       onboard: landed ? "landed" : "blocked",
       inviteUrl: args.url,

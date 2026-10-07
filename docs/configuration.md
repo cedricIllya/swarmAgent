@@ -33,8 +33,8 @@ openssl rand -base64 32
 | `INBOUND_WEBHOOK_TOKEN` | для JSON-входа | |
 | `SKYVERN_API_KEY` | для онбординга | Регистрация по приглашению и обход капчи идут через Skyvern; коды из писем runtime передаёт ему сам. Без него и если Skyvern не довёл вход, приглашение принимает свой Chromium. Без ключа MCP Skyvern в конфиг Hermes не добавляется. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | пара | Без них кнопка Google возвращает на карточку с ошибкой. |
-| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` | пара | Без них кнопка Slack возвращает на карточку с ошибкой. Redirect `{APP_URL}/api/slack/callback`. |
-| `SLACK_SIGNING_SECRET` | для событий | Без него `POST /webhooks/slack` отвечает 503. Signing Secret приложения Slack. |
+| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` | пара | Нужны, чтобы обмен кода на `{APP_URL}/api/slack/callback` сохранил user token. Отдельной кнопки установки приложения нет: агента приглашают в Slack по почте. |
+| `SLACK_SIGNING_SECRET` | для событий | Без него `POST /webhooks/slack` отвечает 503. Signing Secret приложения Slack. События на пользователя: `message.im`, `message.channels`, `message.groups`, `message.mpim`. |
 | `DEV_RUNTIME_URL` | нет | Локальный runtime вместо `*.flycast`. |
 | `SKILL_TEMPLATE_DIR` | в контейнере | Каталог с `swarm-worker/SKILL.md`. В образе это `/app/agent-template`. |
 
