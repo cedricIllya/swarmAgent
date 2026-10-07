@@ -457,8 +457,9 @@ export function tickPrompt(services: ServicesSnapshot): string {
     "Другие подключённые сервисы не открывай: они не для задач.",
     "Только чтение. Не выполняй задачи и ничего не меняй. Пустой список пометку не снимает и сервис из обхода не убирает.",
     "Как только нашёл задачу — сразу поставь её в работу и смотри дальше, не копи до конца:",
-    'curl -s -X POST http://127.0.0.1:8787/tasks/found -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" -H "Content-Type: application/json" -d \'{"runId":"<runId>","service":"slug","title":"как задача называется","detail":"что сделать и где она лежит"}\'',
-    "Ответ {\"started\":true} значит отдельная задача уже выполняется. В конце перечисли поставленные названия. Ничего не нашёл — ответь одним словом: пусто.",
+    'curl -s -X POST http://127.0.0.1:8787/tasks/found -H "Authorization: Bearer $SWARM_RUNTIME_TOKEN" -H "Content-Type: application/json" -d \'{"runId":"<runId>","service":"slug","title":"как задача называется","detail":"что сделать и где она лежит","key":"LIN-12 или ссылка на карточку"}\'',
+    "В key положи ключ задачи или ссылку на карточку, если они есть. Та же метка уже могла прийти письмом: runtime не начнёт её второй раз, пока первая не закрыта.",
+    "Ответ {\"started\":false} значит задача уже идёт — не делай её в этой проверке. {\"started\":true} значит отдельная задача уже выполняется. В конце перечисли поставленные названия. Ничего не нашёл — ответь одним словом: пусто.",
   ].join("\n");
 }
 
@@ -466,15 +467,16 @@ export function tickPrompt(services: ServicesSnapshot): string {
 export const TICK_RETRY_PROMPT = [
   "В журнале этой проверки нет вызовов сервиса.",
   "Посмотри задачи в перечисленных сервисах. Не выполняй их и ничего не меняй.",
-  "Каждую найденную сразу отправь POST /tasks/found с runId этой проверки, service, title и detail — runtime начнёт её отдельной задачей.",
+  "Каждую найденную сразу отправь POST /tasks/found с runId этой проверки, service, title, detail и key (ключ или ссылка, если они есть) — runtime начнёт её отдельной задачей.",
   "Ничего не нашёл — ответь одним словом: пусто.",
 ].join(" ");
 
 /** Отдельная задача, которую плановая проверка нашла и поставила в очередь. */
-export function foundTaskPrompt(task: { service: string; title: string; detail: string }): string {
+export function foundTaskPrompt(task: { service: string; title: string; detail: string; key?: string }): string {
   return [
     `Задача из плановой проверки сервиса ${task.service}.`,
     `Название: ${task.title}`,
+    task.key ? `Метка: ${task.key}. Делай именно эту карточку.` : "",
     task.detail && task.detail !== task.title ? task.detail : "",
     `Выполни её в ${task.service} способом этого сервиса из каталога: MCP, API или браузер. Если способ API или MCP, браузер не открывай. Письмо об этом не пиши.`,
     "Если выполнить нельзя — коротко напиши, что помешало, без слова «готово».",

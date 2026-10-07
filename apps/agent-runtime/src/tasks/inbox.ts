@@ -16,6 +16,8 @@ import type { AgentRuntime } from "../runtime";
 import { finishServiceThink } from "./service-work";
 import { recordUsage } from "../core/usage";
 import { markVerificationApplied, verificationAlreadyApplied, verificationRunId } from "./verification-mail";
+import { bindWork, dropWork, holdWork } from "./work-claim";
+import { serviceFromDomain } from "./work-marks";
 import { log, warn } from "../core/log";
 
 function ownerAddress(rt: AgentRuntime): string | null {
@@ -329,8 +331,41 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
     return;
   }
 
-  const run = await rt.createRun("email", email.subject || (c.kind === "invite" ? "Приглашение" : "Задача"), email.messageId);
-  await rt.step(run.id, "email", `${c.kind} от ${email.from}`, { service: c.service, domain: c.serviceDomain });
+  const title = email.subject || (c.kind === "invite" ? "Приглашение" : "Задача");
+  const tracked = c.kind === "task" || c.kind === "notification";
+  const hold = tracked
+    ? await holdWork(rt, {
+        service: c.service ?? serviceFromDomain(c.serviceDomain),
+        title,
+        texts: [email.subject, c.summary, email.replyText || email.text, ...email.links],
+        broad: c.kind === "notification",
+      })
+    : null;
+  if (hold && !hold.ok) {
+    log("inbox", "задача уже в работе, второй раз не начинаю", { runId: hold.runId, title: hold.title, subject: email.subject });
+    if (hold.runId) {
+      const subject = email.subject.replace(/\s+/g, " ").trim().slice(0, 120) || "без темы";
+      await rt
+        .step(hold.runId, "email", `Письмо «${subject}» про ту же задачу, второй раз не начинаю`)
+        .catch((e) => warn("inbox", "не записал пропуск повтора", { error: String(e) }));
+    }
+    return;
+  }
+
+  let run;
+  try {
+    run = await rt.createRun("email", title, email.messageId);
+  } catch (e) {
+    if (hold) dropWork(rt, hold.id);
+    throw e;
+  }
+  if (hold) bindWork(rt, hold.id, run.id, run.title);
+  const meta: Record<string, unknown> = { service: c.service, domain: c.serviceDomain };
+  if (hold) {
+    meta.workMarks = hold.marks;
+    meta.broad = hold.broad;
+  }
+  await rt.step(run.id, "email", `${c.kind} от ${email.from}`, meta);
   try {
     if (c.kind === "invite") {
       const onboarding = await prepareOnboarding(rt, run, {

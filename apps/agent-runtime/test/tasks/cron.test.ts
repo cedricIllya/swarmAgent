@@ -19,12 +19,13 @@ const services = {
   credentials: [{ slug: "linear", kind: "mcp" as const, token: "lin" }],
 };
 
-function runtime(opts?: { reply?: string; open?: Run[]; report?: boolean }) {
+function runtime(opts?: { reply?: string; open?: Run[]; openSteps?: Record<string, RunStep[]>; report?: boolean }) {
   const runs = new Map<string, Run>();
   const steps = new Map<string, RunStep[]>();
   const order: string[] = [];
   let n = 0;
   for (const run of opts?.open ?? []) runs.set(run.id, run);
+  for (const [id, list] of Object.entries(opts?.openSteps ?? {})) steps.set(id, list);
   const think = vi.fn(async (run: Run, _prompt: string) => {
     order.push(`think:${run.title}`);
     if (opts?.report && run.title === "Плановая проверка сервисов") {
@@ -146,6 +147,63 @@ describe("tick", () => {
     const { rt, runs, think } = runtime({ open: [open] });
     await tick(rt);
     expect([...runs.values()].filter((r) => r.title === "linear: Починить баг")).toHaveLength(1);
+    expect([...runs.values()].find((r) => r.title === "Плановая проверка сервисов")?.summary).toBe(
+      "Уже в работе: linear: Починить баг",
+    );
+    expect(think).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not start a task the mail run already took by ticket", async () => {
+    const open = {
+      id: "run_mail",
+      title: "Назначили задачу",
+      threadId: "<m@linear.app>",
+      status: "running",
+      trigger: "email",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      finishedAt: null,
+      summary: "",
+    } as Run;
+    const { rt, runs, think } = runtime({
+      open: [open],
+      openSteps: {
+        run_mail: [{ at: "2026-01-01T00:00:00.000Z", kind: "email", text: "notification от Linear, карточка LIN-12" }],
+      },
+    });
+    await tick(rt);
+    expect([...runs.values()].filter((r) => r.trigger === "cron" && r.title !== "Плановая проверка сервисов")).toHaveLength(0);
+    expect([...runs.values()].find((r) => r.title === "Плановая проверка сервисов")?.summary).toBe(
+      "Уже в работе: linear: Починить баг",
+    );
+    expect(think).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not start a found task while a mail sweep of that service is still open", async () => {
+    const open = {
+      id: "run_mail",
+      title: "Новые задачи",
+      threadId: "<m@linear.app>",
+      status: "running",
+      trigger: "email",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      finishedAt: null,
+      summary: "",
+    } as Run;
+    const { rt, runs, think } = runtime({
+      open: [open],
+      openSteps: {
+        run_mail: [
+          {
+            at: "2026-01-01T00:00:00.000Z",
+            kind: "email",
+            text: "notification от Linear",
+            data: { service: "Linear", broad: true },
+          },
+        ],
+      },
+    });
+    await tick(rt);
+    expect([...runs.values()].filter((r) => r.title === "linear: Починить баг")).toHaveLength(0);
     expect([...runs.values()].find((r) => r.title === "Плановая проверка сервисов")?.summary).toBe(
       "Уже в работе: linear: Починить баг",
     );

@@ -10,6 +10,9 @@ describe("parseFoundTasks", () => {
       "```",
     ].join("\n");
     expect(parseFoundTasks(text)).toEqual([{ service: "linear", title: "Починить баг", detail: "LIN-12" }]);
+    expect(parseFoundTasks('{"tasks":[{"service":"linear","title":"Починить баг","detail":"LIN-12","key":"LIN-12"}]}')).toEqual([
+      { service: "linear", title: "Починить баг", detail: "LIN-12", key: "LIN-12" },
+    ]);
     expect(parseFoundTasks("пусто")).toEqual([]);
     expect(parseFoundTasks('{"tasks":[]}')).toEqual([]);
     expect(parseFoundTasks('{"tasks":[{"service":"linear"}]}')).toEqual([]);

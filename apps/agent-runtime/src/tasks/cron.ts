@@ -4,6 +4,7 @@ import { foundTaskPrompt, taskServices, TICK_RETRY_PROMPT, tickPrompt } from "..
 import { classificationPending, ensureWorkGuides } from "../onboarding/service-guide";
 import type { AgentRuntime } from "../runtime";
 import { parseFoundTasks, selectNewTasks, surveySummary, taskRunTitle, type FoundTask } from "./found-tasks";
+import { bindWork, dropWork, holdWork } from "./work-claim";
 import { finishServiceThink } from "./service-work";
 import { listenMessengers } from "../channels/listen";
 import { log, warn } from "../core/log";
@@ -116,40 +117,71 @@ export type AcceptedTask =
 
 /**
  * Плановая проверка нашла задачу. Прогон создаётся сразу, работа начинается
- * не дожидаясь конца проверки. Повтор с тем же названием не стартует второй раз.
+ * не дожидаясь конца проверки. Та же метка из письма или прошлой проверки
+ * второй прогон не открывает, пока первый не закрыт.
  */
 export async function acceptFoundTask(
   rt: AgentRuntime,
   sourceRunId: string,
-  input: { service: string; title: string; detail?: string },
+  input: { service: string; title: string; detail?: string; key?: string },
 ): Promise<AcceptedTask> {
   const source = await rt.store.getRun(sourceRunId);
   if (!source) return { ok: false, error: "run not found" };
   if (source.title !== CHECK_TITLE || (source.status !== "running" && source.status !== "queued")) {
     return { ok: false, error: "задача ставится только из плановой проверки" };
   }
+  const mark = input.key?.replace(/\s+/g, " ").trim().slice(0, 200);
   const task: FoundTask = {
     service: input.service.trim().slice(0, 80),
     title: input.title.replace(/\s+/g, " ").trim().slice(0, 120),
     detail: (input.detail ?? "").replace(/\s+/g, " ").trim().slice(0, 2000) || input.title.trim(),
+    ...(mark ? { key: mark } : {}),
   };
   if (!task.service || !task.title) return { ok: false, error: "нужны service и title" };
   const title = taskRunTitle(task);
-  const key = title.toLowerCase();
-  if (taken.has(key) || startedTitles.length >= MAX_FOUND) {
+  const takenKey = title.toLowerCase();
+  if (taken.has(takenKey) || startedTitles.length >= MAX_FOUND) {
+    return { ok: true, started: false, title };
+  }
+  taken.add(takenKey);
+  const hold = await holdWork(rt, {
+    service: task.service,
+    title,
+    texts: [task.service, task.title, task.detail, task.key ?? ""],
+    broad: false,
+  });
+  if (!hold.ok) {
+    alreadyTitles.push(title);
+    log("cron", "задача уже в работе", { title, runId: hold.runId });
+    if (hold.runId) {
+      await rt
+        .step(hold.runId, "note", `Та же задача нашлась в проверке («${title}»), второй раз не начинаю`)
+        .catch((e) => warn("cron", "не записал пропуск повтора", { error: String(e) }));
+    }
     return { ok: true, started: false, title };
   }
   const open = (await rt.store.listRuns(200)).filter(
     (r) => r.status === "queued" || r.status === "running" || r.status === "waiting_approval",
   );
   const { fresh } = selectNewTasks([task], open.map((r) => r.title));
-  taken.add(key);
   if (!fresh.length) {
+    dropWork(rt, hold.id);
     alreadyTitles.push(title);
     return { ok: true, started: false, title };
   }
-  const run = await rt.createRun("cron", title, null, "queued");
-  await rt.step(run.id, "note", `${task.service}: ${task.detail}`);
+  let run: Run;
+  try {
+    run = await rt.createRun("cron", title, null, "queued");
+  } catch (e) {
+    dropWork(rt, hold.id);
+    throw e;
+  }
+  bindWork(rt, hold.id, run.id, run.title);
+  await rt.step(run.id, "note", `${task.service}: ${task.detail}`, {
+    service: task.service,
+    workMarks: hold.marks,
+    broad: hold.broad,
+  });
   await rt.step(source.id, "note", `В работе: ${run.title}`);
   startedTitles.push(run.title);
   log("cron", "задача начата", { id: run.id, title: run.title });

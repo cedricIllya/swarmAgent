@@ -164,6 +164,7 @@ export function toolRoutes(rt: AgentRuntime): Hono {
         service: z.string().min(1),
         title: z.string().min(1),
         detail: z.string().default(""),
+        key: z.string().optional(),
       })
       .parse(
         withAliases(await c.req.json(), {
@@ -171,9 +172,15 @@ export function toolRoutes(rt: AgentRuntime): Hono {
           service: ["slug", "serviceSlug"],
           title: ["name", "task"],
           detail: ["text", "description", "summary"],
+          key: ["id", "issue", "url", "identifier"],
         }),
       );
-    const result = await acceptFoundTask(rt, body.runId, body);
+    const result = await acceptFoundTask(rt, body.runId, {
+      service: body.service,
+      title: body.title,
+      detail: body.detail,
+      ...(body.key ? { key: body.key } : {}),
+    });
     if (!result.ok) return c.json({ error: result.error }, result.error === "run not found" ? 404 : 409);
     return c.json({ started: result.started, runId: result.started ? result.runId : null, title: result.title });
   });

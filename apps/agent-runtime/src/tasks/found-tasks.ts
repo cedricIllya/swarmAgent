@@ -3,6 +3,8 @@ export interface FoundTask {
   service: string;
   title: string;
   detail: string;
+  /** Ключ тикета или ссылка. По ним письмо и проверка узнают одну и ту же задачу. */
+  key?: string;
 }
 
 const MAX_TASKS = 8;
@@ -45,7 +47,8 @@ export function parseFoundTasks(text: string): FoundTask[] {
     const title = textOf(rec.title, 120);
     if (!service || !title) continue;
     const detail = textOf(rec.detail, 2000) || title;
-    out.push({ service, title, detail });
+    const key = textOf(rec.key, 200);
+    out.push({ service, title, detail, ...(key ? { key } : {}) });
     if (out.length >= MAX_TASKS) break;
   }
   return out;
