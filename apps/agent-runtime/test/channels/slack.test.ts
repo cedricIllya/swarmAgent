@@ -42,6 +42,23 @@ describe("hearSlack", () => {
     expect(heard[0]?.threadTs).toBe("100.000002");
     expect(heard[0]?.threadKey).toBe("slack:T1:C1:100.000002");
   });
+
+  it("в уже открытом треде берёт реплику без нового упоминания", () => {
+    const heard = hearSlack({
+      teamId: "T1",
+      selfId: "UBOT",
+      channelId: "C1",
+      im: false,
+      followedThreads: new Set(["100.000002"]),
+      messages: [
+        { type: "message", user: "UALICE", text: "просто в канале", ts: "100.000003" },
+        { type: "message", user: "UBOB", text: "а срок какой?", ts: "100.000004", thread_ts: "100.000002" },
+        { type: "message", user: "UBOB", text: "другой тред", ts: "100.000005", thread_ts: "9.1" },
+      ],
+    });
+    expect(heard.map((item) => item.text)).toEqual(["а срок какой?"]);
+    expect(heard[0]?.threadKey).toBe("slack:T1:C1:100.000002");
+  });
 });
 
 describe("slackConversations", () => {
@@ -118,7 +135,15 @@ describe("listenMessengers", () => {
                 }
               : method === "users.info"
                 ? { ok: true, user: { real_name: "Алиса", profile: { display_name: "Алиса" } } }
-                : { ok: false, error: method };
+                : method === "conversations.replies"
+                  ? {
+                      ok: true,
+                      messages: [
+                        { type: "message", user: "UALICE", text: "посмотри <@UBOT> отчёт", ts: "400.000100" },
+                        { type: "message", user: "UBOB", text: "а срок?", ts: "400.000200", thread_ts: "400.000100" },
+                      ],
+                    }
+                  : { ok: false, error: method };
       return new Response(JSON.stringify(payload));
     });
 
@@ -232,5 +257,29 @@ describe("listenMessengers", () => {
     const titles = (await store.chats.list()).map((chat) => chat.title);
     expect(titles).toContain("Slack · Алиса");
     expect(runs).toHaveLength(3);
+
+    const prompts: string[] = [];
+    rt.think = async (_run: unknown, prompt: string) => {
+      prompts.push(prompt);
+      return { text: "до пятницы", usedFallback: false, startedAt: "2026-01-01T00:00:00.000Z" };
+    };
+    expect(
+      await acceptSlackEvent(rt, {
+        eventId: "Ev-reply",
+        teamId: "T1",
+        event: {
+          type: "message",
+          channel: "C1",
+          channelType: "channel",
+          user: "UBOB",
+          text: "а срок?",
+          ts: "400.000200",
+          threadTs: "400.000100",
+        },
+      }),
+    ).toBe("accepted");
+    await vi.waitFor(() => expect(prompts.some((prompt) => prompt.includes("а срок?") && prompt.includes("посмотри"))).toBe(true));
+    expect(runs).toHaveLength(4);
+    expect(runs[3]?.threadId).toBe(runs[2]?.threadId);
   });
 });

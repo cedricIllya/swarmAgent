@@ -39,13 +39,18 @@ export function slackPlainText(raw: string): string {
     .trim();
 }
 
-/** Какие сообщения этого канала адресованы агенту. Свои и служебные пропускает. */
+/**
+ * Какие сообщения этого канала адресованы агенту. Свои и служебные пропускает.
+ * В канале — упоминание или реплика в треде, куда агента уже звали.
+ * `followedThreads` — ts корня таких тредов.
+ */
 export function hearSlack(args: {
   teamId: string;
   selfId: string;
   channelId: string;
   im: boolean;
   messages: SlackRawMessage[];
+  followedThreads?: ReadonlySet<string>;
 }): HeardSlack[] {
   const out: HeardSlack[] = [];
   for (const message of args.messages) {
@@ -54,8 +59,9 @@ export function hearSlack(args: {
     if (!message.user || !message.ts || message.user === args.selfId) continue;
     const text = slackPlainText(message.text ?? "");
     if (!text) continue;
-    const mentioned = text.length > 0 && (message.text ?? "").includes(`<@${args.selfId}>`);
-    if (!args.im && !mentioned) continue;
+    const mentioned = (message.text ?? "").includes(`<@${args.selfId}>`);
+    const followed = Boolean(message.thread_ts && args.followedThreads?.has(message.thread_ts));
+    if (!args.im && !mentioned && !followed) continue;
     const threadTs = args.im ? undefined : message.thread_ts || message.ts;
     out.push({
       externalId: `${args.channelId}:${message.ts}`,
@@ -155,6 +161,22 @@ export async function slackHistory(
     token,
     "conversations.history",
     { channel, oldest, limit: 30, inclusive: false },
+    fetchImpl,
+  );
+  return data.messages ?? [];
+}
+
+/** Реплики треда, родитель первым. История канала их не содержит. */
+export async function slackReplies(
+  token: string,
+  channel: string,
+  threadTs: string,
+  fetchImpl: typeof fetch,
+): Promise<SlackRawMessage[]> {
+  const data = await slackCall<{ messages?: SlackRawMessage[] } & SlackOk>(
+    token,
+    "conversations.replies",
+    { channel, ts: threadTs, limit: 30 },
     fetchImpl,
   );
   return data.messages ?? [];

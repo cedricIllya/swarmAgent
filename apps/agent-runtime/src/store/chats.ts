@@ -93,6 +93,12 @@ export class ChatStore {
     return found?.id ?? null;
   }
 
+  /** Треды Slack, в которых агент уже отвечает. По ним слушаются реплики без нового упоминания. */
+  async channelLinks(): Promise<ChannelLink[]> {
+    const metas = await this.listMetas();
+    return metas.flatMap((meta) => (meta.channel ? [meta.channel] : []));
+  }
+
   async bind(id: string, channel: ChannelLink): Promise<void> {
     const meta = await this.readMeta(id);
     if (!meta) return;

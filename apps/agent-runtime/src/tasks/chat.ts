@@ -76,7 +76,7 @@ async function classifyChat(rt: AgentRuntime, message: string, links: string[]):
  */
 export async function handleChat(
   rt: AgentRuntime,
-  args: { chatId?: string | undefined; message: string; author: string; fromMessenger?: boolean | undefined },
+  args: { chatId?: string | undefined; message: string; author: string; fromMessenger?: boolean | undefined; threadContext?: string | undefined },
 ): Promise<{ run: Run; chatId: string } | null> {
   if (args.chatId) {
     const pending = (await rt.store.listApprovals())
@@ -137,7 +137,15 @@ export async function handleChat(
     chatId,
     ...(args.fromMessenger ? { author: args.author } : {}),
   });
-  enqueueChatWork(rt, { run, chatId, message: args.message, author: args.author, renameChat, fromMessenger: args.fromMessenger === true });
+  enqueueChatWork(rt, {
+    run,
+    chatId,
+    message: args.message,
+    author: args.author,
+    renameChat,
+    fromMessenger: args.fromMessenger === true,
+    threadContext: args.threadContext,
+  });
   return { run, chatId };
 }
 
@@ -173,7 +181,7 @@ export async function retryChatRun(
  */
 function enqueueChatWork(
   rt: AgentRuntime,
-  task: { run: Run; chatId: string; message: string; author: string; renameChat: boolean; fromMessenger?: boolean },
+  task: { run: Run; chatId: string; message: string; author: string; renameChat: boolean; fromMessenger?: boolean; threadContext?: string },
 ): void {
   void (async () => {
     try {
@@ -193,6 +201,7 @@ function enqueueChatWork(
         classification,
         recipe: recipe ? { slug: recipe.slug, name: recipe.name, kind: recipe.kind } : null,
         fromMessenger: task.fromMessenger === true,
+        threadContext: task.threadContext,
       });
     } catch (e) {
       if (await rt.isCanceled(task.run.id)) return;
@@ -234,6 +243,7 @@ function startChatTask(
     classification: ChatClassification;
     recipe: { slug: string; name: string; kind: string } | null;
     fromMessenger?: boolean;
+    threadContext?: string;
   },
 ): void {
   const { run, chatId, classification, links } = task;
@@ -273,6 +283,7 @@ function startChatTask(
         links,
         recipe: task.recipe,
         fromMessenger: task.fromMessenger === true,
+        threadContext: task.threadContext,
       });
       const turn = await rt.think(run, prompt);
       const { text, status } = await finishServiceThink(rt, run, turn, {

@@ -411,11 +411,16 @@ export function chatTaskPrompt(args: {
   recipe: KnownRecipeRef | null;
   onboarding?: OnboardingContext | undefined;
   fromMessenger?: boolean | undefined;
+  /** Реплики треда Slack до текущего сообщения. */
+  threadContext?: string | undefined;
 }): string {
   const messenger = args.fromMessenger
     ? "Это сообщение из мессенджера, тот же канал, что почта и чат. Runtime сам отправит ответ в тот же диалог — второй раз туда не пиши."
     : "";
-  const head = `Сообщение из чата от ${args.author}:\n\n${args.message}`;
+  const thread = args.threadContext?.trim()
+    ? `Тред до этого сообщения. Отвечай с учётом этих реплик, нового упоминания не жди:\n${args.threadContext.trim()}\n\n`
+    : "";
+  const head = `${thread}Сообщение из чата от ${args.author}:\n\n${args.message}`;
   const links = args.links.length ? `\n\nСсылки:\n${args.links.map((l) => `- ${l}`).join("\n")}` : "";
   const known = args.recipe
     ? `\n\nВ каталоге уже есть рецепт «${args.recipe.name}» (${args.recipe.slug}), способ ${args.recipe.kind}. Не ищи способ заново.`
