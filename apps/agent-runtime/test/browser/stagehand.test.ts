@@ -109,6 +109,7 @@ describe("browserFailure", () => {
     expect(browserFailure(new Error("RPC response timed out: page.goto"))).toBe("retry-page");
     expect(browserFailure(new Error("Chrome exited before its debugging port was ready with code 21"))).toBe("relaunch");
     expect(browserFailure(new Error("launch: шаг браузера не завершился за 45 с"))).toBe("relaunch");
+    expect(browserFailure(new Error("Stagehand initialization timed out after 60000ms"))).toBe("relaunch");
     expect(browserFailure(new Error("ERR_NAME_NOT_RESOLVED"))).toBe("fatal");
     expect(browserFailure(new Error("Сессия браузера закрыта"))).toBe("fatal");
   });

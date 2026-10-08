@@ -46,7 +46,6 @@ const NAV_BACKSTOP_MS = NAV_TIMEOUT_MS + 12_000;
 /** `page.evaluate` и `page.screenshot` в Stagehand без своего предела: зависшая страница держит задачу. */
 const PAGE_OP_TIMEOUT_MS = 8_000;
 const SHOT_TIMEOUT_MS = 8_000;
-const LAUNCH_TIMEOUT_MS = 45_000;
 /**
  * Мало ядер: site-per-process плодит процессы и страница перестаёт отвечать.
  * Hang monitor показывает диалог «страница зависла» и блокирует переход.
@@ -398,19 +397,16 @@ export class ManagedBrowserSession {
       }
       const executablePath = chromeExecutable();
       try {
-        this.browser = await withTimeout(
-          "launch",
-          LAUNCH_TIMEOUT_MS,
-          localBrowser.launch({
-            headless: true,
-            executablePath,
-            userDataDir: this.profile,
-            preserveUserDataDir: true,
-            chromiumSandbox: process.getuid?.() !== 0,
-            viewport: { width: 1280, height: 800 },
-            args: [...CHROME_ARGS, ...userAgentArg(executablePath)],
-          }),
-        );
+        // Предел запуска — 60 с у Stagehand. Более короткий обрыв здесь не отменяет процесс, и повтор садится на ещё живой Chromium.
+        this.browser = await localBrowser.launch({
+          headless: true,
+          executablePath,
+          userDataDir: this.profile,
+          preserveUserDataDir: true,
+          chromiumSandbox: process.getuid?.() !== 0,
+          viewport: { width: 1280, height: 800 },
+          args: [...CHROME_ARGS, ...userAgentArg(executablePath)],
+        });
       } catch (e) {
         killProfileBrowser(this.profile);
         throw e;
