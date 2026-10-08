@@ -62,7 +62,12 @@ export async function GET(req: Request): Promise<Response> {
       slug: "slack",
       kind: "api",
       token: installed.userToken,
-      oauth: { accessToken: installed.userToken, scope: installed.scope },
+      oauth: {
+        accessToken: installed.userToken,
+        scope: installed.scope,
+        ...(installed.botToken ? { botToken: installed.botToken } : {}),
+        ...(installed.botUserId ? { botUserId: installed.botUserId } : {}),
+      },
       accountName: installed.displayName,
       externalKey: installed.userId,
     },

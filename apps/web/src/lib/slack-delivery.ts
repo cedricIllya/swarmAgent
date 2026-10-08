@@ -4,6 +4,7 @@ import { deleteCredential, findSlackInstall } from "@swarm/connections";
 import { db } from "@/lib/db";
 import { pushServicesToAgent } from "@/lib/create-agent";
 import { awakeRuntime } from "@/lib/runtime-client";
+import { slackMrkdwn, type SlackChoiceNotice } from "@/lib/slack";
 
 /** Как у почты: машина может засыпать дольше минуты, пока Fly не отдаст порт. */
 const SLACK_WAKE_MS = 180_000;
@@ -48,6 +49,103 @@ function createQueue() {
 
 const queue = createQueue();
 
+interface PendingChoice extends SlackChoiceNotice {
+  enqueuedAt: number;
+}
+
+function createChoiceQueue() {
+  const pending: PendingChoice[] = [];
+  let draining = false;
+  return {
+    size: (): number => pending.length,
+    enqueue(item: PendingChoice): void {
+      const prev = pending.find((row) => row.agentId === item.agentId && row.approvalId === item.approvalId);
+      if (prev) {
+        if (item.responseUrl) prev.responseUrl = item.responseUrl;
+        return;
+      }
+      pending.push(item);
+    },
+    async drain(deliver: (item: PendingChoice) => Promise<boolean>, now = Date.now()): Promise<void> {
+      if (draining) return;
+      draining = true;
+      try {
+        const batch = pending.splice(0, pending.length);
+        const again: PendingChoice[] = [];
+        for (const item of batch) {
+          if (now - item.enqueuedAt > RETRY_TTL_MS) {
+            console.error(`[slack] выбор ${item.approvalId} для ${item.agentId} не доставлен за 30 мин`);
+            continue;
+          }
+          const ok = await deliver(item).catch(() => false);
+          if (!ok) again.push(item);
+        }
+        pending.unshift(...again);
+      } finally {
+        draining = false;
+      }
+    },
+  };
+}
+
+const choices = createChoiceQueue();
+
+async function replaceSlackMessage(responseUrl: string, text: string): Promise<void> {
+  if (!responseUrl) return;
+  let url: URL;
+  try {
+    url = new URL(responseUrl);
+  } catch {
+    return;
+  }
+  if (url.protocol !== "https:" || url.hostname !== "hooks.slack.com") return;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ replace_original: true, text: slackMrkdwn(text).slice(0, 3000) }),
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!res.ok) console.warn(`[slack] не обновил сообщение с кнопками: ${res.status}`);
+}
+
+/** `true` — вопрос закрыт или его уже нет. `false` — машина не ответила, выбрать ещё раз. */
+async function deliverSlackChoice(item: PendingChoice): Promise<boolean> {
+  const agent = await getAgentById(db(), item.agentId);
+  await rememberTickQuiet(db(), item.agentId, null).catch(() => undefined);
+  if (!agent || agent.status !== "running") {
+    console.warn(`[slack] агент ${item.agentId} не запущен (${agent?.status ?? "нет"}); выбор ${item.approvalId} подождёт`);
+    return false;
+  }
+  try {
+    const client = await awakeRuntime(agent, SLACK_WAKE_MS);
+    if (!client) return false;
+    const result = await client.resolveApproval(item.approvalId, { optionIndex: item.index });
+    const answer = result.answer?.trim() || item.label;
+    const text = [item.prompt, answer].filter(Boolean).join("\n\n");
+    await replaceSlackMessage(item.responseUrl, text).catch((e) => {
+      console.warn(`[slack] кнопки ${item.approvalId}: ${e instanceof Error ? e.message : String(e)}`);
+    });
+    console.log(`[slack] выбор ${item.approvalId} → ${item.agentId}`);
+    return true;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (message.includes("→ 404") || message.includes("→ 400")) {
+      await replaceSlackMessage(item.responseUrl, [item.prompt, item.label].filter(Boolean).join("\n\n")).catch(() => undefined);
+      return true;
+    }
+    console.warn(`[slack] выбор ${item.agentId} ${item.approvalId}: ${message}`);
+    return false;
+  }
+}
+
+/** Нажатие кнопки. Машина спит — выбор остаётся и уходит со следующим проходом часов. */
+export async function acceptSlackChoice(choice: SlackChoiceNotice): Promise<void> {
+  const item: PendingChoice = { ...choice, enqueuedAt: Date.now() };
+  if (await deliverSlackChoice(item)) return;
+  choices.enqueue(item);
+  console.warn(`[slack] выбор ${choice.approvalId} для ${choice.agentId} отложен`);
+}
+
 /** `true` — runtime событие принял, повторил или отбросил как чужое. */
 export async function deliverSlack(agentId: string, event: DeliverSlackEventRequest): Promise<boolean> {
   const agent = await getAgentById(db(), agentId);
@@ -77,8 +175,8 @@ export async function acceptSlack(agentId: string, event: DeliverSlackEventReque
 }
 
 export async function retrySlack(): Promise<void> {
-  if (queue.size() === 0) return;
-  await queue.drain((item) => deliverSlack(item.agentId, item.event));
+  if (queue.size() > 0) await queue.drain((item) => deliverSlack(item.agentId, item.event));
+  if (choices.size() > 0) await choices.drain((item) => deliverSlackChoice(item));
 }
 
 /**

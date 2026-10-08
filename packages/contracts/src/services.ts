@@ -204,6 +204,9 @@ export const ServiceCredentialSchema = z.object({
       refreshToken: z.string().optional(),
       expiresAt: z.string().optional(),
       scope: z.string().optional(),
+      /** Бот приложения в этой команде. Им в канал уходят кнопки вариантов. */
+      botToken: z.string().optional(),
+      botUserId: z.string().optional(),
     })
     .optional(),
   /** Playwright storage state после входа в браузере. */

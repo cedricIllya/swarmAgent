@@ -1,10 +1,12 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { DeliverSlackEventRequest, ServiceRecipe } from "@swarm/contracts";
+import { decodeSlackChoice, type DeliverSlackEventRequest, type ServiceRecipe } from "@swarm/contracts";
 
 /**
  * Аккаунт Slack, от имени которого говорит агент. События приходят на
- * `{APP_URL}/webhooks/slack`, согласие — на `{APP_URL}/api/slack/callback`.
- * Это пользовательские права: токен пишет и читает как человек, который его выдал.
+ * `{APP_URL}/webhooks/slack`, нажатие кнопки — на `{APP_URL}/webhooks/slack/interactions`,
+ * согласие — на `{APP_URL}/api/slack/callback`.
+ * Пользовательский токен пишет и читает как человек, который его выдал.
+ * Токен бота общий на команду: им в канал уходят кнопки вариантов.
  * В одной команде может быть несколько таких аккаунтов.
  */
 export const SLACK_USER_SCOPES = [
@@ -19,6 +21,9 @@ export const SLACK_USER_SCOPES = [
   "mpim:read",
   "users:read",
 ] as const;
+
+/** Кнопки Slack живут только на сообщении приложения. */
+export const SLACK_BOT_SCOPES = ["chat:write", "chat:write.public"] as const;
 
 const FIVE_MINUTES = 5 * 60;
 
@@ -37,6 +42,7 @@ export function buildSlackConsentUrl(cfg: SlackOAuthConfig, state: string): stri
   const url = new URL("https://slack.com/oauth/v2/authorize");
   url.searchParams.set("client_id", cfg.clientId);
   url.searchParams.set("user_scope", SLACK_USER_SCOPES.join(","));
+  url.searchParams.set("scope", SLACK_BOT_SCOPES.join(","));
   url.searchParams.set("redirect_uri", cfg.redirectUri);
   url.searchParams.set("state", state);
   return url.toString();
@@ -63,6 +69,8 @@ export interface SlackInstall {
   teamId: string;
   teamName: string;
   displayName: string;
+  botToken?: string;
+  botUserId?: string;
 }
 
 /** Код согласия меняется на user token того, кто его подтвердил. `ok: false` — ошибка Slack, не HTTP. */
@@ -80,6 +88,8 @@ export async function exchangeSlackCode(cfg: SlackOAuthConfig, code: string): Pr
   const data = (await res.json().catch(() => null)) as {
     ok?: boolean;
     error?: string;
+    access_token?: string;
+    bot_user_id?: string;
     authed_user?: { id?: string; access_token?: string; scope?: string };
     team?: { id?: string; name?: string };
   } | null;
@@ -87,6 +97,8 @@ export async function exchangeSlackCode(cfg: SlackOAuthConfig, code: string): Pr
   if (!res.ok || !data?.ok || !user?.access_token || !user.id || !data.team?.id) {
     throw new Error(data?.error || `slack oauth ${res.status}`);
   }
+  const botToken = data.access_token?.trim() || "";
+  const botUserId = data.bot_user_id?.trim() || "";
   return {
     userToken: user.access_token,
     userId: user.id,
@@ -94,6 +106,8 @@ export async function exchangeSlackCode(cfg: SlackOAuthConfig, code: string): Pr
     teamId: data.team.id,
     teamName: data.team.name?.trim() || data.team.id,
     displayName: await slackDisplayName(user.access_token, user.id, fetchImpl),
+    ...(botToken ? { botToken } : {}),
+    ...(botUserId ? { botUserId } : {}),
   };
 }
 
@@ -242,4 +256,83 @@ export function parseSlackEnvelope(raw: string): SlackNotice {
       },
     },
   };
+}
+
+export interface SlackChoiceNotice {
+  agentId: string;
+  approvalId: string;
+  index: number;
+  /** Подпись нажатой кнопки. Нужна, если вопрос уже закрыт и полного текста варианта нет. */
+  label: string;
+  /** Куда Slack ждёт замену сообщения с кнопками. Пусто — обновить его нельзя. */
+  responseUrl: string;
+  prompt: string;
+}
+
+function slackResponseUrl(value: unknown): string {
+  if (typeof value !== "string") return "";
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.hostname !== "hooks.slack.com") return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function actionLabel(action: Record<string, unknown>): string {
+  const text = action.text;
+  if (!text || typeof text !== "object") return "";
+  const value = (text as Record<string, unknown>).text;
+  return typeof value === "string" ? value.trim().slice(0, 75) : "";
+}
+
+/** Нажатие кнопки вариантов. Тело — form с полем `payload`, не конверт Events API. */
+export function parseSlackInteraction(raw: string): SlackChoiceNotice | null {
+  let payloadRaw = "";
+  try {
+    payloadRaw = new URLSearchParams(raw).get("payload") ?? "";
+  } catch {
+    return null;
+  }
+  if (!payloadRaw) return null;
+  let body: unknown;
+  try {
+    body = JSON.parse(payloadRaw);
+  } catch {
+    return null;
+  }
+  if (!body || typeof body !== "object") return null;
+  const payload = body as Record<string, unknown>;
+  if (payload.type !== "block_actions" || !Array.isArray(payload.actions)) return null;
+  const message = payload.message;
+  const messageText =
+    message && typeof message === "object" && typeof (message as Record<string, unknown>).text === "string"
+      ? (message as Record<string, unknown>).text
+      : "";
+  const prompt = typeof messageText === "string" ? slackUnescape(messageText.trim()).slice(0, 3000) : "";
+  for (const action of payload.actions) {
+    if (!action || typeof action !== "object") continue;
+    const row = action as Record<string, unknown>;
+    if (typeof row.action_id !== "string" || !row.action_id.startsWith("swarm_choice_")) continue;
+    if (typeof row.value !== "string") continue;
+    const choice = decodeSlackChoice(row.value);
+    if (!choice) continue;
+    return {
+      ...choice,
+      label: actionLabel(row),
+      responseUrl: slackResponseUrl(payload.response_url),
+      prompt,
+    };
+  }
+  return null;
+}
+
+/** Текст кнопки и замена сообщения идут как mrkdwn. Сырой `<` Slack читает как ссылку. */
+export function slackMrkdwn(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function slackUnescape(text: string): string {
+  return text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 }

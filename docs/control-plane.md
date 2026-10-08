@@ -43,7 +43,7 @@
 
 Google OAuth: Gmail, Calendar, Drive и email. `state` — зашифрованный `{ agentId, tenantId, at }`, живёт 15 минут и должен совпасть с тенантом сессии. Свой `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, redirect `{APP_URL}/api/google/callback`.
 
-Отдельной кнопки Slack нет: агента приглашают в команду по почте. Если callback `{APP_URL}/api/slack/callback` получает код, user token пишется в доступ, а ключ вебхука — id пользователя, поэтому в одной команде может быть несколько агентов. `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET`. В приложении Slack Request URL — `{APP_URL}/webhooks/slack`, события на пользователя — `message.im`, `message.channels`, `message.groups`, `message.mpim` и `app_uninstalled`. Старая установка, где ключом ещё записан id команды, получает событие, только если по пользователю агент не нашёлся.
+Отдельной кнопки Slack нет: агента приглашают в команду по почте. Если callback `{APP_URL}/api/slack/callback` получает код, user token и bot token пишутся в доступ, а ключ вебхука — id пользователя, поэтому в одной команде может быть несколько агентов. `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET`. В приложении Slack Request URL — `{APP_URL}/webhooks/slack`, Interactivity Request URL — `{APP_URL}/webhooks/slack/interactions`, события на пользователя — `message.im`, `message.channels`, `message.groups`, `message.mpim` и `app_uninstalled`. Права бота — `chat:write` и `chat:write.public`: ими в канал уходят кнопки вариантов. Старая установка, где ключом ещё записан id команды, получает событие, только если по пользователю агент не нашёлся.
 
 ## API для runtime
 
@@ -56,7 +56,7 @@ Google OAuth: Gmail, Calendar, Drive и email. `state` — зашифрован�
 | POST | `/api/runtime/suspend` | Усыпить машину этого агента. Ответ уходит сразу, `suspend` — после него. В теле `{ usage? }` — итоги `usage.jsonl`; они пишутся в `agents.usage_*`, и отчёт с меньшим числом токенов уже сохранённый не затирает. |
 | POST | `/api/runtime/slack-consent` | Ссылка разрешения Slack для браузера этого агента. Без `SLACK_CLIENT_ID` — 503. |
 
-Почта снаружи — `POST /webhooks/email`. Правила входа в [почте](mail.md). Slack снаружи — `POST /webhooks/slack`: подпись `SLACK_SIGNING_SECRET`, `url_verification` отвечает `challenge`. Сообщение будит агентов, чей id есть в `authorizations` или в упоминании. Отзыв токена удаляет доступ этого пользователя. Снятие приложения удаляет установку, ключ которой — id команды.
+Почта снаружи — `POST /webhooks/email`. Правила входа в [почте](mail.md). Slack снаружи — `POST /webhooks/slack`: подпись `SLACK_SIGNING_SECRET`, `url_verification` отвечает `challenge`. Сообщение будит агентов, чей id есть в `authorizations` или в упоминании. Отзыв токена удаляет доступ этого пользователя. Снятие приложения удаляет установку, ключ которой — id команды. Нажатие кнопки вариантов — `POST /webhooks/slack/interactions`: та же подпись, тело `payload`. Control plane будит агента из кнопки и закрывает вопрос через `POST /approvals/:id` с номером варианта.
 
 ## Создание агента
 

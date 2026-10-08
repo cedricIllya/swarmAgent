@@ -124,9 +124,19 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
   app.post("/approvals/:id", async (c) => {
     noteActivity();
     const body = z
-      .object({ approved: z.boolean().optional(), answer: z.string().max(8000).optional() })
+      .object({
+        approved: z.boolean().optional(),
+        answer: z.string().max(8000).optional(),
+        optionIndex: z.number().int().min(0).max(5).optional(),
+      })
       .parse(await c.req.json());
-    const answer = body.answer?.trim() ?? "";
+    let answer = body.answer?.trim() ?? "";
+    if (typeof body.optionIndex === "number") {
+      const pending = (await rt.store.listApprovals()).find((item) => item.id === c.req.param("id"));
+      const choice = pending?.options?.[body.optionIndex];
+      if (!choice) return c.json({ error: "not found" }, 404);
+      answer = choice;
+    }
     if (!answer && typeof body.approved !== "boolean") return c.json({ error: "bad input" }, 400);
     const accepted = await rt.approvals.accept(c.req.param("id"), body.approved ?? true, answer ? { answer } : undefined);
     if (!accepted) return c.json({ error: "not found" }, 404);
@@ -135,7 +145,7 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
     void rt.approvals.continueAfter(accepted, body.approved ?? true).catch((e) => {
       warn("approval", "продолжение после ответа упало", { error: String(e) });
     });
-    return c.json({ runId: accepted.run.id, status: "running" }, 202);
+    return c.json({ runId: accepted.run.id, status: "running", ...(answer ? { answer } : {}) }, 202);
   });
 
   app.post("/tick", async (c) => {

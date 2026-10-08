@@ -14,6 +14,7 @@ import {
   slackIdentity,
   slackPlainText,
   slackPost,
+  slackPostChoices,
   slackReplies,
   type HeardSlack,
   type SlackIdentity,
@@ -111,6 +112,11 @@ function tokenOf(cred: ServiceCredential | undefined): string | null {
   if (!cred) return null;
   const token = cred.token || cred.oauth?.accessToken;
   return token?.trim() || null;
+}
+
+function botTokenOf(cred: ServiceCredential | undefined): string | null {
+  const token = cred?.oauth?.botToken?.trim();
+  return token || null;
 }
 
 function slackNow(offsetSec = 0): string {
@@ -425,12 +431,38 @@ export async function deliverChannelReply(rt: AgentRuntime, link: ChannelLink, m
     warn("channel", "нет токена, чтобы ответить в Slack", { slug: link.slug });
     return;
   }
+  const options = message.kind === "approval" ? (message.options ?? []).map((option) => option.trim()).filter(Boolean) : [];
+  const prompt = redactInternal(message.text).trim();
+  const botToken = botTokenOf(cred);
+  let posted = false;
+  let ts = "";
   try {
-    const ts = await slackPost(
-      token,
-      { channel: link.channel, text: redactInternal(text), threadTs: link.threadTs },
-      globalThis.fetch,
-    );
+    if (options.length && message.approvalId && link.threadTs && botToken && prompt) {
+      try {
+        ts = await slackPostChoices(
+          botToken,
+          {
+            channel: link.channel,
+            threadTs: link.threadTs,
+            text: prompt,
+            agentId: rt.cfg.agentId,
+            approvalId: message.approvalId,
+            options,
+          },
+          globalThis.fetch,
+        );
+        posted = true;
+      } catch (e) {
+        warn("channel", "кнопки Slack не ушли, отвечаю текстом", { error: String(e) });
+      }
+    }
+    if (!posted) {
+      ts = await slackPost(
+        token,
+        { channel: link.channel, text: redactInternal(text), threadTs: link.threadTs },
+        globalThis.fetch,
+      );
+    }
     await exclusive(async () => {
       const state = await readState(rt);
       if (ts) {

@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { buildSlackConsentUrl, exchangeSlackCode, parseSlackEnvelope, verifySlackSignature } from "./slack";
+import { encodeSlackChoice } from "@swarm/contracts";
+import { buildSlackConsentUrl, exchangeSlackCode, parseSlackEnvelope, parseSlackInteraction, verifySlackSignature } from "./slack";
 
 const secret = "8f742231b10e8888abcd99yyyzzz85a5";
 
@@ -97,13 +98,14 @@ describe("parseSlackEnvelope", () => {
 });
 
 describe("buildSlackConsentUrl", () => {
-  it("просит пользовательские права, а не права бота", () => {
+  it("просит права пользователя и бота, которым уходят кнопки", () => {
     const url = new URL(
       buildSlackConsentUrl({ clientId: "id", clientSecret: "secret", redirectUri: "https://app.example/api/slack/callback" }, "state"),
     );
     expect(url.searchParams.get("user_scope")).toContain("chat:write");
     expect(url.searchParams.get("user_scope")).toContain("im:history");
-    expect(url.searchParams.get("scope")).toBeNull();
+    expect(url.searchParams.get("scope")).toContain("chat:write");
+    expect(url.searchParams.get("scope")).toContain("chat:write.public");
   });
 });
 
@@ -128,8 +130,32 @@ describe("exchangeSlackCode", () => {
       "code",
     );
     expect(installed).toMatchObject({ userToken: "xoxp-1", userId: "U9", teamId: "T9", teamName: "Acme", displayName: "Ада" });
+    expect(installed.botToken).toBeUndefined();
     const init = fetchImpl.mock.calls[0]?.[1];
     expect(init?.headers).toMatchObject({ Authorization: `Basic ${Buffer.from("id:secret").toString("base64")}` });
+  });
+
+  it("сохраняет токен бота, если Slack его отдал", async () => {
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes("users.info")) {
+        return new Response(JSON.stringify({ ok: true, user: { profile: { display_name: "Ада" } } }));
+      }
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          access_token: "xoxb-bot",
+          bot_user_id: "UBOT",
+          authed_user: { id: "U9", access_token: "xoxp-1", scope: "chat:write" },
+          team: { id: "T9", name: "Acme" },
+        }),
+      );
+    });
+    const installed = await exchangeSlackCode(
+      { clientId: "id", clientSecret: "secret", redirectUri: "https://app.example/cb", fetchImpl },
+      "code",
+    );
+    expect(installed.botToken).toBe("xoxb-bot");
+    expect(installed.botUserId).toBe("UBOT");
   });
 
   it("не принимает ответ без ok", async () => {
@@ -137,5 +163,29 @@ describe("exchangeSlackCode", () => {
     await expect(
       exchangeSlackCode({ clientId: "id", clientSecret: "secret", redirectUri: "https://app.example/cb", fetchImpl }, "code"),
     ).rejects.toThrow("invalid_code");
+  });
+});
+
+describe("parseSlackInteraction", () => {
+  it("читает нажатую кнопку и отбрасывает чужой адрес обновления", () => {
+    const value = encodeSlackChoice({ agentId: "agt_1", approvalId: "qst_1", index: 1 });
+    const payload = {
+      type: "block_actions",
+      response_url: "https://hooks.slack.com/actions/T/B/x",
+      message: { text: "Какой срок?" },
+      actions: [{ action_id: "swarm_choice_1", value, text: { type: "plain_text", text: "На неделе" } }],
+    };
+    expect(parseSlackInteraction(new URLSearchParams({ payload: JSON.stringify(payload) }).toString())).toEqual({
+      agentId: "agt_1",
+      approvalId: "qst_1",
+      index: 1,
+      label: "На неделе",
+      responseUrl: "https://hooks.slack.com/actions/T/B/x",
+      prompt: "Какой срок?",
+    });
+
+    const foreign = { ...payload, response_url: "https://evil.example/hook" };
+    expect(parseSlackInteraction(new URLSearchParams({ payload: JSON.stringify(foreign) }).toString())?.responseUrl).toBe("");
+    expect(parseSlackInteraction("payload=" + encodeURIComponent(JSON.stringify({ type: "view_submission" })))).toBeNull();
   });
 });

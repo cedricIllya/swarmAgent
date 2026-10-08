@@ -1,7 +1,9 @@
+import { encodeSlackChoice } from "@swarm/contracts";
+
 /**
  * Slack Web API. Токен — bot или user из доступа сервиса (`xoxb-`, `xoxp-` и любой,
  * который принимает `auth.test`). Личные сообщения читаются целиком, в каналах —
- * только упоминания. Ответ уходит в тот же диалог.
+ * только упоминания. Ответ уходит в тот же диалог. Кнопки вариантов пишет бот.
  */
 
 export interface SlackRawMessage {
@@ -209,6 +211,62 @@ export async function slackPost(
       channel: args.channel,
       text: args.text.slice(0, 4000),
       ...(args.threadTs ? { thread_ts: args.threadTs } : {}),
+    },
+    fetchImpl,
+  );
+  return data.ts ?? "";
+}
+
+function slackMrkdwn(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Подпись кнопки — не длиннее 75 символов, иначе Slack отклоняет блок. */
+function buttonLabel(text: string): string {
+  const chars = Array.from(text.replace(/\s+/g, " ").trim());
+  if (chars.length <= 75) return chars.join("");
+  return `${chars.slice(0, 74).join("")}…`;
+}
+
+/**
+ * Вопрос с кнопками. Токен — бота приложения: на сообщении пользователя кнопки не живут.
+ * В одном ряду не больше пяти кнопок.
+ */
+export async function slackPostChoices(
+  token: string,
+  args: {
+    channel: string;
+    threadTs: string;
+    text: string;
+    agentId: string;
+    approvalId: string;
+    options: string[];
+  },
+  fetchImpl: typeof fetch,
+): Promise<string> {
+  const prompt = slackMrkdwn(args.text.trim().slice(0, 2900));
+  const elements = args.options.slice(0, 6).map((option, index) => ({
+    type: "button",
+    action_id: `swarm_choice_${index}`,
+    text: { type: "plain_text", text: buttonLabel(option), emoji: true },
+    value: encodeSlackChoice({ agentId: args.agentId, approvalId: args.approvalId, index }),
+  }));
+  const blocks: unknown[] = [{ type: "section", text: { type: "mrkdwn", text: prompt } }];
+  for (let i = 0; i < elements.length; i += 5) {
+    blocks.push({
+      type: "actions",
+      block_id: i === 0 ? "swarm_choices" : `swarm_choices_${i}`,
+      elements: elements.slice(i, i + 5),
+    });
+  }
+  const data = await slackCall<{ ts?: string } & SlackOk>(
+    token,
+    "chat.postMessage",
+    {
+      channel: args.channel,
+      text: prompt,
+      thread_ts: args.threadTs,
+      blocks: JSON.stringify(blocks),
     },
     fetchImpl,
   );

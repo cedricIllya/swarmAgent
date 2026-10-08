@@ -2,9 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Run, ServiceRecipe } from "@swarm/contracts";
+import type { ChatMessage, Run, ServiceRecipe } from "@swarm/contracts";
+import { decodeSlackChoice } from "@swarm/contracts";
 import { hearSlack, slackConversations, slackPlainText } from "../../src/channels/slack";
-import { acceptSlackEvent, listenMessengers } from "../../src/channels/listen";
+import { acceptSlackEvent, deliverChannelReply, listenMessengers } from "../../src/channels/listen";
 import { Store } from "../../src/store";
 import type { AgentRuntime } from "../../src/runtime";
 
@@ -281,5 +282,105 @@ describe("listenMessengers", () => {
     await vi.waitFor(() => expect(prompts.some((prompt) => prompt.includes("а срок?") && prompt.includes("посмотри"))).toBe(true));
     expect(runs).toHaveLength(4);
     expect(runs[3]?.threadId).toBe(runs[2]?.threadId);
+  });
+});
+
+describe("deliverChannelReply", () => {
+  let root = "";
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    if (root) await rm(root, { recursive: true, force: true });
+  });
+
+  const question: ChatMessage = {
+    at: "t",
+    role: "agent",
+    kind: "approval",
+    approvalId: "qst_1",
+    text: "Какой срок?",
+    options: ["Завтра", "На неделе"],
+    runId: "run_1",
+    chatId: "chat_1",
+  };
+
+  async function runtime(botToken?: string) {
+    root = await mkdtemp(path.join(tmpdir(), "swarm-slack-reply-"));
+    const store = new Store(root);
+    await store.init();
+    await store.writeServices({
+      generatedAt: "t",
+      recipes: [],
+      credentials: [
+        {
+          slug: "slack",
+          kind: "api",
+          token: "xoxp-user",
+          ...(botToken ? { oauth: { accessToken: "xoxp-user", botToken } } : {}),
+        },
+      ],
+    });
+    return {
+      cfg: { agentId: "agt_1" },
+      store,
+      step: async () => undefined,
+    } as unknown as AgentRuntime;
+  }
+
+  function capture(botOk = true) {
+    const posts: Array<{ token: string; body: URLSearchParams }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const token = String((init?.headers as Record<string, string>)?.Authorization ?? "").replace("Bearer ", "");
+      const body = new URLSearchParams(String(init?.body ?? ""));
+      posts.push({ token, body });
+      if (token === "xoxb-bot" && !botOk) return new Response(JSON.stringify({ ok: false, error: "not_in_channel" }));
+      return new Response(JSON.stringify({ ok: true, ts: token === "xoxb-bot" ? "9.1" : "9.2" }));
+    });
+    return posts;
+  }
+
+  it("в канале пишет кнопки токеном бота", async () => {
+    const rt = await runtime("xoxb-bot");
+    const posts = capture();
+    await deliverChannelReply(
+      rt,
+      { adapter: "slack", slug: "slack", threadKey: "slack:T1:C1:1.0", channel: "C1", threadTs: "1.0" },
+      question,
+    );
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.token).toBe("xoxb-bot");
+    const blocks = JSON.parse(posts[0]?.body.get("blocks") ?? "[]") as Array<{ type: string; elements?: Array<{ value: string; text: { text: string } }> }>;
+    const buttons = blocks.find((block) => block.type === "actions")?.elements ?? [];
+    expect(buttons.map((button) => button.text.text)).toEqual(["Завтра", "На неделе"]);
+    expect(decodeSlackChoice(buttons[1]?.value ?? "")).toEqual({ agentId: "agt_1", approvalId: "qst_1", index: 1 });
+    expect(posts[0]?.body.get("thread_ts")).toBe("1.0");
+  });
+
+  it("в личке оставляет нумерованный текст от пользователя", async () => {
+    const rt = await runtime("xoxb-bot");
+    const posts = capture();
+    await deliverChannelReply(
+      rt,
+      { adapter: "slack", slug: "slack", threadKey: "slack:T1:D1", channel: "D1" },
+      question,
+    );
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.token).toBe("xoxp-user");
+    expect(posts[0]?.body.get("blocks")).toBeNull();
+    expect(posts[0]?.body.get("text")).toContain("1. Завтра");
+    expect(posts[0]?.body.get("text")).toContain("2. На неделе");
+  });
+
+  it("если бот не в канале, отвечает текстом", async () => {
+    const rt = await runtime("xoxb-bot");
+    const posts = capture(false);
+    await deliverChannelReply(
+      rt,
+      { adapter: "slack", slug: "slack", threadKey: "slack:T1:C1:1.0", channel: "C1", threadTs: "1.0" },
+      question,
+    );
+    expect(posts.map((post) => post.token)).toEqual(["xoxb-bot", "xoxp-user"]);
+    expect(posts[1]?.body.get("blocks")).toBeNull();
+    expect(posts[1]?.body.get("text")).toContain("1. Завтра");
   });
 });
