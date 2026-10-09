@@ -57,6 +57,10 @@ export const env = {
     get region() {
       return opt("FLY_REGION") ?? "ams";
     },
+    /** Одно приложение на все машины агентов. */
+    get agentsApp() {
+      return opt("FLY_AGENTS_APP") ?? "swarm-agents";
+    },
     /** Образ runtime того же коммита, что и control plane. Без RELEASE — `latest`. */
     get runtimeImage() {
       const explicit = opt("AGENT_RUNTIME_IMAGE");

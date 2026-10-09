@@ -1,6 +1,6 @@
 /**
- * Fly Machines API. Одно приложение на агента: `swarm-<id>`, один volume,
- * одна Machine с двумя контейнерами (Hermes и agent-runtime).
+ * Fly Machines API. Агенты — машины одного приложения: у каждой свой volume
+ * и свой внешний порт. Два контейнера на машине (Hermes и agent-runtime).
  * https://fly.io/docs/machines/api/
  */
 
@@ -87,23 +87,37 @@ export class FlyClient {
     });
   }
 
-  /**
-   * Приватный адрес `<app>.flycast`. Запрос на него идёт через прокси Fly
-   * и сам снимает suspend. Публичный IP не выделяем.
-   * Сеть не задаём: адрес попадает в сеть организации, где живёт control plane.
-   */
-  async ensureFlycast(appName: string): Promise<void> {
+  private async ipAssignments(appName: string): Promise<Array<{ type?: string }>> {
     const listed = await this.request<Array<{ type?: string }> | { addresses?: Array<{ type?: string }> }>(
       "GET",
       `/v1/apps/${appName}/ip_assignments`,
     );
-    const ips = Array.isArray(listed) ? listed : (listed.addresses ?? []);
+    return Array.isArray(listed) ? listed : (listed.addresses ?? []);
+  }
+
+  /**
+   * Приватный адрес `<app>.flycast`. Запрос на него идёт через прокси Fly
+   * и сам снимает suspend. Публичный IP не выделяем: сервис машины тогда
+   * открылся бы в интернет.
+   * Сеть не задаём: адрес попадает в сеть организации, где живёт control plane.
+   */
+  async ensureFlycast(appName: string): Promise<void> {
+    const ips = await this.ipAssignments(appName);
     if (ips.some((ip) => ip.type === "private_v6")) return;
     try {
       await this.request("POST", `/v1/apps/${appName}/ip_assignments`, { type: "private_v6" });
     } catch (e) {
       if (e instanceof FlyError && e.status === 409) return;
       throw e;
+    }
+  }
+
+  /** Публичный адрес на приложении агентов выставил бы их порты наружу. */
+  async assertNoPublicIp(appName: string): Promise<void> {
+    const publicTypes = new Set(["v4", "v6", "shared_v4"]);
+    const pub = (await this.ipAssignments(appName)).filter((ip) => ip.type && publicTypes.has(ip.type));
+    if (pub.length) {
+      throw new Error(`У ${appName} есть публичный адрес (${pub.map((ip) => ip.type).join(", ")}): порты агентов вышли бы в интернет`);
     }
   }
 
@@ -120,6 +134,10 @@ export class FlyClient {
     return this.request("GET", `/v1/apps/${appName}/volumes`);
   }
 
+  /**
+   * Диск с этим именем. Имя у каждого агента своё: первое совпадение в общем
+   * приложении — его диск, не соседний. Повтор после обрыва берёт тот же.
+   */
   async ensureVolume(appName: string, name: string, sizeGb: number): Promise<FlyVolume> {
     const existing = (await this.listVolumes(appName)).find((v) => v.name === name);
     if (existing) return existing;
@@ -128,9 +146,26 @@ export class FlyClient {
       region: this.cfg.region,
       size_gb: sizeGb,
       encrypted: true,
-      // Одна машина на агента: реплика не нужна.
       snapshot_retention: 5,
     });
+  }
+
+  async destroyMachine(appName: string, machineId: string): Promise<void> {
+    try {
+      await this.request("DELETE", `/v1/apps/${appName}/machines/${machineId}?force=true`);
+    } catch (e) {
+      if (e instanceof FlyError && e.status === 404) return;
+      throw e;
+    }
+  }
+
+  async destroyVolume(appName: string, volumeId: string): Promise<void> {
+    try {
+      await this.request("DELETE", `/v1/apps/${appName}/volumes/${volumeId}`);
+    } catch (e) {
+      if (e instanceof FlyError && e.status === 404) return;
+      throw e;
+    }
   }
 
   async listMachines(appName: string): Promise<FlyMachine[]> {

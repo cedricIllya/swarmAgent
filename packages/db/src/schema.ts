@@ -137,7 +137,7 @@ export const agents = pgTable(
     flyAppName: text("fly_app_name"),
     flyMachineId: text("fly_machine_id"),
     flyVolumeId: text("fly_volume_id"),
-    /** Приватный адрес runtime: http://<app>.flycast:8787. Старые записи — .internal. */
+    /** Приватный адрес runtime: http://<app>.flycast:<порт>. Старые записи — .internal или общий порт 8787. */
     runtimeUrl: text("runtime_url"),
     /** SHA коммита, образ которого стоит на машине. Пусто — машина поднята до учёта релизов. */
     runtimeRelease: text("runtime_release"),

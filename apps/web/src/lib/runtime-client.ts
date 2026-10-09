@@ -26,25 +26,36 @@ function describe(e: unknown): string {
 }
 
 /**
- * HTTP к runtime на машине агента. Адрес приватный (`.flycast` или старый
- * `.internal`), поэтому из локальной разработки он недоступен — для неё есть DEV_RUNTIME_URL.
+ * HTTP к runtime на машине агента. Адрес приватный (`.flycast` с портом этой
+ * машины или старый `.internal`). Заголовок `fly-force-instance-id` не даёт
+ * общему приложению отдать запрос соседу. Из локальной разработки адрес
+ * недоступен — для неё есть DEV_RUNTIME_URL.
  */
 export class RuntimeClient {
   constructor(
     private readonly baseUrl: string,
     private readonly token: string,
+    /** Без него общий `.flycast` отдал бы запрос любой машине приложения. */
+    private readonly machineId: string | null,
   ) {}
 
   static for(agent: AgentRow): RuntimeClient | null {
     const url = env.devRuntimeUrl ?? agent.runtimeUrl;
     if (!url || !agent.runtimeTokenEnc) return null;
-    return new RuntimeClient(url, runtimeTokenOf(agent));
+    return new RuntimeClient(url, runtimeTokenOf(agent), agent.flyMachineId);
+  }
+
+  private headers(json = false): Record<string, string> {
+    const headers: Record<string, string> = { Authorization: `Bearer ${this.token}` };
+    if (json) headers["Content-Type"] = "application/json";
+    if (this.machineId) headers["fly-force-instance-id"] = this.machineId;
+    return headers;
   }
 
   private async call<T>(method: string, path: string, body?: unknown, timeoutMs = 10_000): Promise<T> {
     const init: RequestInit = {
       method,
-      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
+      headers: this.headers(true),
       signal: AbortSignal.timeout(timeoutMs),
     };
     if (body !== undefined) init.body = JSON.stringify(body);
@@ -69,7 +80,7 @@ export class RuntimeClient {
     while (Date.now() < deadline) {
       const slice = Math.min(attemptTimeoutMs, Math.max(1_000, deadline - Date.now()));
       try {
-        const res = await fetch(`${this.baseUrl}/health`, { signal: AbortSignal.timeout(slice) });
+        const res = await fetch(`${this.baseUrl}/health`, { headers: this.headers(), signal: AbortSignal.timeout(slice) });
         if (res.ok) return;
         last = new Error(`health → ${res.status}`);
       } catch (e) {
@@ -130,7 +141,7 @@ export class RuntimeClient {
     const timer = setTimeout(() => controller.abort(new Error(`нет ответа за ${headersTimeoutMs / 1000}с`)), headersTimeoutMs);
     try {
       return await fetch(`${this.baseUrl}/events`, {
-        headers: { Authorization: `Bearer ${this.token}`, Accept: "text/event-stream" },
+        headers: { ...this.headers(), Accept: "text/event-stream" },
         signal: controller.signal,
       });
     } finally {
@@ -183,13 +194,13 @@ export class RuntimeClient {
 
   async video(sessionId: string): Promise<Response> {
     return fetch(`${this.baseUrl}/browser-sessions/${sessionId}/video`, {
-      headers: { Authorization: `Bearer ${this.token}` },
+      headers: this.headers(),
     });
   }
 
   async shot(sessionId: string, file: string): Promise<Response> {
     return fetch(`${this.baseUrl}/browser-sessions/${sessionId}/shots/${encodeURIComponent(file)}`, {
-      headers: { Authorization: `Bearer ${this.token}` },
+      headers: this.headers(),
     });
   }
 }

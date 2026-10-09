@@ -1,4 +1,4 @@
-# Control plane (apps/web). Агенты — отдельные приложения swarm-<id>, их создаёт код.
+# Control plane (apps/web). Машины агентов живут в FLY_AGENTS_APP, его создаёт код.
 app = "swarm-control-plane"
 primary_region = "ams"
 
@@ -15,6 +15,7 @@ primary_region = "ams"
   MAILGUN_REGION = "us"
   FLY_ORG = "copyboy"
   FLY_REGION = "ams"
+  FLY_AGENTS_APP = "swarm-agents"
 
 [http_service]
   internal_port = 3000

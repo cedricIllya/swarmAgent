@@ -53,8 +53,18 @@ export interface MachineConfig {
 }
 
 export const DATA_PATH = "/opt/data";
+/** Имя диска у агентов, которые ещё живут в собственном приложении `swarm-<id>`. */
 export const VOLUME_NAME = "agent_data";
 export const RUNTIME_PORT = 8787;
+/** Все новые агенты — машины этого приложения, не отдельные приложения. */
+export const AGENTS_APP_NAME = "swarm-agents";
+/**
+ * Внешний порт сервиса машины. У каждой свой: прокси Fly шлёт запрос на порт
+ * только тем машинам, у которых этот порт объявлен, и будит именно её.
+ * 8787 остаётся внутренним портом процесса.
+ */
+export const AGENT_PORT_MIN = 20_000;
+export const AGENT_PORT_SPAN = 41_000;
 /**
  * Volume тарифицируется целиком, пока агент спит: $0.15/ГБ в месяц.
  * 3 ГБ хватает на конфиг Hermes, журнал и несколько роликов.
@@ -62,12 +72,75 @@ export const RUNTIME_PORT = 8787;
  */
 export const AGENT_VOLUME_GB = 3;
 
-export function appNameFor(agentId: string): string {
-  return `swarm-${agentId.replace(/^agt_/, "").toLowerCase().replace(/[^a-z0-9-]/g, "-")}`;
+/** Имя машины внутри общего приложения. Уникально, пока уникален id агента. */
+export function machineNameFor(agentId: string): string {
+  const name = agentId.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+/, "").slice(0, 63);
+  if (!name) throw new Error("пустое имя машины");
+  return name;
 }
 
-export function runtimeUrlFor(appName: string): string {
-  return `http://${appName}.flycast:${RUNTIME_PORT}`;
+/**
+ * Имя диска. Совпадает с id агента (`agt_` + 20 символов — 24 знака, лимит Fly — 30).
+ * Поиск диска по этому имени находит только его, повторный provision берёт тот же.
+ */
+export function volumeNameFor(agentId: string): string {
+  const name = agentId.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 30);
+  if (!/^[a-z][a-z0-9_]{0,29}$/.test(name)) throw new Error(`имя диска не годится: ${agentId}`);
+  return name;
+}
+
+/** Первый свободный порт, начиная с хеша id. Уже занятые порты живущих машин пропускает. */
+export function allocateExternalPort(agentId: string, used: Iterable<number>): number {
+  const taken = new Set(used);
+  const start = fnv1a(agentId) % AGENT_PORT_SPAN;
+  for (let i = 0; i < AGENT_PORT_SPAN; i++) {
+    const port = AGENT_PORT_MIN + ((start + i) % AGENT_PORT_SPAN);
+    if (!taken.has(port)) return port;
+  }
+  throw new Error("нет свободного порта для машины агента");
+}
+
+function fnv1a(value: string): number {
+  let hash = 2_166_136_261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 1_677_761_9);
+  }
+  return hash >>> 0;
+}
+
+/** Порты из конфига машины Fly. Чужой формат — пустой список, не исключение. */
+export function externalPortsFromConfig(config: unknown): number[] {
+  if (!config || typeof config !== "object") return [];
+  const services = (config as { services?: unknown }).services;
+  if (!Array.isArray(services)) return [];
+  const ports: number[] = [];
+  for (const service of services) {
+    if (!service || typeof service !== "object") continue;
+    const list = (service as { ports?: unknown }).ports;
+    if (!Array.isArray(list)) continue;
+    for (const entry of list) {
+      const port = entry && typeof entry === "object" ? (entry as { port?: unknown }).port : undefined;
+      if (typeof port === "number" && Number.isInteger(port)) ports.push(port);
+    }
+  }
+  return ports;
+}
+
+export function externalPortFromUrl(url: string | null | undefined): number | null {
+  if (!url) return null;
+  try {
+    const raw = new URL(url).port;
+    if (!raw) return null;
+    const port = Number(raw);
+    return Number.isInteger(port) && port > 0 && port < 65_536 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+export function runtimeUrlFor(appName: string, port = RUNTIME_PORT): string {
+  return `http://${appName}.flycast:${port}`;
 }
 
 /** `.flycast` будит машину самим HTTP. Старые `.internal` — нет, их будит API `start`. */
@@ -77,6 +150,10 @@ export function wakesOnHttp(runtimeUrl: string | null | undefined): boolean {
 
 export interface AgentMachineInput {
   volumeId: string;
+  /** Имя диска в Fly. Должно совпасть с именем volume, иначе монтирование не примет. */
+  volumeName: string;
+  /** Порт прокси. Внутри контейнера процесс по-прежнему слушает `RUNTIME_PORT`. */
+  externalPort: number;
   hermesImage: string;
   runtimeImage: string;
   /** Переменные для обоих контейнеров. Секреты сюда — машина приватная, порт наружу не публикуем. */
@@ -98,6 +175,7 @@ export const BOOTSTRAP_PATH = "/bootstrap";
  * разложил config.yaml.
  *
  * Сервис прокси нужен, чтобы запрос на `.flycast` сам снимал suspend.
+ * Внешний порт у каждой машины свой, внутренний — 8787.
  * Автостоп выключен: runtime просит suspend через 2 минуты, прокси держал бы
  * машину дольше и дольше брал бы деньги за CPU и RAM.
  * `ports` не пустой: пустой список оставлял машину в `started` без контейнеров.
@@ -111,7 +189,7 @@ export function buildAgentMachineConfig(input: AgentMachineInput): MachineConfig
 
   return {
     guest: { cpu_kind: "shared", cpus: 1, memory_mb: 2048 },
-    mounts: [{ volume: input.volumeId, path: DATA_PATH, name: VOLUME_NAME }],
+    mounts: [{ volume: input.volumeId, path: DATA_PATH, name: input.volumeName }],
     restart: { policy: "always" },
     auto_destroy: false,
     metadata: { role: "swarm-agent" },
@@ -122,7 +200,7 @@ export function buildAgentMachineConfig(input: AgentMachineInput): MachineConfig
         autostart: true,
         autostop: "off",
         min_machines_running: 0,
-        ports: [{ port: RUNTIME_PORT, handlers: ["http"] }],
+        ports: [{ port: input.externalPort, handlers: ["http"] }],
       },
     ],
     containers: [

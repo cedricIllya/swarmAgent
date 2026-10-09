@@ -24,10 +24,10 @@ Hermes не принимает почту и не держит браузер. �
 | --- | --- | --- |
 | Процесс | `apps/web`, Next.js | два контейнера: `agent-runtime` и Hermes |
 | Данные | PostgreSQL | volume `/opt/data` |
-| Сеть | публичный HTTPS | runtime слушает приватный `http://<app>.flycast:8787` |
+| Сеть | публичный HTTPS | runtime слушает приватный `http://swarm-agents.flycast:<порт>` |
 | Секреты провайдеров | Mailgun, Fly, Google OAuth | OpenRouter, Skyvern, токены сервисов этого агента |
 
-Control plane ходит в runtime по приватному адресу Flycast. Снаружи порт runtime не опубликован. Запрос на `.flycast` сам снимает suspend, отдельный `start` не нужен. Уже созданные агенты со старым `http://<app>.internal:8787` по-прежнему будятся через `start`, пока смена модели не перепишет адрес. Обратно runtime ходит на `APP_URL` с тем же bearer-токеном и заголовком `X-Agent-Id`: отправить письмо, записать рецепт или попросить `suspend`.
+Control plane ходит в runtime по приватному адресу Flycast этой машины: у каждой свой порт, и в запрос добавлен `fly-force-instance-id`. Снаружи порт не опубликован. Запрос на `.flycast` сам снимает suspend, отдельный `start` не нужен. Уже созданные агенты со старым `http://<app>.internal:8787` по-прежнему будятся через `start`, пока смена модели не перепишет адрес. Обратно runtime ходит на `APP_URL` с тем же bearer-токеном и заголовком `X-Agent-Id`: отправить письмо, записать рецепт или попросить `suspend`.
 
 В локальной разработке вместо `.flycast` подставляется `DEV_RUNTIME_URL`.
 

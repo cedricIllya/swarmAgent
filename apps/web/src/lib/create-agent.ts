@@ -13,8 +13,23 @@ import {
   type AgentRow,
 } from "@swarm/agents";
 import { buildSnapshot } from "@swarm/connections";
-import { inArray, schema } from "@swarm/db";
-import { AGENT_VOLUME_GB, FlyClient, FlyError, appNameFor, buildAgentMachineConfig, runtimeUrlFor } from "@swarm/fly";
+import { eq, inArray, schema } from "@swarm/db";
+import {
+  AGENTS_APP_NAME,
+  AGENT_VOLUME_GB,
+  FlyClient,
+  FlyError,
+  RUNTIME_PORT,
+  VOLUME_NAME,
+  allocateExternalPort,
+  buildAgentMachineConfig,
+  externalPortFromUrl,
+  externalPortsFromConfig,
+  machineNameFor,
+  runtimeUrlFor,
+  volumeNameFor,
+  type FlyMachine,
+} from "@swarm/fly";
 import { renderAllFiles } from "@swarm/hermes-config";
 import { allocateLocalPart, localPartForOwner } from "@swarm/mail";
 import type { TenantView } from "@swarm/identity";
@@ -75,7 +90,14 @@ async function workerSkillTemplate(): Promise<string> {
 }
 
 /** Env и файлы машины для текущего состояния агента. Используется при создании и смене модели. */
-async function machineConfigFor(agent: AgentRow, runtimeToken: string, ownerEmail: string | null, volumeId: string) {
+async function machineConfigFor(
+  agent: AgentRow,
+  runtimeToken: string,
+  ownerEmail: string | null,
+  volumeId: string,
+  volumeName: string,
+  externalPort: number,
+) {
   const openRouterApiKey = env.openRouterApiKey;
   if (!openRouterApiKey) throw new Error("OPENROUTER_API_KEY не задан");
 
@@ -120,6 +142,8 @@ async function machineConfigFor(agent: AgentRow, runtimeToken: string, ownerEmai
 
   return buildAgentMachineConfig({
     volumeId,
+    volumeName,
+    externalPort,
     hermesImage: env.fly.hermesImage,
     runtimeImage: env.fly.runtimeImage,
     env: machineEnv,
@@ -130,20 +154,36 @@ async function machineConfigFor(agent: AgentRow, runtimeToken: string, ownerEmai
 async function provision(agent: AgentRow, runtimeToken: string, ownerEmail: string): Promise<void> {
   const database = db();
   const fly = flyClient();
-  const appName = appNameFor(agent.id);
+  const appName = env.fly.agentsApp;
+  const volumeName = volumeNameFor(agent.id);
 
   await updateAgent(database, agent.id, { status: "provisioning", statusMessage: t("status.preparing"), flyAppName: appName });
   await fly.ensureApp(appName);
   await fly.ensureFlycast(appName);
+  await fly.assertNoPublicIp(appName);
 
   await updateAgent(database, agent.id, { statusMessage: t("status.preparingStorage") });
-  const volume = await fly.ensureVolume(appName, "agent_data", AGENT_VOLUME_GB);
+  const volume = await fly.ensureVolume(appName, volumeName, AGENT_VOLUME_GB);
   await updateAgent(database, agent.id, { flyVolumeId: volume.id });
 
   await updateAgent(database, agent.id, { statusMessage: t("status.starting") });
-  const config = await machineConfigFor(agent, runtimeToken, ownerEmail, volume.id);
-  const machine = await fly.createMachine(appName, { name: appName, config });
-  await updateAgent(database, agent.id, { flyMachineId: machine.id, statusMessage: BOOTING_MESSAGE });
+  const machines = await fly.listMachines(appName);
+  let existing = machines.find((m) => m.name === machineNameFor(agent.id));
+  if (existing && !externalPortsFromConfig(existing.config)[0]) {
+    existing = (await fly.getMachine(appName, existing.id)) ?? existing;
+  }
+  const port = portFor(agent.id, machines, existing);
+  const machine =
+    existing ??
+    (await fly.createMachine(appName, {
+      name: machineNameFor(agent.id),
+      config: await machineConfigFor(agent, runtimeToken, ownerEmail, volume.id, volumeName, port),
+    }));
+  await updateAgent(database, agent.id, {
+    flyMachineId: machine.id,
+    runtimeUrl: runtimeUrlFor(appName, port),
+    statusMessage: BOOTING_MESSAGE,
+  });
   try {
     await fly.waitForState(appName, machine.id, "started", FIRST_BOOT_WAIT_SEC);
   } catch (e) {
@@ -155,18 +195,31 @@ async function provision(agent: AgentRow, runtimeToken: string, ownerEmail: stri
     }
     throw e;
   }
-  await markRunning(agent.id, appName);
+  await markRunning(agent.id, appName, port);
+}
+
+/** Порт уже созданной машины, иначе первый свободный. Чужой порт не переиспользуем. */
+function portFor(agentId: string, machines: FlyMachine[], existing: FlyMachine | undefined): number {
+  if (existing) {
+    const found = externalPortsFromConfig(existing.config)[0];
+    if (!found) throw new Error("у машины агента нет порта");
+    return found;
+  }
+  return allocateExternalPort(
+    agentId,
+    machines.flatMap((m) => externalPortsFromConfig(m.config)),
+  );
 }
 
 /** Первый старт машины: Fly готовит два образа, на новом хосте это минуты, а не секунды. */
 const FIRST_BOOT_WAIT_SEC = 600;
 const BOOTING_MESSAGE = t("status.booting");
 
-async function markRunning(agentId: string, appName: string): Promise<void> {
+async function markRunning(agentId: string, appName: string, port: number): Promise<void> {
   await updateAgent(db(), agentId, {
     status: "running",
     statusMessage: null,
-    runtimeUrl: runtimeUrlFor(appName),
+    runtimeUrl: runtimeUrlFor(appName, port),
     runtimeRelease: env.release ?? null,
   });
 }
@@ -192,7 +245,9 @@ export async function reconcileProvisioning(): Promise<{ recovered: number; boot
       const machine = await fly.getMachine(agent.flyAppName!, agent.flyMachineId!);
       const verdict = provisionVerdict(machine?.state ?? null);
       if (verdict === "running") {
-        await markRunning(agent.id, agent.flyAppName!);
+        const port = externalPortFromUrl(agent.runtimeUrl) ?? externalPortsFromConfig(machine?.config)[0];
+        if (!port) throw new Error("у машины агента нет порта");
+        await markRunning(agent.id, agent.flyAppName!, port);
         recovered += 1;
       } else if (verdict === "booting") {
         booting += 1;
@@ -217,9 +272,18 @@ export async function reconfigureAgent(agentId: string, ownerEmail: string | nul
   if (!agent?.flyAppName || !agent.flyMachineId || !agent.flyVolumeId) return;
   const fly = flyClient();
   await fly.ensureFlycast(agent.flyAppName);
-  const config = await machineConfigFor(agent, runtimeTokenOf(agent), ownerEmail, agent.flyVolumeId);
+  if (isSharedAgentsApp(agent.flyAppName)) await fly.assertNoPublicIp(agent.flyAppName);
+  const shared = isSharedAgentsApp(agent.flyAppName);
+  const port = externalPortFromUrl(agent.runtimeUrl);
+  if (shared && !port) throw new Error("у агента нет порта машины");
+  const externalPort = port ?? RUNTIME_PORT;
+  const volumeName = shared ? volumeNameFor(agent.id) : VOLUME_NAME;
+  const config = await machineConfigFor(agent, runtimeTokenOf(agent), ownerEmail, agent.flyVolumeId, volumeName, externalPort);
   await fly.updateMachine(agent.flyAppName, agent.flyMachineId, config);
-  await updateAgent(database, agent.id, { runtimeUrl: runtimeUrlFor(agent.flyAppName), runtimeRelease: env.release ?? null });
+  await updateAgent(database, agent.id, {
+    runtimeUrl: runtimeUrlFor(agent.flyAppName, externalPort),
+    runtimeRelease: env.release ?? null,
+  });
 }
 
 /** Отдать агенту его snapshot: общий каталог и только его секреты. */
@@ -246,12 +310,54 @@ export async function pushServicesToTenant(tenantId: string): Promise<void> {
   );
 }
 
-/** Удаление: Fly app вместе с диском, запись в базе, адрес освобождается. */
+/**
+ * Удаление машины и диска этого агента. Общее приложение остаётся.
+ * Агент, созданный ещё в своём приложении `swarm-<id>`, по-прежнему сносится вместе с ним.
+ */
 export async function destroyAgent(agent: AgentRow): Promise<void> {
   const database = db();
   await updateAgent(database, agent.id, { status: "deleting", statusMessage: t("status.deletingAgent") });
   if (agent.flyAppName && env.fly.apiToken) {
-    await flyClient().destroyApp(agent.flyAppName);
+    const fly = flyClient();
+    if (await sharesAgentsApp(agent.flyAppName)) await destroySharedMachine(fly, agent);
+    else await fly.destroyApp(agent.flyAppName);
   }
   await deleteAgentRow(database, agent.id);
+}
+
+function isSharedAgentsApp(appName: string): boolean {
+  return appName === env.fly.agentsApp || appName === AGENTS_APP_NAME;
+}
+
+/** В общем приложении нельзя снести апку: там диски остальных. Одинокий старый `swarm-<id>` сносится целиком. */
+async function sharesAgentsApp(appName: string): Promise<boolean> {
+  if (isSharedAgentsApp(appName)) return true;
+  const rows = await db()
+    .select({ id: schema.agents.id })
+    .from(schema.agents)
+    .where(eq(schema.agents.flyAppName, appName))
+    .limit(2);
+  return rows.length > 1;
+}
+
+/** Машина, потом диск. Приложение агентов не трогаем. */
+async function destroySharedMachine(fly: FlyClient, agent: AgentRow): Promise<void> {
+  const appName = agent.flyAppName;
+  if (!appName) return;
+  if (agent.flyMachineId) {
+    await fly.destroyMachine(appName, agent.flyMachineId);
+    try {
+      await fly.waitForState(appName, agent.flyMachineId, "destroyed", 90);
+    } catch (e) {
+      if (!(e instanceof FlyError && e.status === 404)) throw e;
+    }
+  }
+  if (!agent.flyVolumeId) return;
+  try {
+    await fly.destroyVolume(appName, agent.flyVolumeId);
+  } catch (e) {
+    if (!(e instanceof FlyError && e.status === 409) || !agent.flyMachineId) throw e;
+    await fly.waitForState(appName, agent.flyMachineId, "destroyed", 30).catch(() => undefined);
+    await fly.destroyVolume(appName, agent.flyVolumeId);
+  }
 }

@@ -1,6 +1,6 @@
 # Деплой
 
-Control plane — приложение Fly `swarm-control-plane` в регионе `ams`. Агенты — отдельные приложения `swarm-<id>`, их создаёт уже работающий control plane, не `fly.toml`.
+Control plane — приложение Fly `swarm-control-plane` в регионе `ams`. Агенты — машины одного приложения `swarm-agents` (`FLY_AGENTS_APP`): у каждой свой диск, свой внешний порт и свой адрес `http://swarm-agents.flycast:<порт>`. Приложение создаёт control plane при первом агенте, не `fly.toml`. Агенты, поднятые раньше в собственном `swarm-<id>`, там и остаются, пока их не удалят.
 
 Сборка идёт из корня репозитория, Dockerfile указан в `fly.toml`. Контекст не должен содержать `node_modules` и `.env`: это закрывает `.dockerignore`.
 
@@ -149,7 +149,7 @@ fly deploy --build-only --push --image-label latest -c fly.runtime.toml
 
 Не подставляйте сюда `fly.toml` control plane. Без `--build-only` эта команда выложила бы сайт заново, а не только образ агента. Метка `latest` — для control plane без `RELEASE` (локальная или ручная выкладка): тогда `AGENT_RUNTIME_IMAGE` по умолчанию указывает на неё.
 
-Дальше control plane сможет создавать машины агентов, когда в секретах появится `FLY_API_TOKEN` организации `copyboy` (`fly tokens create org -o copyboy`). Deploy-токена одного приложения недостаточно: код создаёт новое приложение на каждого агента.
+Дальше control plane сможет создавать машины агентов, когда в секретах появится `FLY_API_TOKEN` организации `copyboy` (`fly tokens create org -o copyboy`). Им он один раз заводит приложение `swarm-agents`. Deploy-токена control plane или образа runtime на это не хватает. Секреты этого приложения не задаём: токен агента лежит в env его машины, секрет приложения Fly раздал бы всем.
 
 Hermes берётся готовым образом `nousresearch/hermes-agent:latest`. Его отдельно собирать не нужно.
 
