@@ -5,7 +5,7 @@ import { timingSafeEqual } from "node:crypto";
 import { ZodError } from "zod";
 import { loadConfig } from "./core/config";
 import { describeZodError } from "./http/lenient";
-import { applyBootstrap } from "./core/bootstrap";
+import { applyBootstrap, clearGatewayRecords } from "./core/bootstrap";
 import { AgentRuntime } from "./runtime";
 import { resumeConnect } from "./onboarding";
 import { startTicker } from "./tasks/cron";
@@ -25,7 +25,10 @@ const cfg = loadConfig();
 const rt = new AgentRuntime(cfg);
 rt.handoffs.useResume(resumeConnect);
 await rt.init();
-if (process.env.BOOTSTRAP_DIR) await applyBootstrap(process.env.BOOTSTRAP_DIR, cfg.dataDir);
+if (process.env.BOOTSTRAP_DIR) {
+  await applyBootstrap(process.env.BOOTSTRAP_DIR, cfg.dataDir);
+  await clearGatewayRecords(cfg.dataDir);
+}
 await ensureOpenRouterUsageProxy(cfg.dataDir);
 
 const app = new Hono();

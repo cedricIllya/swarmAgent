@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, stat, chmod } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rm, stat, chmod } from "node:fs/promises";
 import path from "node:path";
 import { log } from "./log";
 
@@ -30,4 +30,27 @@ export async function applyBootstrap(bootstrapDir: string, dataDir: string): Pro
   await walk("");
   if (copied) log("bootstrap", "конфигурация разложена на volume", { copied });
   return copied;
+}
+
+const GATEWAY_RECORDS = ["gateway.lock", "gateway.sock", "gateway_state.json", ".local/state/hermes/gateway-locks/host-gateway.lock"];
+
+/**
+ * Hermes пишет PID своего gateway на volume. После холодного старта машины этот PID
+ * принадлежит другому процессу, и `gateway run --replace` отказывается запускаться:
+ * api_server не поднимается, задачи уходят без инструментов. Контейнер Hermes стартует
+ * только после healthy runtime, поэтому к этому моменту живого gateway нет.
+ */
+export async function clearGatewayRecords(dataDir: string): Promise<string[]> {
+  const names = await readdir(dataDir).catch(() => [] as string[]);
+  const temps = names.filter((n) => n.startsWith(".gateway_state_") && n.endsWith(".tmp"));
+  const removed: string[] = [];
+  for (const rel of [...GATEWAY_RECORDS, ...temps]) {
+    const abs = path.join(dataDir, rel);
+    const exists = await stat(abs).then(() => true, () => false);
+    if (!exists) continue;
+    await rm(abs, { force: true });
+    removed.push(rel);
+  }
+  if (removed.length) log("bootstrap", "старые записи gateway Hermes удалены", { removed });
+  return removed;
 }
