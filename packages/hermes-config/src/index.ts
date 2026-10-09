@@ -156,8 +156,10 @@ export function renderHermesEnv(input: HermesEnvInput): string {
 }
 
 /**
- * `cron/jobs.json`: раз в 15 минут Hermes будит runtime. Новая почта приходит
- * вебхуком; тик смотрит подключённые сервисы и отложенные письма.
+ * `cron/jobs.json`. Задание выключено: control plane уже вызывает `POST /tick`.
+ * Ход cron внутри Hermes держит единственную сессию api_server и из неё снова
+ * зовёт `/tick`, который ждёт ту же сессию. Письмо в это время тоже не получает ход.
+ * Тот же id остаётся в файле, чтобы уже загруженное задание Hermes выключилось при старте.
  */
 export function renderCronJobs(): string {
   return JSON.stringify(
@@ -168,10 +170,8 @@ export function renderCronJobs(): string {
           id: "swarm-tick",
           name: "Проверить сервисы и отложенные письма",
           schedule: "every 15m",
-          enabled: true,
-          prompt:
-            "Выполни скилл swarm-worker в режиме tick: вызови POST http://127.0.0.1:8787/tick и действуй по его ответу. " +
-            "Если задач нет — ответь одним словом «пусто».",
+          enabled: false,
+          prompt: "Ничего не делай. Проверку сервисов вызывает control plane.",
           deliver: "local",
         },
       ],

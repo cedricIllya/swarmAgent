@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { OPENROUTER_USAGE_PROXY, renderAllFiles, renderConfigYaml, replaceMcpServers, useOpenRouterUsageProxy } from "./index";
+import { OPENROUTER_USAGE_PROXY, renderAllFiles, renderConfigYaml, renderCronJobs, replaceMcpServers, useOpenRouterUsageProxy } from "./index";
+
+describe("renderCronJobs", () => {
+  it("не зовёт /tick из Hermes: этот ход занял бы ту же сессию, что и письмо", () => {
+    const jobs = JSON.parse(renderCronJobs()) as { jobs: Array<{ id: string; enabled: boolean; prompt: string }> };
+    expect(jobs.jobs).toEqual([
+      expect.objectContaining({ id: "swarm-tick", enabled: false }),
+    ]);
+    expect(jobs.jobs[0]?.prompt).not.toContain("/tick");
+  });
+});
 
 describe("useOpenRouterUsageProxy", () => {
   it("перенаправляет уже записанный config.yaml на прокси стоимости и второй раз не переписывает", () => {

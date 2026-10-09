@@ -254,6 +254,33 @@ describe("HermesClient cost", () => {
     expect(r.promptTokens).toBe(24_000_000);
   });
 
+  it("не начинает второй ход, пока первый держит api_server", async () => {
+    let releaseFirst!: () => void;
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let started = 0;
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (!String(url).endsWith("/chat/completions")) return json({});
+      started += 1;
+      const n = started;
+      if (n === 1) await firstHeld;
+      return json({
+        choices: [{ message: { content: String(n) } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0.01 },
+      });
+    });
+    const c = client(fetchImpl as unknown as typeof fetch);
+    const first = c.run("a", { sessionId: "s1", model: "m" });
+    const second = c.run("b", { sessionId: "s2", model: "m" });
+    await vi.waitFor(() => expect(started).toBe(1));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(started).toBe(1);
+    releaseFirst();
+    expect((await first).text).toBe("1");
+    expect((await second).text).toBe("2");
+  });
+
   it("keeps a cost already present on the completion", async () => {
     const fetchImpl = vi.fn(async () =>
       json(

@@ -79,15 +79,21 @@ export class HermesClient {
   private readonly f: typeof fetch;
   /** Накопленная стоимость сессии, уже записанная в usage. Сессия Hermes живёт дольше одного хода. */
   private readonly sessionCostSeen = new Map<string, number>();
+  /** api_server принимает один ход. Второй в это же время ждёт сессию, пока первый не отпустит. */
+  private gate: Promise<void> = Promise.resolve();
 
   constructor(private readonly opts: HermesClientOptions) {
     this.f = opts.fetchImpl ?? fetch;
   }
 
+  private authHeaders(): Record<string, string> {
+    return this.opts.apiKey ? { Authorization: `Bearer ${this.opts.apiKey}` } : {};
+  }
+
   /**
    * После рестарта машины control plane присылает тик раньше, чем контейнер Hermes поднял
    * api_server: первый же ход уходил в OpenRouter без инструментов и задача падала.
-   * Любой HTTP-ответ — сервер слушает; ждём только сетевой отказ, и недолго.
+   * Ждём, пока сервер примет ключ. 401 без ключа Hermes пишет как invalid API key и ход срывается.
    */
   private async awaitReady(signal: AbortSignal): Promise<boolean> {
     const waitMs = this.opts.readyWaitMs ?? 90_000;
@@ -97,8 +103,12 @@ export class HermesClient {
       if (signal.aborted || Date.now() >= until) return false;
       await new Promise((r) => setTimeout(r, 2_000));
       try {
-        const res = await this.f(`${this.opts.apiUrl}/models`, { signal: AbortSignal.any([signal, AbortSignal.timeout(3_000)]) });
+        const res = await this.f(`${this.opts.apiUrl}/models`, {
+          headers: this.authHeaders(),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(3_000)]),
+        });
         await res.body?.cancel().catch(() => undefined);
+        if (res.status === 401 || res.status === 403) continue;
         return true;
       } catch {
         // ещё не слушает
@@ -106,7 +116,26 @@ export class HermesClient {
     }
   }
 
+  /** Письмо и тик не занимают api_server одновременно: Hermes держит одну сессию на ключ. */
   async run(
+    prompt: string,
+    args: { sessionId: string; system?: string; model: string; signal?: AbortSignal },
+  ): Promise<ChatResult> {
+    const previous = this.gate;
+    let release!: () => void;
+    this.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      await previous;
+      if (args.signal?.aborted) throw new DOMException("Задача остановлена", "AbortError");
+      return await this.execute(prompt, args);
+    } finally {
+      release();
+    }
+  }
+
+  private async execute(
     prompt: string,
     args: { sessionId: string; system?: string; model: string; signal?: AbortSignal },
   ): Promise<ChatResult> {
@@ -125,7 +154,7 @@ export class HermesClient {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(this.opts.apiKey ? { Authorization: `Bearer ${this.opts.apiKey}` } : {}),
+          ...this.authHeaders(),
         },
         body: JSON.stringify({
           model: args.model,
@@ -216,7 +245,7 @@ export class HermesClient {
     try {
       const origin = new URL(this.opts.apiUrl).origin;
       const res = await this.f(`${origin}/api/sessions/${encodeURIComponent(sessionId)}`, {
-        headers: this.opts.apiKey ? { Authorization: `Bearer ${this.opts.apiKey}` } : {},
+        headers: this.authHeaders(),
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) return null;

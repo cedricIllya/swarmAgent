@@ -119,6 +119,12 @@ function botTokenOf(cred: ServiceCredential | undefined): string | null {
   return token || null;
 }
 
+/** Кого ещё считать собой. Бот и пользовательский токен — разные id Slack. */
+function botUserIds(cred: ServiceCredential | undefined): string[] {
+  const id = cred?.oauth?.botUserId?.trim();
+  return id ? [id] : [];
+}
+
 function slackNow(offsetSec = 0): string {
   return (Date.now() / 1000 - offsetSec).toFixed(6);
 }
@@ -260,7 +266,12 @@ async function pullSlack(rt: AgentRuntime, recipe: ServiceRecipe, cred: ServiceC
   try {
     conversations = await slackConversations(token, fetchImpl);
   } catch (e) {
-    warn("channel", "список разговоров Slack не прочитан", { slug: recipe.slug, error: String(e) });
+    const revoked = String(e).includes("account_inactive");
+    warn(
+      "channel",
+      revoked ? "токен Slack отозван, канал молчит, пока доступ не подключат заново" : "список разговоров Slack не прочитан",
+      { slug: recipe.slug, error: String(e) },
+    );
     return 0;
   }
   for (const conversation of conversations) {
@@ -271,6 +282,10 @@ async function pullSlack(rt: AgentRuntime, recipe: ServiceRecipe, cred: ServiceC
     try {
       messages = await slackHistory(token, conversation.id, oldest, fetchImpl);
     } catch (e) {
+      if (String(e).includes("account_inactive")) {
+        warn("channel", "токен Slack отозван, канал молчит, пока доступ не подключат заново", { slug: recipe.slug });
+        return heard;
+      }
       warn("channel", "история Slack не прочитана", { channel: conversation.id, error: String(e) });
       continue;
     }
@@ -290,6 +305,7 @@ async function pullSlack(rt: AgentRuntime, recipe: ServiceRecipe, cred: ServiceC
     const fresh = hearSlack({
       teamId: identity.teamId,
       selfId: identity.userId,
+      botUserIds: botUserIds(cred),
       channelId: conversation.id,
       im: conversation.im,
       messages: [...messages, ...replies],
@@ -388,12 +404,13 @@ export async function acceptSlackEvent(rt: AgentRuntime, inbound: DeliverSlackEv
   const heard = hearSlack({
     teamId: identity.teamId,
     selfId: identity.userId,
+    botUserIds: botUserIds(cred),
     channelId: event.channel,
     im,
     followedThreads: im ? undefined : await followedThreads(rt, event.channel),
     messages: [
       {
-        type: "message",
+        type: event.type,
         ...(event.user ? { user: event.user } : {}),
         ...(event.botId ? { bot_id: event.botId } : {}),
         ...(event.subtype ? { subtype: event.subtype } : {}),

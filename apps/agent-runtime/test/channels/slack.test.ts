@@ -60,6 +60,22 @@ describe("hearSlack", () => {
     expect(heard.map((item) => item.text)).toEqual(["а срок какой?"]);
     expect(heard[0]?.threadKey).toBe("slack:T1:C1:100.000002");
   });
+
+  it("слышит упоминание бота и app_mention, даже если id не совпал с user token", () => {
+    const heard = hearSlack({
+      teamId: "T1",
+      selfId: "UUSER",
+      botUserIds: ["UBOT"],
+      channelId: "C1",
+      im: false,
+      messages: [
+        { type: "message", user: "UALICE", text: "<@UBOT> сделай отчёт", ts: "100.000001" },
+        { type: "app_mention", user: "UALICE", text: "и это тоже", ts: "100.000002" },
+        { type: "message", user: "UALICE", text: "просто болтовня", ts: "100.000003" },
+      ],
+    });
+    expect(heard.map((item) => item.text)).toEqual(["сделай отчёт", "и это тоже"]);
+  });
 });
 
 describe("slackConversations", () => {
@@ -282,6 +298,105 @@ describe("listenMessengers", () => {
     await vi.waitFor(() => expect(prompts.some((prompt) => prompt.includes("а срок?") && prompt.includes("посмотри"))).toBe(true));
     expect(runs).toHaveLength(4);
     expect(runs[3]?.threadId).toBe(runs[2]?.threadId);
+  });
+
+  it("принимает упоминание бота, когда auth.test вернул id пользователя", async () => {
+    root = await mkdtemp(path.join(tmpdir(), "swarm-slack-bot-"));
+    const store = new Store(root);
+    await store.init();
+    await store.writeServices({
+      generatedAt: "t",
+      recipes: [
+        {
+          slug: "slack",
+          name: "Slack",
+          kind: "api",
+          domains: ["slack.com"],
+          notes: "",
+          discoveredBy: null,
+          channel: "messenger",
+        },
+      ],
+      credentials: [
+        {
+          slug: "slack",
+          kind: "api",
+          token: "xoxp-user",
+          oauth: { accessToken: "xoxp-user", botUserId: "UBOT" },
+        },
+      ],
+    });
+    vi.stubGlobal("fetch", async (url: string) => {
+      const method = String(url).split("/").pop();
+      const payload =
+        method === "auth.test"
+          ? { ok: true, user_id: "UUSER", team_id: "T1" }
+          : method === "users.info"
+            ? { ok: true, user: { real_name: "Алиса" } }
+            : method === "conversations.replies"
+              ? { ok: true, messages: [] }
+              : { ok: false, error: method };
+      return new Response(JSON.stringify(payload));
+    });
+    const rt = {
+      cfg: { agentId: "agt_1" },
+      store,
+      services: { applyReport: async () => undefined, knownRecipe: async () => null },
+      openRouter: {
+        chat: async () => ({
+          text: JSON.stringify({ kind: "task", service: null, serviceDomain: null }),
+          promptTokens: 1,
+          completionTokens: 1,
+          costUsd: 0,
+          model: "m",
+          citations: [],
+        }),
+      },
+      isCanceled: async () => false,
+      createRun: async () => {
+        const run = {
+          id: "run_bot",
+          title: "slack",
+          threadId: null,
+          status: "running",
+          trigger: "chat",
+          startedAt: "2026-01-01T00:00:00.000Z",
+          finishedAt: null,
+          summary: "",
+        } as Run;
+        await store.saveRun(run);
+        return run;
+      },
+      addChat: async (msg: { chatId?: string; text: string; role: "user" | "agent"; runId: string | null }) => {
+        const chatId = msg.chatId ?? "";
+        await store.chats.addMessage(chatId, {
+          at: new Date().toISOString(),
+          role: msg.role,
+          text: msg.text,
+          runId: msg.runId,
+          chatId,
+        });
+      },
+      step: async () => undefined,
+      finishRun: async (run: Run, status: Run["status"], summary: string) => {
+        run.status = status;
+        run.summary = summary;
+        await store.saveRun(run);
+      },
+      think: async () => ({ text: "пусто", usedFallback: false, startedAt: "2026-01-01T00:00:00.000Z" }),
+    } as unknown as AgentRuntime;
+
+    expect(
+      await acceptSlackEvent(rt, {
+        eventId: "Ev-bot-mention",
+        teamId: "T1",
+        event: { type: "app_mention", channel: "C1", user: "UALICE", text: "<@UBOT> отчёт", ts: "500.000100" },
+      }),
+    ).toBe("accepted");
+    await vi.waitFor(async () => {
+      const run = await store.getRun("run_bot");
+      expect(run?.status).toBe("done");
+    });
   });
 });
 

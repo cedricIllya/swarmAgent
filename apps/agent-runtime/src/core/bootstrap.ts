@@ -1,4 +1,5 @@
 import { copyFile, mkdir, readdir, rm, stat, chmod } from "node:fs/promises";
+import net from "node:net";
 import path from "node:path";
 import { log } from "./log";
 
@@ -34,13 +35,31 @@ export async function applyBootstrap(bootstrapDir: string, dataDir: string): Pro
 
 const GATEWAY_RECORDS = ["gateway.lock", "gateway.sock", "gateway_state.json", ".local/state/hermes/gateway-locks/host-gateway.lock"];
 
+/** `true` — на порту уже есть процесс. Стирание его lock обрывает живой gateway. */
+export function gatewayPortOpen(port: number, host = "127.0.0.1", timeoutMs = 400): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port });
+    const finish = (open: boolean) => {
+      socket.destroy();
+      resolve(open);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
 /**
  * Hermes пишет PID своего gateway на volume. После холодного старта машины этот PID
  * принадлежит другому процессу, и `gateway run --replace` отказывается запускаться:
  * api_server не поднимается, задачи уходят без инструментов. Контейнер Hermes стартует
- * только после healthy runtime, поэтому к этому моменту живого gateway нет.
+ * только после healthy runtime, поэтому на первом запуске живого gateway нет.
+ * Повторный старт runtime при уже живом Hermes lock не трогает: иначе gateway
+ * перезапускается посреди письма и ход остаётся без инструментов.
  */
-export async function clearGatewayRecords(dataDir: string): Promise<string[]> {
+export async function clearGatewayRecords(dataDir: string, gatewayPort = 8642): Promise<string[]> {
+  if (await gatewayPortOpen(gatewayPort)) return [];
   const names = await readdir(dataDir).catch(() => [] as string[]);
   const temps = names.filter((n) => n.startsWith(".gateway_state_") && n.endsWith(".tmp"));
   const removed: string[] = [];

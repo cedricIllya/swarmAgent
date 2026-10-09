@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readdir, writeFile } from "node:fs/promises";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -24,5 +25,20 @@ describe("clearGatewayRecords", () => {
   it("на пустом volume ничего не делает", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "hermes-"));
     expect(await clearGatewayRecords(dir)).toEqual([]);
+  });
+
+  it("не стирает lock, пока gateway слушает свой порт", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "hermes-"));
+    await writeFile(path.join(dir, "gateway.lock"), "123");
+    const server = net.createServer();
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("нет порта");
+    try {
+      expect(await clearGatewayRecords(dir, address.port)).toEqual([]);
+      expect(await readdir(dir)).toContain("gateway.lock");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 });
