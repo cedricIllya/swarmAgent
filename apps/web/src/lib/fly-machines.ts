@@ -5,17 +5,56 @@ import { env } from "@/env";
 const ASLEEP = new Set(["suspended", "stopped", "suspending"]);
 const WAKING = new Set(["starting", "created", "replacing"]);
 
-/** Пока срок не вышел, запрос «усни» игнорируется: работа только началась. */
-const holdUntil = new Map<string, number>();
+/**
+ * Удержание от сна. Срок — короткая защита на время подъёма.
+ * Pin — пока control plane сам держит запрос, который мог начать задачу:
+ * тик длится дольше срока, и без pin машина засыпает посередине.
+ * Карта на globalThis: часы стартуют из instrumentation, suspend — из маршрута,
+ * и у двух копий модуля были бы разные карты.
+ */
+interface MachineHold {
+  until: number;
+  pins: number;
+}
+
+const holdState = globalThis as { __swarmMachineHolds?: Map<string, MachineHold> };
+
+function machineHolds(): Map<string, MachineHold> {
+  return (holdState.__swarmMachineHolds ??= new Map());
+}
 
 export function holdMachine(agentId: string, ms: number): void {
   const until = Date.now() + ms;
-  const prev = holdUntil.get(agentId) ?? 0;
-  if (until > prev) holdUntil.set(agentId, until);
+  const map = machineHolds();
+  const prev = map.get(agentId) ?? { until: 0, pins: 0 };
+  if (until > prev.until) prev.until = until;
+  map.set(agentId, prev);
+}
+
+/** Держать машину до конца этого запуска. Повторный вызов снимает только свой pin. */
+export function pinMachine(agentId: string): () => void {
+  const map = machineHolds();
+  const prev = map.get(agentId) ?? { until: 0, pins: 0 };
+  prev.pins += 1;
+  map.set(agentId, prev);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const cur = map.get(agentId);
+    if (!cur) return;
+    cur.pins -= 1;
+    if (cur.pins <= 0 && cur.until <= Date.now()) map.delete(agentId);
+  };
 }
 
 export function machineHeld(agentId: string): boolean {
-  return (holdUntil.get(agentId) ?? 0) > Date.now();
+  const hold = machineHolds().get(agentId);
+  if (!hold) return false;
+  if (hold.pins > 0) return true;
+  if (hold.until > Date.now()) return true;
+  machineHolds().delete(agentId);
+  return false;
 }
 
 function fly(): FlyClient | null {

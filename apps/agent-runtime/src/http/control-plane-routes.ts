@@ -17,7 +17,7 @@ import { acceptSlackEvent } from "../channels/listen";
 import { continueFinishedAnswer, takeFinishedAnswer } from "../tasks/question-reply";
 import { tick } from "../tasks/cron";
 import { streamRuntimeEvents } from "./events-routes";
-import { machineIsIdle, markSleepy, noteActivity } from "../tasks/idle";
+import { canSuspendNow, noteActivity } from "../tasks/idle";
 import { resetSurveyQuiet } from "../tasks/tick-quiet";
 import { videoMediaType } from "../browser/recordings";
 import { warn } from "../core/log";
@@ -149,11 +149,12 @@ export function controlPlaneRoutes(rt: AgentRuntime): Hono {
   });
 
   app.post("/tick", async (c) => {
-    const started = Date.now();
-    const result = await tick(rt);
-    if (await machineIsIdle(rt)) markSleepy(started);
-    return c.json(result);
+    noteActivity();
+    return c.json(await tick(rt));
   });
+
+  /** Control plane спрашивает это сразу перед Fly suspend. */
+  app.get("/idle", async (c) => c.json({ idle: await canSuspendNow(rt) }));
 
   app.get("/runs/:id", async (c) => {
     const run = await rt.store.getRun(c.req.param("id"));

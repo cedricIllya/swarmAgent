@@ -1,33 +1,37 @@
 import type { UsageTotals } from "@swarm/contracts";
-import { tick } from "./cron";
+import { tick, tickBusy } from "./cron";
 import { closeStalledRuns } from "./stall";
 import { closeAllStreams } from "../core/events";
 import type { AgentRuntime } from "../runtime";
 import { warn } from "../core/log";
 
-const IDLE_MS = Number(process.env.IDLE_SUSPEND_MS ?? 120_000);
+/** Пять минут без задач. `IDLE_SUSPEND_MS` по-прежнему перебивает паузу. */
+export const IDLE_MS = Number(process.env.IDLE_SUSPEND_MS ?? 5 * 60 * 1000);
 
 let lastActivity = Date.now();
 let suspending = false;
 
-/** Письмо, чат, браузер: после этого ждём IDLE_MS и только потом спим. */
+/** Пришла задача или задача только что закончилась: пять минут тишины считаются заново. */
 export function noteActivity(): void {
   lastActivity = Date.now();
 }
 
-/**
- * Тик ничего не запустил. Спим сразу, но не затираем активность,
- * которая пришла пока тик шёл.
- */
-export function markSleepy(activityBefore: number): void {
-  if (lastActivity <= activityBefore) lastActivity = 0;
-}
-
 export async function machineIsIdle(rt: AgentRuntime): Promise<boolean> {
+  if (tickBusy()) return false;
   if (rt.busyInBrowser) return false;
   if (rt.browser.sessions.size > 0) return false;
   const runs = await rt.store.listRuns(50);
   return !runs.some((r) => r.status === "running" || r.status === "queued");
+}
+
+/**
+ * Сон только когда задач нет уже пять минут.
+ * Идущая или поставленная в очередь задача, браузер и незакрытый тик удерживают машину.
+ * Ожидание одобрения само по себе не удерживает.
+ */
+export async function canSuspendNow(rt: AgentRuntime, now = Date.now()): Promise<boolean> {
+  if (now - lastActivity < IDLE_MS) return false;
+  return machineIsIdle(rt);
 }
 
 /** Без итогов усыпить всё равно надо: сломанный журнал не должен держать машину. */
@@ -44,17 +48,25 @@ async function usageTotals(rt: AgentRuntime): Promise<UsageTotals | undefined> {
 async function maybeSuspend(rt: AgentRuntime): Promise<void> {
   if (suspending) return;
   await closeStalledRuns(rt);
+  // Пока задача идёт, пять минут не тикают: окно начнётся, когда её не станет.
+  if (!(await machineIsIdle(rt))) {
+    noteActivity();
+    return;
+  }
   if (Date.now() - lastActivity < IDLE_MS) return;
-  if (!(await machineIsIdle(rt))) return;
   if (await rt.store.hasDeferredEmails()) {
     await tick(rt);
-    if (!(await machineIsIdle(rt))) return;
+    if (!(await canSuspendNow(rt))) return;
   }
   suspending = true;
   try {
+    const usage = await usageTotals(rt);
+    // Пока снимали итоги, тик или чат уже могли создать задачу.
+    if (!(await canSuspendNow(rt))) return;
     closeAllStreams();
     await new Promise((r) => setTimeout(r, 40));
-    await rt.controlPlane.requestSuspend(await usageTotals(rt));
+    if (!(await canSuspendNow(rt))) return;
+    await rt.controlPlane.requestSuspend(usage);
   } catch (e) {
     warn("idle", "не удалось уснуть", { error: String(e) });
   } finally {

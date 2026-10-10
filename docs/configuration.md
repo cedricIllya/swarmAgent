@@ -60,7 +60,7 @@ openssl rand -base64 32
 | `CHROME_PATH` | Путь к Chromium. В образе агента это `/usr/bin/chromium`. |
 | `TICK_MINUTES` | По умолчанию 15. |
 | `IDLE_SUSPEND` | `off` — не засыпать. Иначе засыпает, когда задан `CONTROL_PLANE_URL`. |
-| `IDLE_SUSPEND_MS` | Пауза перед сном. По умолчанию 120000. |
+| `IDLE_SUSPEND_MS` | Сколько машина может пробыть без задач перед сном. По умолчанию 300000. |
 | `BOOTSTRAP_DIR` | Если задан, при старте файлы оттуда копируются в `DATA_DIR`. |
 
 Ключ Mailgun на машину агента не попадает. Отправка идёт через control plane.

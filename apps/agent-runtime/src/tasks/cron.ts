@@ -38,6 +38,11 @@ async function waitFoundWork(): Promise<void> {
 
 let running = false;
 
+/** Тик ещё не вернулся. Задачи может ещё не быть, но машину уже нельзя усыплять. */
+export function tickBusy(): boolean {
+  return running;
+}
+
 export interface TickResult {
   deferred: number;
   checkedServices: boolean;

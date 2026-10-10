@@ -22,6 +22,7 @@ import { newId } from "./ids";
 import { Research } from "./research";
 import { ServiceCatalog } from "./services";
 import { deliverChannelReply } from "../channels/listen";
+import { noteActivity } from "../tasks/idle";
 
 /** Результат одного хода Hermes: текст + метаданные для проверки работы в сервисе. */
 export interface ThinkResult {
@@ -144,6 +145,8 @@ export class AgentRuntime {
     if (status !== "running" && status !== "queued" && status !== "waiting_approval") {
       this.disarmAbort(run.id);
     }
+    // Пять минут без задач считаются отсюда, в том числе когда задача ушла ждать человека.
+    if (status !== "running" && status !== "queued") noteActivity();
     log("run", "завершена", { id: run.id, status });
   }
 

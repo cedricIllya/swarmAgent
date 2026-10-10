@@ -2,7 +2,8 @@ import { after, NextResponse } from "next/server";
 import { SuspendRequestSchema } from "@swarm/contracts";
 import { rememberAgentUsage } from "@swarm/agents";
 import { authenticateRuntime } from "@/lib/runtime-auth";
-import { suspendAgent } from "@/lib/fly-machines";
+import { machineHeld, suspendAgent } from "@/lib/fly-machines";
+import { RuntimeClient } from "@/lib/runtime-client";
 import { db } from "@/lib/db";
 
 /**
@@ -22,6 +23,27 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
     try {
+      if (machineHeld(agent.id)) {
+        console.log(`[sleep] ${agent.id} skipped`);
+        return;
+      }
+      const client = RuntimeClient.for(agent);
+      if (client) {
+        try {
+          const { idle } = await client.idle();
+          if (!idle) {
+            console.log(`[sleep] ${agent.id} skipped`);
+            return;
+          }
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          // Старый runtime этой проверки не знает. Срок и pin уже решили, можно ли спать.
+          if (!message.includes("→ 404")) {
+            console.warn(`[sleep] ${agent.id} не проверил простой: ${message}`);
+            return;
+          }
+        }
+      }
       const result = await suspendAgent(agent);
       console.log(`[sleep] ${agent.id} ${result}`);
     } catch (e) {

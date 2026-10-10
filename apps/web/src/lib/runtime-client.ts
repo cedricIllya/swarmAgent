@@ -12,7 +12,7 @@ import type {
 import { runtimeTokenOf, type AgentRow } from "@swarm/agents";
 import { wakesOnHttp } from "@swarm/fly";
 import { env } from "@/env";
-import { holdMachine, wakeAgent } from "@/lib/fly-machines";
+import { holdMachine, pinMachine, wakeAgent } from "@/lib/fly-machines";
 
 /** Node отдаёт «fetch failed», а причина (ECONNREFUSED, ENOTFOUND) лежит в `cause`. */
 function describe(e: unknown): string {
@@ -37,12 +37,13 @@ export class RuntimeClient {
     private readonly token: string,
     /** Без него общий `.flycast` отдал бы запрос любой машине приложения. */
     private readonly machineId: string | null,
+    private readonly agentId: string,
   ) {}
 
   static for(agent: AgentRow): RuntimeClient | null {
     const url = env.devRuntimeUrl ?? agent.runtimeUrl;
     if (!url || !agent.runtimeTokenEnc) return null;
-    return new RuntimeClient(url, runtimeTokenOf(agent), agent.flyMachineId);
+    return new RuntimeClient(url, runtimeTokenOf(agent), agent.flyMachineId, agent.id);
   }
 
   private headers(json = false): Record<string, string> {
@@ -52,21 +53,31 @@ export class RuntimeClient {
     return headers;
   }
 
-  private async call<T>(method: string, path: string, body?: unknown, timeoutMs = 10_000): Promise<T> {
-    const init: RequestInit = {
-      method,
-      headers: this.headers(true),
-      signal: AbortSignal.timeout(timeoutMs),
-    };
-    if (body !== undefined) init.body = JSON.stringify(body);
-    let res: Response;
+  /**
+   * `pin` — запрос запускает или продолжает работу и может идти дольше срока
+   * на подъём. Пока он не вернулся, suspend машину не замораживает.
+   * Чтение состояния pin не берёт: иначе открытая карточка не давала бы уснуть.
+   */
+  private async call<T>(method: string, path: string, body?: unknown, timeoutMs = 10_000, pin = false): Promise<T> {
+    const release = pin ? pinMachine(this.agentId) : () => undefined;
     try {
-      res = await fetch(`${this.baseUrl}${path}`, init);
-    } catch (e) {
-      throw new Error(`runtime ${path}: ${describe(e)}`, { cause: e });
+      const init: RequestInit = {
+        method,
+        headers: this.headers(true),
+        signal: AbortSignal.timeout(timeoutMs),
+      };
+      if (body !== undefined) init.body = JSON.stringify(body);
+      let res: Response;
+      try {
+        res = await fetch(`${this.baseUrl}${path}`, init);
+      } catch (e) {
+        throw new Error(`runtime ${path}: ${describe(e)}`, { cause: e });
+      }
+      if (!res.ok) throw new Error(`runtime ${path} → ${res.status}: ${await res.text()}`);
+      return (await res.json()) as T;
+    } finally {
+      release();
     }
-    if (!res.ok) throw new Error(`runtime ${path} → ${res.status}: ${await res.text()}`);
-    return (await res.json()) as T;
   }
 
   /**
@@ -96,20 +107,25 @@ export class RuntimeClient {
     return this.call("GET", "/state", undefined, 40_000);
   }
 
+  /** Сразу перед suspend. Не удерживает машину: иначе проверка сама запретила бы сон. */
+  idle(): Promise<{ idle: boolean }> {
+    return this.call("GET", "/idle", undefined, 8_000);
+  }
+
   deliverEmail(body: DeliverEmailRequest): Promise<{ accepted: boolean }> {
-    return this.call("POST", "/email", body);
+    return this.call("POST", "/email", body, 10_000, true);
   }
 
   deliverSlack(body: DeliverSlackEventRequest): Promise<{ status: "accepted" | "duplicate" | "ignored" | "unavailable" }> {
-    return this.call("POST", "/channel/slack", body, 30_000);
+    return this.call("POST", "/channel/slack", body, 30_000, true);
   }
 
   chat(body: ChatRequest): Promise<{ runId: string; chatId: string }> {
-    return this.call("POST", "/chat", body, 60_000);
+    return this.call("POST", "/chat", body, 60_000, true);
   }
 
   retryChat(chatId: string, body: { runId: string; author: string }): Promise<{ runId: string; chatId: string }> {
-    return this.call("POST", `/chats/${chatId}/retry`, body, 60_000);
+    return this.call("POST", `/chats/${chatId}/retry`, body, 60_000, true);
   }
 
   chats(): Promise<ChatThread[]> {
@@ -169,7 +185,7 @@ export class RuntimeClient {
     id: string,
     decision: { approved: boolean } | { answer: string } | { optionIndex: number },
   ): Promise<{ runId: string; answer?: string }> {
-    return this.call("POST", `/approvals/${id}`, decision, 30_000);
+    return this.call("POST", `/approvals/${id}`, decision, 30_000, true);
   }
 
   run(id: string): Promise<{ run: unknown; steps: unknown[] }> {
@@ -177,11 +193,11 @@ export class RuntimeClient {
   }
 
   cancelRun(id: string): Promise<{ runId: string; status: string }> {
-    return this.call("POST", `/runs/${id}/cancel`, {}, 30_000);
+    return this.call("POST", `/runs/${id}/cancel`, {}, 30_000, true);
   }
 
   answerRun(id: string, answer: string): Promise<{ runId: string; status: string }> {
-    return this.call("POST", `/runs/${id}/answer`, { answer }, 30_000);
+    return this.call("POST", `/runs/${id}/answer`, { answer }, 30_000, true);
   }
 
   browserActions(sessionId: string): Promise<unknown[]> {
@@ -189,7 +205,7 @@ export class RuntimeClient {
   }
 
   tick(): Promise<{ deferred: number; checkedServices: boolean; quiet?: "leave" | "clear" | "until"; quietUntil?: string | null }> {
-    return this.call("POST", "/tick", {}, 180_000);
+    return this.call("POST", "/tick", {}, 180_000, true);
   }
 
   async video(sessionId: string): Promise<Response> {
