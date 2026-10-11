@@ -9,6 +9,7 @@ import { parseFoundTasks, selectNewTasks, surveySummary, taskRunTitle, type Foun
 import { bindWork, dropWork, holdWork } from "./work-claim";
 import { finishServiceThink } from "./service-work";
 import { listenMessengers } from "../channels/listen";
+import { HermesInterrupted } from "../llm/hermes";
 import { log, warn } from "../core/log";
 import { beginWork } from "../core/spent";
 import { recordSurvey } from "./tick-quiet";
@@ -144,6 +145,10 @@ export async function tick(rt: AgentRuntime): Promise<TickResult> {
         return answered(rt, { deferred, checkedServices: true }, surveyWasEmpty(summary, startedTitles.length) ? "empty" : "work");
       }
     } catch (e) {
+      if (e instanceof HermesInterrupted) {
+        await rt.finishRun(run, "done", "проверку прервало сообщение");
+        return answered(rt, { deferred, checkedServices: true }, startedTitles.length ? "work" : "leave");
+      }
       if (await rt.isCanceled(run.id)) return answered(rt, { deferred, checkedServices: true }, "leave");
       await rt.step(run.id, "error", String(e));
       await rt.finishRun(run, "failed", String(e));
@@ -256,10 +261,38 @@ async function runFoundTask(rt: AgentRuntime, run: Run, task: FoundTask): Promis
     if (await rt.isCanceled(current.id)) return;
     if (status !== "waiting_approval") await rt.finishRun(current, status, text);
   } catch (e) {
+    if (e instanceof HermesInterrupted) {
+      const again = (await rt.store.getRun(current.id)) ?? current;
+      if (again.status === "canceled" || again.status === "failed" || again.status === "done") return;
+      again.status = "queued";
+      again.finishedAt = null;
+      await rt.store.saveRun(again);
+      log("cron", "задача вернулась в очередь: пришло сообщение человека", { id: again.id });
+      work = work.then(() => runFoundTask(rt, again, task)).catch((err) => {
+        warn("cron", "задача из проверки упала", { id: again.id, error: String(err) });
+      });
+      return;
+    }
     if (await rt.isCanceled(current.id)) return;
     warn("cron", "задача из проверки упала", { id: current.id, error: String(e) });
     await rt.step(current.id, "error", String(e));
     await rt.finishRun(current, "failed", String(e));
+  }
+}
+
+/** После перезапуска задачи, которые ещё не начались, не теряются. */
+export async function resumeQueuedTasks(rt: AgentRuntime): Promise<void> {
+  const queued = (await rt.store.listRuns(200)).filter((r) => r.status === "queued" && r.trigger === "cron");
+  for (const run of queued) {
+    const steps = await rt.store.listSteps(run.id);
+    const note = steps.find((s) => s.kind === "note" && typeof s.data?.service === "string");
+    const service = typeof note?.data?.service === "string" ? note.data.service : "";
+    const detail = note?.text || run.title;
+    log("cron", "очередь продолжена после перезапуска", { id: run.id, title: run.title });
+    const task: FoundTask = { service, title: run.title, detail };
+    work = work.then(() => runFoundTask(rt, run, task)).catch((e) => {
+      warn("cron", "задача из проверки упала", { id: run.id, error: String(e) });
+    });
   }
 }
 

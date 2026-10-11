@@ -48,6 +48,7 @@ export function TaskComposer({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message }),
+        signal: AbortSignal.timeout(90_000),
       });
       if (!res.ok) {
         staged.drop();
@@ -57,7 +58,13 @@ export function TaskComposer({
         return;
       }
       const data = (await res.json().catch(() => null)) as { runId?: string } | null;
-      if (data?.runId) staged.adopt(data.runId);
+      if (!data?.runId) {
+        staged.drop();
+        setError(t("task.sendFailed"));
+        if (!textRef.current.trim()) write(message);
+        return;
+      }
+      staged.adopt(data.runId);
     } catch {
       staged.drop();
       setError(t("task.sendFailed"));

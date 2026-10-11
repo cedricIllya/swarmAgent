@@ -87,6 +87,8 @@ export class AgentRuntime {
     if (settings.autonomous !== undefined) this.autonomous = settings.autonomous;
     const stale = (await this.store.listRuns()).filter((r) => r.status === "running" || r.status === "queued");
     for (const r of stale) {
+      // Задача в очереди ещё не начата: после перезапуска её подхватывают заново.
+      if (r.status === "queued") continue;
       await this.finishRun(r, "failed", "Процесс перезапустился во время задачи");
     }
   }
@@ -240,7 +242,15 @@ export class AgentRuntime {
     const startedAt = new Date().toISOString();
     await this.step(run.id, "model", "запрос модели", { chars: withRun.length });
     const signal = this.signalFor(run.id) ?? this.armAbort(run.id).signal;
-    const r = await this.hermes.run(withRun, { sessionId: run.threadId ?? run.id, system, model: this.model, signal });
+    // Плановая проверка и найденная в ней задача уступают чату и письму.
+    const background = action === "hermes.tick" || action === "hermes.task";
+    const r = await this.hermes.run(withRun, {
+      sessionId: run.threadId ?? run.id,
+      system,
+      model: this.model,
+      signal,
+      background,
+    });
     if (await this.isCanceled(run.id)) throw new DOMException("Задача остановлена", "AbortError");
     const details = turnDetails(await this.store.listSteps(run.id), startedAt);
     await recordUsage(this.store, this.taskRef(run), action, "hermes", r, details);

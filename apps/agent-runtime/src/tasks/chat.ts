@@ -137,6 +137,7 @@ export async function handleChat(
     chatId,
     ...(args.fromMessenger ? { author: args.author } : {}),
   });
+  await rt.step(run.id, "note", "Сообщение принято, начинаю");
   enqueueChatWork(rt, {
     run,
     chatId,

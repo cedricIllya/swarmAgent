@@ -69,6 +69,14 @@ export function stripToolMarkup(text: string): string {
 /** Сколько длится ход с инструментами. Hermes отвечает только в конце хода. */
 export const HERMES_TURN_MS = 20 * 60 * 1000;
 
+/** Плановую проверку прервало сообщение человека: ход не доделываем и в OpenRouter не уходим. */
+export class HermesInterrupted extends Error {
+  constructor() {
+    super("ход уступил сообщению человека");
+    this.name = "HermesInterrupted";
+  }
+}
+
 /**
  * Встроенный fetch рвёт запрос, если заголовков нет 5 минут. Ход Hermes с браузером
  * идёт дольше: runtime бросал его, повторял тот же запрос и отвечал без инструментов,
@@ -102,6 +110,8 @@ export class HermesClient {
   /** api_server принимает один ход. Второй в это же время ждёт сессию, пока первый не отпустит. */
   private gate: Promise<void> = Promise.resolve();
   private turns = 0;
+  /** Ход плановой проверки: сообщение человека его обрывает. */
+  private background: AbortController | null = null;
 
   constructor(private readonly opts: HermesClientOptions) {
     this.f = opts.fetchImpl ?? hermesFetch;
@@ -145,7 +155,7 @@ export class HermesClient {
   /** Письмо и тик не занимают api_server одновременно: Hermes держит одну сессию на ключ. */
   async run(
     prompt: string,
-    args: { sessionId: string; system?: string; model: string; signal?: AbortSignal },
+    args: { sessionId: string; system?: string; model: string; signal?: AbortSignal; background?: boolean },
   ): Promise<ChatResult> {
     const previous = this.gate;
     let release!: () => void;
@@ -153,11 +163,16 @@ export class HermesClient {
       release = resolve;
     });
     this.turns += 1;
+    const own = new AbortController();
+    if (args.background) this.background = own;
+    // Сообщение человека не стоит в очереди за плановой проверкой.
+    else this.background?.abort();
     try {
       await previous;
       if (args.signal?.aborted) throw new DOMException("Задача остановлена", "AbortError");
-      return await this.execute(prompt, args);
+      return await this.execute(prompt, args, own);
     } finally {
+      if (this.background === own) this.background = null;
       this.turns -= 1;
       release();
     }
@@ -165,7 +180,8 @@ export class HermesClient {
 
   private async execute(
     prompt: string,
-    args: { sessionId: string; system?: string; model: string; signal?: AbortSignal },
+    args: { sessionId: string; system?: string; model: string; signal?: AbortSignal; background?: boolean },
+    own: AbortController,
   ): Promise<ChatResult> {
     const turnId = `${args.sessionId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
     this.opts.costs?.begin(turnId);
@@ -176,7 +192,7 @@ export class HermesClient {
       return this.opts.costs?.end(turnId) ?? 0;
     };
     const timeout = AbortSignal.timeout(HERMES_TURN_MS);
-    const signal = args.signal ? AbortSignal.any([timeout, args.signal]) : timeout;
+    const signal = AbortSignal.any([timeout, own.signal, ...(args.signal ? [args.signal] : [])]);
     const post = () =>
       this.f(`${this.opts.apiUrl}/chat/completions`, {
         method: "POST",
@@ -224,6 +240,7 @@ export class HermesClient {
       };
     } catch (e) {
       const billed = closeTurn();
+      if (own.signal.aborted && !args.signal?.aborted) throw new HermesInterrupted();
       // Отмена пользователем — не уходим в OpenRouter без инструментов.
       if (args.signal?.aborted || (e instanceof Error && e.name === "AbortError")) throw e;
       warn("hermes", "api_server недоступен, отвечаем без инструментов", { error: String(e) });

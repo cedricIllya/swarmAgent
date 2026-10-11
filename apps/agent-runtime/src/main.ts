@@ -8,7 +8,7 @@ import { describeZodError } from "./http/lenient";
 import { applyBootstrap, clearGatewayRecords } from "./core/bootstrap";
 import { AgentRuntime } from "./runtime";
 import { resumeConnect } from "./onboarding";
-import { startTicker } from "./tasks/cron";
+import { resumeQueuedTasks, startTicker } from "./tasks/cron";
 import { startIdleWatch } from "./tasks/idle";
 import { controlPlaneRoutes } from "./http/control-plane-routes";
 import { proxyOpenRouter } from "./llm/openrouter-proxy";
@@ -25,6 +25,7 @@ const cfg = loadConfig();
 const rt = new AgentRuntime(cfg);
 rt.handoffs.useResume(resumeConnect);
 await rt.init();
+await resumeQueuedTasks(rt);
 if (process.env.BOOTSTRAP_DIR) {
   await applyBootstrap(process.env.BOOTSTRAP_DIR, cfg.dataDir);
   await clearGatewayRecords(cfg.dataDir);

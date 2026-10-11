@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { LlmCostLedger } from "../../src/llm/cost-ledger";
-import { HermesClient, hermesSessionCostUsd, stripToolMarkup } from "../../src/llm/hermes";
+import { HermesClient, HermesInterrupted, hermesSessionCostUsd, stripToolMarkup } from "../../src/llm/hermes";
 import type { OpenRouterClient } from "../../src/llm/openrouter";
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -211,6 +211,33 @@ describe("HermesClient cost", () => {
     gates[1]!();
     await second;
     expect(c.busy).toBe(false);
+  });
+
+  it("сообщение человека обрывает плановую проверку и идёт следом", async () => {
+    const fallback = { chat: vi.fn() } as unknown as OpenRouterClient;
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit): Promise<Response> => {
+      if (fetchImpl.mock.calls.length === 1) {
+        const signal = init?.signal;
+        return new Promise((_resolve, reject) => {
+          const abort = () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+          if (signal?.aborted) abort();
+          else signal?.addEventListener("abort", abort, { once: true });
+        });
+      }
+      return json({ model: "m", choices: [{ message: { content: "ответ человеку" } }], usage: { cost: 0.01 } });
+    });
+    const c = new HermesClient({
+      apiUrl: "http://127.0.0.1:8642/v1",
+      apiKey: "rt",
+      fallback,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const background = c.run("проверка", { sessionId: "tick", model: "m", background: true });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled());
+    const person = c.run("сделай", { sessionId: "chat", model: "m" });
+    await expect(background).rejects.toBeInstanceOf(HermesInterrupted);
+    await expect(person).resolves.toMatchObject({ text: "ответ человеку", usedFallback: false });
+    expect(fallback.chat).not.toHaveBeenCalled();
   });
 
   it("does not fall back when the caller aborts the turn", async () => {
