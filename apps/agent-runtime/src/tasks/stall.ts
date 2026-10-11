@@ -17,12 +17,17 @@ function browserOpenFor(rt: AgentRuntime, runId: string): boolean {
 /**
  * `running` и `queued` не дают машине уснуть. Задача без шагов дольше STALL_MS
  * закрывается с ошибкой. Ожидание человека сюда не входит: оно сон не держит.
+ * Пока идёт ход Hermes, задачи за ним ждут очереди без шагов: ход сам ограничен
+ * сроком. Задача в очереди ждёт, пока работает другая.
  */
 export async function closeStalledRuns(rt: AgentRuntime, now = Date.now()): Promise<number> {
+  if (rt.hermes?.busy) return 0;
   const runs = await rt.store.listRuns(50);
+  const working = runs.some((r) => r.status === "running");
   let closed = 0;
   for (const run of runs) {
     if (run.status !== "running" && run.status !== "queued") continue;
+    if (run.status === "queued" && working) continue;
     if (browserOpenFor(rt, run.id)) continue;
     const steps = await rt.store.listSteps(run.id);
     const stamp = steps.length ? steps[steps.length - 1]?.at : run.startedAt;

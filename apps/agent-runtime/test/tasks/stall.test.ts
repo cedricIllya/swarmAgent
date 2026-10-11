@@ -3,14 +3,15 @@ import type { Run, RunStep } from "@swarm/contracts";
 import { STALL_MS, closeStalledRuns } from "../../src/tasks/stall";
 import type { AgentRuntime } from "../../src/runtime";
 
-function runtime(run: Run, steps: RunStep[] = [], browserRunId: string | null = null) {
-  const runs = new Map<string, Run>([[run.id, run]]);
+function runtime(run: Run | Run[], steps: RunStep[] = [], browserRunId: string | null = null, hermesBusy = false) {
+  const runs = new Map<string, Run>((Array.isArray(run) ? run : [run]).map((r) => [r.id, r]));
   const finishRun = vi.fn(async (current: Run, status: Run["status"], summary: string) => {
     current.status = status;
     current.summary = summary;
     runs.set(current.id, current);
   });
   const rt = {
+    hermes: { busy: hermesBusy },
     browser: {
       sessions: new Map(
         browserRunId
@@ -34,9 +35,9 @@ function runtime(run: Run, steps: RunStep[] = [], browserRunId: string | null = 
   return { rt, runs, finishRun };
 }
 
-function task(status: Run["status"], startedAt: string): Run {
+function task(status: Run["status"], startedAt: string, id = "run_1"): Run {
   return {
-    id: "run_1",
+    id,
     title: "Зависшая",
     threadId: null,
     status,
@@ -63,6 +64,21 @@ describe("closeStalledRuns", () => {
     const browsing = runtime(task("queued", new Date(now - STALL_MS - 5_000).toISOString()), [], "run_1");
     expect(await closeStalledRuns(browsing.rt, now)).toBe(0);
     expect(browsing.runs.get("run_1")?.status).toBe("queued");
+  });
+
+  it("не закрывает задачи, пока идёт ход Hermes", async () => {
+    const { rt, runs } = runtime(task("running", new Date(now - STALL_MS * 2).toISOString()), [], null, true);
+    expect(await closeStalledRuns(rt, now)).toBe(0);
+    expect(runs.get("run_1")?.status).toBe("running");
+  });
+
+  it("задача в очереди ждёт, пока работает другая", async () => {
+    const old = new Date(now - STALL_MS * 2).toISOString();
+    const { rt, runs } = runtime([task("queued", old, "run_q"), task("running", new Date(now - 60_000).toISOString(), "run_w")], [
+      { at: new Date(now - 60_000).toISOString(), kind: "note", text: "идёт" },
+    ]);
+    expect(await closeStalledRuns(rt, now)).toBe(0);
+    expect(runs.get("run_q")?.status).toBe("queued");
   });
 
   it("does not close a task that is waiting for a person", async () => {

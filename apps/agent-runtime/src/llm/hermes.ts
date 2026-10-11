@@ -1,4 +1,5 @@
 import { parseOpenRouterUsage } from "@swarm/usage";
+import { Agent, fetch as undiciFetch } from "undici";
 import type { OpenRouterClient, ChatResult } from "./openrouter";
 import type { LlmCostLedger } from "./cost-ledger";
 import { warn } from "../core/log";
@@ -65,6 +66,25 @@ export function stripToolMarkup(text: string): string {
     .trim();
 }
 
+/** Сколько длится ход с инструментами. Hermes отвечает только в конце хода. */
+export const HERMES_TURN_MS = 20 * 60 * 1000;
+
+/**
+ * Встроенный fetch рвёт запрос, если заголовков нет 5 минут. Ход Hermes с браузером
+ * идёт дольше: runtime бросал его, повторял тот же запрос и отвечал без инструментов,
+ * а Hermes продолжал работу в фоне. Предел хода задаёт только HERMES_TURN_MS.
+ */
+const turnDispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+
+const hermesFetch = ((input: string, init?: RequestInit) =>
+  undiciFetch(input, { ...(init as object), dispatcher: turnDispatcher })) as unknown as typeof fetch;
+
+/** Hermes не принял соединение: сервер ещё поднимается. Запрос до него не дошёл, повтор безопасен. */
+function notListening(e: unknown): boolean {
+  const cause = e instanceof Error ? (e.cause as { code?: string } | undefined) : undefined;
+  return cause?.code === "ECONNREFUSED";
+}
+
 function positive(v: unknown): number {
   const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
   return Number.isFinite(n) && n > 0 ? n : 0;
@@ -81,9 +101,15 @@ export class HermesClient {
   private readonly sessionCostSeen = new Map<string, number>();
   /** api_server принимает один ход. Второй в это же время ждёт сессию, пока первый не отпустит. */
   private gate: Promise<void> = Promise.resolve();
+  private turns = 0;
 
   constructor(private readonly opts: HermesClientOptions) {
-    this.f = opts.fetchImpl ?? fetch;
+    this.f = opts.fetchImpl ?? hermesFetch;
+  }
+
+  /** Ход идёт или ждёт очереди. Задачи за ним стоят без шагов, но не зависли. */
+  get busy(): boolean {
+    return this.turns > 0;
   }
 
   private authHeaders(): Record<string, string> {
@@ -126,11 +152,13 @@ export class HermesClient {
     this.gate = new Promise<void>((resolve) => {
       release = resolve;
     });
+    this.turns += 1;
     try {
       await previous;
       if (args.signal?.aborted) throw new DOMException("Задача остановлена", "AbortError");
       return await this.execute(prompt, args);
     } finally {
+      this.turns -= 1;
       release();
     }
   }
@@ -147,7 +175,7 @@ export class HermesClient {
       closed = true;
       return this.opts.costs?.end(turnId) ?? 0;
     };
-    const timeout = AbortSignal.timeout(20 * 60 * 1000);
+    const timeout = AbortSignal.timeout(HERMES_TURN_MS);
     const signal = args.signal ? AbortSignal.any([timeout, args.signal]) : timeout;
     const post = () =>
       this.f(`${this.opts.apiUrl}/chat/completions`, {
@@ -172,8 +200,9 @@ export class HermesClient {
       try {
         res = await post();
       } catch (e) {
-        // Сетевой отказ — сервер ещё поднимается после рестарта: дождаться и повторить один раз.
-        if (signal.aborted) throw e;
+        // Сервер ещё поднимается после рестарта: дождаться и повторить один раз.
+        // Оборванный ход не повторяем: Hermes его уже выполняет.
+        if (signal.aborted || !notListening(e)) throw e;
         if (!(await this.awaitReady(signal))) throw e;
         res = await post();
       }

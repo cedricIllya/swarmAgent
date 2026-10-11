@@ -10,6 +10,10 @@ function json(body: unknown, status = 200, headers: Record<string, string> = {})
   });
 }
 
+function refused(): TypeError {
+  return new TypeError("fetch failed", { cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8642"), { code: "ECONNREFUSED" }) });
+}
+
 function client(fetchImpl: typeof fetch): HermesClient {
   const fallback = { chat: vi.fn() } as unknown as OpenRouterClient;
   return new HermesClient({
@@ -150,7 +154,7 @@ describe("HermesClient cost", () => {
       const fallback = { chat: vi.fn() } as unknown as OpenRouterClient;
       let up = false;
       const fetchImpl = vi.fn(async (url: string) => {
-        if (!up) throw new Error("ECONNREFUSED");
+        if (!up) throw refused();
         if (String(url).endsWith("/models")) return json({ data: [] });
         return json({ model: "m", choices: [{ message: { content: "с инструментами" } }], usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0.01 } });
       });
@@ -166,6 +170,47 @@ describe("HermesClient cost", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("не отправляет оборванный ход второй раз: Hermes его уже выполняет", async () => {
+    const fallback = {
+      chat: vi.fn(async () => ({ text: "без инструментов", promptTokens: 1, completionTokens: 1, costUsd: 0, model: "m", citations: [] })),
+    } as unknown as OpenRouterClient;
+    const fetchImpl = vi.fn(async (_url: string): Promise<Response> => {
+      throw new TypeError("fetch failed", { cause: Object.assign(new Error("Headers Timeout Error"), { code: "UND_ERR_HEADERS_TIMEOUT" }) });
+    });
+    const c = new HermesClient({
+      apiUrl: "http://127.0.0.1:8642/v1",
+      apiKey: "rt",
+      fallback,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      readyWaitMs: 30_000,
+    });
+    await c.run("привет", { sessionId: "run_1", model: "m" });
+    expect(fetchImpl.mock.calls.filter((call) => String(call[0]).endsWith("/chat/completions"))).toHaveLength(1);
+  });
+
+  it("занят, пока ход идёт или ждёт очереди", async () => {
+    const gates: Array<() => void> = [];
+    const fetchImpl = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          gates.push(() => resolve(json({ model: "m", choices: [{ message: { content: "ok" } }], usage: { cost: 0.01 } })));
+        }),
+    );
+    const c = client(fetchImpl as unknown as typeof fetch);
+    expect(c.busy).toBe(false);
+    const first = c.run("один", { sessionId: "run_1", model: "m" });
+    const second = c.run("два", { sessionId: "run_2", model: "m" });
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+    expect(c.busy).toBe(true);
+    gates[0]!();
+    await first;
+    expect(c.busy).toBe(true);
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    gates[1]!();
+    await second;
+    expect(c.busy).toBe(false);
   });
 
   it("does not fall back when the caller aborts the turn", async () => {
