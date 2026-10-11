@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { OpenRouterClient, isTransientModelError } from "../../src/llm/openrouter";
+import { OpenRouterClient, assistantText, isTransientModelError } from "../../src/llm/openrouter";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -14,6 +14,15 @@ function sentBody(fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>, call: numbe
 }
 
 const schema = { jsonSchema: { name: "email_classification", schema: { type: "object" } } };
+
+describe("assistantText", () => {
+  it("берёт строку и блоки, пустой content не роняет разбор", () => {
+    expect(assistantText({ content: "готово" })).toBe("готово");
+    expect(assistantText({ content: [{ type: "text", text: "один" }, { type: "text", text: "два" }] })).toBe("один\nдва");
+    expect(assistantText({ content: null })).toBe("");
+    expect(assistantText(undefined)).toBe("");
+  });
+});
 
 describe("OpenRouterClient retries", () => {
   it("retries a 429 and returns the next successful classification", async () => {

@@ -153,6 +153,33 @@ describe("finishServiceThink", () => {
     expect(r.status).toBe("waiting_approval");
   });
 
+  it("fails an incomplete turn that already touched the service", async () => {
+    const startedAt = "2026-01-01T00:00:10.000Z";
+    const mock = rt({ steps: [{ at: startedAt, kind: "api", text: "GET /v3/tasks" }] });
+    const r = await finishServiceThink(mock, run, {
+      text: "Ход не завершился, ответ сервиса пустой.",
+      usedFallback: false,
+      incomplete: true,
+      startedAt,
+    });
+    expect(r.status).toBe("failed");
+    expect(mock.think).not.toHaveBeenCalled();
+  });
+
+  it("retries an incomplete turn that never touched the service", async () => {
+    const mock = rt({
+      retry: { text: "задач нет", usedFallback: false, startedAt: "2026-01-01T00:00:20.000Z" },
+    });
+    const r = await finishServiceThink(mock, run, {
+      text: "Ход не завершился, ответ сервиса пустой.",
+      usedFallback: false,
+      incomplete: true,
+      startedAt: "2026-01-01T00:00:10.000Z",
+    });
+    expect(mock.think).toHaveBeenCalledWith(run, NO_SERVICE_ACTION_PROMPT, "hermes.retry");
+    expect(r).toEqual({ text: "задач нет", status: "done" });
+  });
+
   it("fails when the retry still has no service action", async () => {
     const r = await finishServiceThink(
       rt({

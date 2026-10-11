@@ -40,6 +40,8 @@ export function turnHasServiceAction(steps: RunStep[], since: string): boolean {
 /**
  * Один или два хода Hermes для задачи в сервисе: при отсутствии следов работы
  * — повтор с жёсткой подсказкой; без инструментов Hermes — failed.
+ * Незавершённый ход (сервер жив, итога нет) тоже повторяется в Hermes.
+ * Если сервис уже трогали, повтор не делаем: второе выполнение могло бы повторить действие.
  */
 export async function finishServiceThink(
   rt: AgentRuntime,
@@ -61,7 +63,12 @@ export async function finishServiceThink(
   if (await holdUserQuestion(rt, run, first.text)) return { text: first.text, status: "waiting_approval" };
 
   const steps = await rt.store.listSteps(run.id);
-  if (turnHasServiceAction(steps, first.startedAt) || (allowIdle && isIdleServiceReply(first.text))) {
+  const acted = turnHasServiceAction(steps, first.startedAt);
+  if (first.incomplete && acted) {
+    await rt.step(run.id, "error", "ход не завершился");
+    return { text: first.text.trim() || "Ход не завершился.", status: "failed" };
+  }
+  if (!first.incomplete && (acted || (allowIdle && isIdleServiceReply(first.text)))) {
     return { text: first.text, status: "done" };
   }
 
@@ -78,11 +85,16 @@ export async function finishServiceThink(
   if (await holdUserQuestion(rt, run, retry.text)) return { text: retry.text, status: "waiting_approval" };
 
   const steps2 = await rt.store.listSteps(run.id);
-  if (turnHasServiceAction(steps2, retry.startedAt) || isIdleServiceReply(retry.text)) {
+  const acted2 = turnHasServiceAction(steps2, retry.startedAt);
+  if (retry.incomplete && acted2) {
+    await rt.step(run.id, "error", "ход не завершился");
+    return { text: retry.text.trim() || first.text, status: "failed" };
+  }
+  if (!retry.incomplete && (acted2 || isIdleServiceReply(retry.text))) {
     return { text: retry.text, status: "done" };
   }
 
-  await rt.step(run.id, "error", "нет следов работы в сервисе");
+  await rt.step(run.id, "error", retry.incomplete ? "ход не завершился" : "нет следов работы в сервисе");
   return { text: retry.text.trim() || first.text, status: "failed" };
 }
 

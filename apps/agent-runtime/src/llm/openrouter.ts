@@ -42,6 +42,8 @@ export interface ChatResult {
   citations: WebCitation[];
   /** true — ответ собран без Hermes (без MCP/скиллов/терминала). */
   usedFallback?: boolean;
+  /** Ход Hermes начался, но не закончился. Инструменты были, повтор — снова Hermes. */
+  incomplete?: boolean;
 }
 
 export interface ChatOptions {
@@ -160,12 +162,33 @@ export class OpenRouterClient {
     const usage = parseOpenRouterUsage(json);
     const message = json.choices?.[0]?.message;
     return {
-      text: message?.content ?? "",
+      text: assistantText(message),
       model: json.model ?? model,
       citations: parseCitations(message?.annotations),
       ...usage,
     };
   }
+}
+
+/**
+ * Видимый текст ответа. Провайдер кладёт его строкой или списком блоков;
+ * `null` у вызова без текста — пустая строка, а не падение разбора.
+ */
+export function assistantText(message: { content?: unknown } | null | undefined): string {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const part of content) {
+    if (typeof part === "string") {
+      if (part) parts.push(part);
+      continue;
+    }
+    if (!part || typeof part !== "object") continue;
+    const text = (part as { text?: unknown }).text;
+    if (typeof text === "string" && text) parts.push(text);
+  }
+  return parts.join("\n");
 }
 
 function parseCitations(

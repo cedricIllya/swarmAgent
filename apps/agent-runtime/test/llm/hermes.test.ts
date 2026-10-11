@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { LlmCostLedger } from "../../src/llm/cost-ledger";
-import { HermesClient, HermesInterrupted, hermesSessionCostUsd, stripToolMarkup } from "../../src/llm/hermes";
+import { HermesClient, HermesInterrupted, hermesFailureText, hermesSessionCostUsd, notListening, stripToolMarkup } from "../../src/llm/hermes";
 import type { OpenRouterClient } from "../../src/llm/openrouter";
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -42,6 +42,20 @@ describe("hermesSessionCostUsd", () => {
         session: { actual_cost_usd: 18.2, estimated_cost_usd: 12.4 },
       }),
     ).toBe(18.2);
+  });
+});
+
+describe("notListening", () => {
+  it("узнаёт отказ порта и во вложенной ошибке, обрыв уже открытого хода — нет", () => {
+    expect(notListening(refused())).toBe(true);
+    const aggregate = new AggregateError([
+      Object.assign(new Error("getaddrinfo"), { code: "ENOTFOUND" }),
+    ]);
+    expect(notListening(new TypeError("fetch failed", { cause: aggregate }))).toBe(true);
+    expect(
+      notListening(new TypeError("fetch failed", { cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }) })),
+    ).toBe(false);
+    expect(notListening(new Error("ECONNREFUSED"))).toBe(false);
   });
 });
 
@@ -146,6 +160,71 @@ describe("HermesClient cost", () => {
     const r = await c.run("привет", { sessionId: "run_1", model: "m" });
     expect(r.text).toBe("без инструментов");
     expect(r.usedFallback).toBe(true);
+  });
+
+  it("пустой итог живого Hermes не подменяет ответом без инструментов", async () => {
+    const fallback = { chat: vi.fn() } as unknown as OpenRouterClient;
+    const c = new HermesClient({
+      apiUrl: "http://127.0.0.1:8642/v1",
+      apiKey: "rt",
+      fallback,
+      fetchImpl: vi.fn(async () =>
+        json({ error: { message: "Agent run did not produce a response.", code: "agent_incomplete" } }, 502),
+      ) as unknown as typeof fetch,
+    });
+    const r = await c.run("сделай задачу", { sessionId: "run_1", model: "m" });
+    expect(r.usedFallback).toBe(false);
+    expect(r.incomplete).toBe(true);
+    expect(r.text).toBe(hermesFailureText(502, "agent_incomplete"));
+    expect(fallback.chat).not.toHaveBeenCalled();
+  });
+
+  it("собирает текст из блоков content", async () => {
+    const fetchImpl = vi.fn(async () =>
+      json({
+        choices: [{ finish_reason: "stop", message: { content: [{ type: "text", text: "Сделал задачу" }] } }],
+      }),
+    );
+    const r = await client(fetchImpl as unknown as typeof fetch).run("привет", { sessionId: "run_1", model: "m" });
+    expect(r.text).toBe("Сделал задачу");
+    expect(r.usedFallback).toBe(false);
+    expect(r.incomplete).toBe(false);
+  });
+
+  it("повторяет временный отказ и не уходит без инструментов", async () => {
+    const fallback = { chat: vi.fn() } as unknown as OpenRouterClient;
+    let n = 0;
+    const c = new HermesClient({
+      apiUrl: "http://127.0.0.1:8642/v1",
+      apiKey: "rt",
+      fallback,
+      httpRetryDelayMs: 0,
+      fetchImpl: vi.fn(async () => {
+        n += 1;
+        if (n === 1) return json({ error: "busy" }, 503);
+        return json({ choices: [{ finish_reason: "stop", message: { content: "готово" } }] });
+      }) as unknown as typeof fetch,
+    });
+    const r = await c.run("привет", { sessionId: "run_1", model: "m" });
+    expect(r.text).toBe("готово");
+    expect(r.usedFallback).toBe(false);
+    expect(n).toBe(2);
+    expect(fallback.chat).not.toHaveBeenCalled();
+  });
+
+  it("не уходит в OpenRouter, когда ход упёрся в предел времени", async () => {
+    const fallback = { chat: vi.fn() } as unknown as OpenRouterClient;
+    const c = new HermesClient({
+      apiUrl: "http://127.0.0.1:8642/v1",
+      apiKey: "rt",
+      fallback,
+      readyWaitMs: 0,
+      fetchImpl: vi.fn(async () => {
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      }) as unknown as typeof fetch,
+    });
+    await expect(c.run("привет", { sessionId: "run_1", model: "m" })).rejects.toMatchObject({ name: "TimeoutError" });
+    expect(fallback.chat).not.toHaveBeenCalled();
   });
 
   it("после рестарта ждёт api_server и повторяет ход, а не уходит в OpenRouter", async () => {

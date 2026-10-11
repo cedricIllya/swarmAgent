@@ -28,6 +28,8 @@ import { noteActivity } from "../tasks/idle";
 export interface ThinkResult {
   text: string;
   usedFallback: boolean;
+  /** Ход Hermes начался и не закончился. Повтор идёт снова в Hermes, не в OpenRouter. */
+  incomplete?: boolean;
   startedAt: string;
 }
 
@@ -261,7 +263,7 @@ export class AgentRuntime {
       costUsd: r.costUsd,
       usedFallback: r.usedFallback === true,
     });
-    return { text, usedFallback: r.usedFallback === true, startedAt };
+    return { text, usedFallback: r.usedFallback === true, incomplete: r.incomplete === true, startedAt };
   }
 
   // Chat
