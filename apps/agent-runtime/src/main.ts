@@ -5,7 +5,7 @@ import { timingSafeEqual } from "node:crypto";
 import { ZodError } from "zod";
 import { loadConfig } from "./core/config";
 import { describeZodError } from "./http/lenient";
-import { applyBootstrap, clearGatewayRecords } from "./core/bootstrap";
+import { applyBootstrap, clearGatewayRecords, startGatewayWatch } from "./core/bootstrap";
 import { AgentRuntime } from "./runtime";
 import { resumeConnect } from "./onboarding";
 import { resumeQueuedTasks, startTicker } from "./tasks/cron";
@@ -29,6 +29,7 @@ await resumeQueuedTasks(rt);
 if (process.env.BOOTSTRAP_DIR) {
   await applyBootstrap(process.env.BOOTSTRAP_DIR, cfg.dataDir);
   await clearGatewayRecords(cfg.dataDir);
+  startGatewayWatch(cfg.dataDir);
 }
 await ensureOpenRouterUsageProxy(cfg.dataDir);
 

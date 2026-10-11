@@ -33,7 +33,18 @@ export async function applyBootstrap(bootstrapDir: string, dataDir: string): Pro
   return copied;
 }
 
-const GATEWAY_RECORDS = ["gateway.lock", "gateway.sock", "gateway_state.json", ".local/state/hermes/gateway-locks/host-gateway.lock"];
+/**
+ * `gateway.pid` и `host-gateway.json` — те записи, по которым `--replace` проверяет владельца PID.
+ * В свежем контейнере этот PID уже занят другим процессом, и gateway отказывается стартовать.
+ */
+const GATEWAY_RECORDS = [
+  "gateway.lock",
+  "gateway.pid",
+  "gateway.sock",
+  "gateway_state.json",
+  ".local/state/hermes/gateway-locks/host-gateway.lock",
+  ".local/state/hermes/gateway-locks/host-gateway.json",
+];
 
 /** `true` — на порту уже есть процесс. Стирание его lock обрывает живой gateway. */
 export function gatewayPortOpen(port: number, host = "127.0.0.1", timeoutMs = 400): Promise<boolean> {
@@ -72,4 +83,43 @@ export async function clearGatewayRecords(dataDir: string, gatewayPort = 8642): 
   }
   if (removed.length) log("bootstrap", "старые записи gateway Hermes удалены", { removed });
   return removed;
+}
+
+/** Сколько проверок подряд порт Hermes молчит, прежде чем снять записи. Старт gateway занимает ~20 с. */
+const CLOSED_CHECKS = 4;
+
+/**
+ * Контейнер Hermes перезапускается и без runtime, а s6 повторяет `gateway run --replace` с растущей паузой.
+ * Если на диске осталась чужая запись PID, каждый повтор отказывает, и порт молчит до перезапуска машины.
+ * Пока порт закрыт дольше старта gateway, живого gateway нет: записи снимаются, следующий повтор поднимется.
+ */
+export function startGatewayWatch(dataDir: string, gatewayPort = 8642, periodMs = 20_000): () => void {
+  let closed = 0;
+  let lastCheck = Date.now();
+  let running = false;
+  const timer = setInterval(() => {
+    if (running) return;
+    running = true;
+    void (async () => {
+      const now = Date.now();
+      // После suspend счёт начинается заново: старые проверки были до сна.
+      if (now - lastCheck > periodMs * 3) closed = 0;
+      lastCheck = now;
+      if (await gatewayPortOpen(gatewayPort)) {
+        closed = 0;
+        return;
+      }
+      closed += 1;
+      if (closed < CLOSED_CHECKS) return;
+      closed = 0;
+      const removed = await clearGatewayRecords(dataDir, gatewayPort);
+      if (removed.length) log("bootstrap", "порт Hermes молчит, записи gateway сняты", { removed });
+    })()
+      .catch(() => undefined)
+      .finally(() => {
+        running = false;
+      });
+  }, periodMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }

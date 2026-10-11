@@ -194,7 +194,8 @@ export class HermesClient {
    * Ждём, пока сервер примет ключ. 401 без ключа Hermes пишет как invalid API key и ход срывается.
    */
   private async awaitReady(signal: AbortSignal): Promise<boolean> {
-    const waitMs = this.opts.readyWaitMs ?? 90_000;
+    // Сторож снимает чужую запись PID через ~80 с молчания порта, s6 повторяет старт с паузой до 80 с.
+    const waitMs = this.opts.readyWaitMs ?? 180_000;
     if (waitMs <= 0) return false;
     const until = Date.now() + waitMs;
     for (;;) {

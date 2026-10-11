@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
@@ -13,10 +13,23 @@ export async function readJson<T>(file: string, fallback: T): Promise<T> {
   }
 }
 
+let tmpSeq = 0;
+
+/**
+ * Через временный файл и rename: две одновременные записи поверх одного файла
+ * оставляли хвост прошлого содержимого, и `run.json` переставал читаться.
+ */
 export async function writeJson(file: string, value: unknown, mode?: number): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify(value, null, 2));
-  if (mode) await chmod(file, mode);
+  const tmp = `${file}.${process.pid}.${++tmpSeq}.tmp`;
+  try {
+    await writeFile(tmp, JSON.stringify(value, null, 2));
+    if (mode) await chmod(tmp, mode);
+    await rename(tmp, file);
+  } catch (e) {
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw e;
+  }
 }
 
 export async function readJsonl<T>(file: string): Promise<T[]> {
