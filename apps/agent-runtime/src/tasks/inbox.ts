@@ -37,6 +37,15 @@ export function isMachineSender(from: string): boolean {
 }
 
 /**
+ * Дневная сводка сервиса: «Notifications from the … workspace for October 16th, 2026».
+ * Внутри перечень событий, конкретной работы нет — ход агента на таком письме зависает.
+ */
+export function isWorkspaceDigest(subject: string): boolean {
+  const s = subject.replace(/\s+/g, " ").trim();
+  return /^notifications from the .+ workspace for (?:[a-z]+\s+)?\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)\d{4}\b/i.test(s);
+}
+
+/**
  * Три двери в порядке:
  * 1. Ответ в ветке на письмо агента — слова «да/нет» или новая задача. Без браузера и онбординга.
  * 2. Агент сейчас в браузере — код или ссылка в ждущую сессию, письмо отложено и перечитается.
@@ -123,7 +132,7 @@ async function routeEmail(rt: AgentRuntime, email: InboundEmail): Promise<void> 
   // Браузер открыт, но код ещё не просил (страница с полем только грузится):
   // код или ссылку придерживаем для сессии, остальная почта идёт обычным путём.
   let known: EmailClassification | null = null;
-  if (rt.browser.sessions.size > 0 && !fromOwner) {
+  if (rt.browser.sessions.size > 0 && !fromOwner && !isWorkspaceDigest(email.subject)) {
     if (await deliverEmailChallenge(rt, email)) {
       markVerificationApplied(email.messageId);
       await rt.store.deferEmail(email);
@@ -218,6 +227,11 @@ async function handleWhileInBrowser(rt: AgentRuntime, email: InboundEmail): Prom
     return;
   }
 
+  if (isWorkspaceDigest(email.subject)) {
+    log("inbox", "сводка отложена до конца работы в браузере", { subject: email.subject });
+    return;
+  }
+
   const c = await classifyEmail(rt, email, "classify.email.in-browser").catch(() => null);
   if (c?.kind === "verification" && c.hasLoginLink && email.links.length > 0) {
     const link = pickLoginLink(email.links);
@@ -283,7 +297,19 @@ function classifyAttempts(email: InboundEmail): number {
   return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+async function closeWithoutWork(rt: AgentRuntime, email: InboundEmail, summary: string): Promise<void> {
+  const run = await rt.createRun("email", email.subject || "Письмо", email.messageId);
+  await rt.step(run.id, "email", `other: ${summary}`);
+  await rt.finishRun(run, "done", `Без действий: ${summary}`);
+}
+
 async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: EmailClassification | null = null): Promise<void> {
+  if (isWorkspaceDigest(email.subject)) {
+    log("inbox", "сводка уведомлений, задачу не открываю", { subject: email.subject });
+    await closeWithoutWork(rt, email, "сводка уведомлений, конкретной задачи нет");
+    return;
+  }
+
   let c: EmailClassification;
   try {
     c = known ?? (await classifyEmail(rt, email, "classify.email"));
@@ -326,9 +352,7 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
   }
 
   if (c.kind === "other") {
-    const run = await rt.createRun("email", email.subject || "Письмо", email.messageId);
-    await rt.step(run.id, "email", `${c.kind}: ${c.summary}`);
-    await rt.finishRun(run, "done", `Без действий: ${c.summary}`);
+    await closeWithoutWork(rt, email, c.summary);
     return;
   }
 

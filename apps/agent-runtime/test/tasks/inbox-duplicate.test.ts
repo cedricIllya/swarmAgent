@@ -86,4 +86,41 @@ describe("processEmail", () => {
     expect(think).not.toHaveBeenCalled();
     expect(steps.get("run_cron")?.some((item) => item.text.includes("второй раз не начинаю"))).toBe(true);
   });
+
+  it("closes a workspace digest without asking the model to work", async () => {
+    const chat = vi.fn();
+    const think = vi.fn();
+    const createRun = vi.fn(async () => ({ id: "run_digest", title: "digest", status: "running" }));
+    const finishRun = vi.fn();
+    const rt = {
+      cfg: { ownerEmail: null },
+      skyvern: null,
+      browser: { waitingForCode: false, sessions: new Map() },
+      handoffs: { matchServiceMail: async () => null },
+      isCanceled: async () => false,
+      openRouter: { chat },
+      store: {
+        sentMessages: async () => ({}),
+        takeDeferredEmails: async () => [],
+        addUsage: async () => undefined,
+      },
+      createRun,
+      step: vi.fn(),
+      finishRun,
+      think,
+    } as unknown as AgentRuntime;
+
+    const digest = email();
+    digest.subject = "Notifications from the Pneumatic workspace for October 16th, 2026";
+    digest.from = "Pneumatic <no-reply@pneumatic.app>";
+    digest.text = "Here is what happened in the workspace today.";
+    digest.replyText = digest.text;
+
+    await processEmail(rt, digest);
+
+    expect(chat).not.toHaveBeenCalled();
+    expect(think).not.toHaveBeenCalled();
+    expect(createRun).toHaveBeenCalledOnce();
+    expect(finishRun).toHaveBeenCalledWith(expect.anything(), "done", expect.stringMatching(/Без действий: сводка уведомлений/));
+  });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { escalationNote, humanPage, onboardingPrompt, serviceWorkPrompt, systemPrompt, taskServices, tickPrompt } from "../../src/llm/prompts";
-import { isMachineSender } from "../../src/tasks/inbox";
+import { classifyEmailPrompt, escalationNote, humanPage, onboardingPrompt, serviceWorkPrompt, systemPrompt, taskServices, tickPrompt } from "../../src/llm/prompts";
+import { isMachineSender, isWorkspaceDigest } from "../../src/tasks/inbox";
 
 describe("escalationNote", () => {
   it("points a person at the service page and keeps the Skyvern screen separate", () => {
@@ -45,6 +45,28 @@ describe("service work from a notification", () => {
     expect(prompt).toMatch(/Отправителю этого письма не отвечай/);
     expect(isMachineSender("Pneumatic <no-reply@pneumatic.app>")).toBe(true);
     expect(isMachineSender("Владелец <owner@cedricillya.online>")).toBe(false);
+  });
+});
+
+describe("workspace digest", () => {
+  it("recognizes a dated notification summary and leaves a real assignment alone", () => {
+    expect(isWorkspaceDigest("Notifications from the Pneumatic workspace for October 16th, 2026")).toBe(true);
+    expect(isWorkspaceDigest("Notifications from the Acme Labs workspace for October 16, 2026")).toBe(true);
+    expect(isWorkspaceDigest("Назначили LIN-12")).toBe(false);
+    expect(isWorkspaceDigest("You were assigned a task in the Pneumatic workspace")).toBe(false);
+    expect(isWorkspaceDigest("Re: Notifications from the Pneumatic workspace for October 16th, 2026")).toBe(false);
+  });
+
+  it("tells the classifier that a daily summary is not work", () => {
+    const prompt = classifyEmailPrompt({
+      from: "Pneumatic <no-reply@pneumatic.app>",
+      subject: "Notifications from the Pneumatic workspace for October 16th, 2026",
+      links: [],
+      replyText: "",
+      text: "",
+    } as never);
+    expect(prompt).toMatch(/сводка уведомлений/);
+    expect(prompt).toMatch(/Notifications from the/);
   });
 });
 
