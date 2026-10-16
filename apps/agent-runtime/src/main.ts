@@ -12,8 +12,9 @@ import { resumeQueuedTasks, startTicker } from "./tasks/cron";
 import { startIdleWatch } from "./tasks/idle";
 import { controlPlaneRoutes } from "./http/control-plane-routes";
 import { proxyOpenRouter } from "./llm/openrouter-proxy";
-import { ensureOpenRouterUsageProxy } from "./llm/hermes-config-sync";
+import { ensureOpenRouterUsageProxy, syncHermesMcp } from "./llm/hermes-config-sync";
 import { browserRoutes } from "./http/browser-routes";
+import { mcpRoutes } from "./http/mcp";
 import { toolRoutes } from "./http/tool-routes";
 import { log, warn } from "./core/log";
 
@@ -32,6 +33,8 @@ if (process.env.BOOTSTRAP_DIR) {
   startGatewayWatch(cfg.dataDir);
 }
 await ensureOpenRouterUsageProxy(cfg.dataDir);
+const services = await rt.store.readServices();
+if (services) await syncHermesMcp(cfg.dataDir, services, Boolean(cfg.skyvernApiKey), cfg.runtimeToken);
 
 const app = new Hono();
 
@@ -71,6 +74,7 @@ app.onError(async (err, c) => {
 app.route("/", controlPlaneRoutes(rt));
 app.route("/", browserRoutes(rt));
 app.route("/", toolRoutes(rt));
+app.route("/", mcpRoutes(rt, (req) => app.fetch(req)));
 
 // На Fly тик приходит с control plane: свой таймер во сне не тикает.
 if (!cfg.controlPlaneUrl) startTicker(rt, cfg.tickMinutes);

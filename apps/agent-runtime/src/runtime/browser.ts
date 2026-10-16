@@ -38,7 +38,7 @@ export class BrowserControl {
 
   deps(): BrowserDeps {
     const { rt } = this;
-    return { openRouter: rt.openRouter, model: rt.model, store: rt.store };
+    return { openRouter: rt.openRouter, model: rt.fastModel, store: rt.store };
   }
 
   async open(run: Run, args: { purpose: string; serviceSlug: string | null; url?: string }): Promise<ManagedBrowserSession> {

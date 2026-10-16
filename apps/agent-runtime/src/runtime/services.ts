@@ -17,11 +17,26 @@ export function droppedCredentialSlugs(
   return [...new Set((prev ?? []).map((c) => c.slug).filter((slug) => !keep.has(slug)))];
 }
 
+/** Следующая запись каталога ждёт предыдущую: параллельный обход иначе затирает чужой digest. */
+export function createWriteLock(): <T>(fn: () => Promise<T>) => Promise<T> {
+  let chain: Promise<unknown> = Promise.resolve();
+  return (fn) => {
+    const run = chain.then(fn, fn);
+    chain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+}
+
 /**
  * Каталог сервисов агента: рецепты и секреты в `services.json`, их отражение
  * в `mcp_servers` Hermes и в карточке на сайте.
  */
 export class ServiceCatalog {
+  private readonly reportLock = createWriteLock();
+
   constructor(private readonly rt: AgentRuntime) {}
 
   async connected(): Promise<RuntimeState["connectedServices"]> {
@@ -75,7 +90,7 @@ export class ServiceCatalog {
     const { rt } = this;
     const snap = await rt.store.readServices();
     if (!snap) return;
-    await syncHermesMcp(rt.cfg.dataDir, snap, Boolean(rt.cfg.skyvernApiKey));
+    await syncHermesMcp(rt.cfg.dataDir, snap, Boolean(rt.cfg.skyvernApiKey), rt.cfg.runtimeToken);
     await this.publish();
   }
 
@@ -84,6 +99,13 @@ export class ServiceCatalog {
    * в `config.yaml` Hermes и строкой в журнал задачи.
    */
   async applyReport(
+    input: RuntimeReport,
+    opts: { quiet?: boolean } = {},
+  ): Promise<{ slug: string; name: string; kind: "mcp" | "api" | "browser" }> {
+    return this.reportLock(() => this.writeReport(input, opts));
+  }
+
+  private async writeReport(
     input: RuntimeReport,
     opts: { quiet?: boolean } = {},
   ): Promise<{ slug: string; name: string; kind: "mcp" | "api" | "browser" }> {

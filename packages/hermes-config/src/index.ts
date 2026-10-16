@@ -7,6 +7,9 @@ export const RUNTIME_PORT = 8787;
 /** Hermes шлёт вызовы модели сюда, runtime пишет `usage.cost` OpenRouter. */
 export const OPENROUTER_USAGE_PROXY = `http://127.0.0.1:${RUNTIME_PORT}/openrouter/v1`;
 
+/** Ключ MCP-сервера runtime в config.yaml Hermes. Инструменты приходят как `mcp_swarm_runtime_*`. */
+export const RUNTIME_MCP_NAME = "swarm_runtime";
+
 export interface HermesConfigInput {
   agentId: string;
   agentName: string;
@@ -16,6 +19,8 @@ export interface HermesConfigInput {
   /** Snapshot каталога и секретов тенанта: MCP-серверы попадают в config.yaml. */
   services: ServicesSnapshot;
   skyvern: { enabled: boolean };
+  /** Токен runtime. С ним Hermes вызывает инструменты runtime без curl. */
+  runtimeToken?: string;
 }
 
 /**
@@ -24,7 +29,11 @@ export interface HermesConfigInput {
  * Skyvern в MCP не попадает: в контейнере Hermes нет его CLI, а вход и регистрацию
  * runtime делает сам через `/invite/accept` и `/skyvern/login`.
  */
-export function renderMcpServers(services: ServicesSnapshot, _skyvernEnabled: boolean): Record<string, unknown> {
+export function renderMcpServers(
+  services: ServicesSnapshot,
+  _skyvernEnabled: boolean,
+  runtimeToken?: string,
+): Record<string, unknown> {
   const mcpServers: Record<string, unknown> = {};
 
   for (const recipe of services.recipes) {
@@ -52,19 +61,49 @@ export function renderMcpServers(services: ServicesSnapshot, _skyvernEnabled: bo
     mcpServers[recipe.slug] = entry;
   }
 
+  // После рецептов: сервис с тем же именем не должен затереть инструменты runtime.
+  const runtime = runtimeMcpServer(runtimeToken);
+  if (runtime) mcpServers[RUNTIME_MCP_NAME] = runtime;
+
   return mcpServers;
+}
+
+/** Локальный MCP runtime. Без токена сервер не пишем: Hermes стучался бы в 401 на каждом старте. */
+function runtimeMcpServer(token: string | undefined): Record<string, unknown> | null {
+  if (!token) return null;
+  return {
+    url: `http://127.0.0.1:${RUNTIME_PORT}/mcp`,
+    headers: { Authorization: `Bearer ${token}` },
+  };
 }
 
 /**
  * Подменить только `mcp_servers` в уже лежащем `config.yaml`.
  * Остальные ключи Hermes не трогаем: gateway подхватит файл сам.
  */
-export function replaceMcpServers(configYaml: string, services: ServicesSnapshot, skyvernEnabled: boolean): string {
+export function replaceMcpServers(
+  configYaml: string,
+  services: ServicesSnapshot,
+  skyvernEnabled: boolean,
+  runtimeToken?: string,
+): string {
   const doc = parse(configYaml);
   if (!doc || typeof doc !== "object" || Array.isArray(doc)) return configYaml;
   const next = doc as Record<string, unknown>;
-  next["mcp_servers"] = renderMcpServers(services, skyvernEnabled);
+  const servers = renderMcpServers(services, skyvernEnabled, runtimeToken);
+  if (!runtimeToken) {
+    const prev = previousRuntimeServer(next["mcp_servers"]);
+    if (prev) servers[RUNTIME_MCP_NAME] = prev;
+  }
+  next["mcp_servers"] = servers;
   return configYamlText(next);
+}
+
+function previousRuntimeServer(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const entry = (raw as Record<string, unknown>)[RUNTIME_MCP_NAME];
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  return entry as Record<string, unknown>;
 }
 
 /** Уже выписанный config.yaml: модель Hermes идёт в локальный прокси стоимости. */
@@ -119,7 +158,7 @@ export function renderConfigYaml(input: HermesConfigInput): string {
     // Контейнер — машина агента; одобрения на изменения в чужих системах даёт runtime (/approval).
     approvals: { mode: "off", unattended_mode: "approve", cron_mode: "approve" },
     toolsets: ["default", "mcp", "skills", "memory", "cronjob"],
-    mcp_servers: renderMcpServers(input.services, input.skyvern.enabled),
+    mcp_servers: renderMcpServers(input.services, input.skyvern.enabled, input.runtimeToken),
     swarm: {
       agent_id: input.agentId,
       email: input.email,
@@ -211,7 +250,11 @@ export function renderAllFiles(args: {
   skillTemplate: string;
 }): RenderedFile[] {
   return [
-    { path: "config.yaml", content: renderConfigYaml(args.config), mode: SHARED_FILE_MODE },
+    {
+      path: "config.yaml",
+      content: renderConfigYaml({ ...args.config, runtimeToken: args.config.runtimeToken ?? args.env.runtimeToken }),
+      mode: SHARED_FILE_MODE,
+    },
     { path: ".env", content: renderHermesEnv(args.env), mode: SHARED_FILE_MODE },
     { path: "cron/jobs.json", content: renderCronJobs(), mode: SHARED_FILE_MODE },
     {

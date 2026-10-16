@@ -60,6 +60,7 @@ describe("buildAgentMachineConfig", () => {
     expect(config.mounts).toEqual([{ volume: "vol_1", path: "/opt/data", name: agentId }]);
     expect(externalPortsFromConfig(config)).toEqual([23456]);
     expect(config.services?.[0]?.internal_port).toBe(8787);
+    expect(config.guest).toEqual({ cpu_kind: "shared", cpus: 2, memory_mb: 2048 });
     expect(machineNameFor(agentId)).toBe("agt-3n2s0d6g5h4e46720v6x");
   });
 });

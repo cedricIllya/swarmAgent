@@ -90,14 +90,17 @@ function draftCall(recipe: ServiceRecipe, cred: ServiceCredential, input: WatchI
   return savedTasksCall(recipe, { ...cred, tasksCall: call });
 }
 
-/** Повтор запомненных вызовов. Модель читает ответ только если он изменился. */
+/** Сколько сохранённых вызовов API и MCP читаются одновременно. Браузер остаётся по одному: профиль один. */
+const SURVEY_CONCURRENCY = 4;
+
+/** Повтор запомненных вызовов. Модель читает ответ только если он изменился. Вызовы идут параллельно. */
 export async function surveySavedCalls(rt: AgentRuntime, run: Run, fetchImpl: typeof fetch = fetch): Promise<{ tasks: FoundTask[]; failed: number }> {
   const services = await rt.store.readServices();
   if (!services) return { tasks: [], failed: 0 };
   const tasks: FoundTask[] = [];
   let failed = 0;
-  for (const item of splitTaskSurvey(services).calls) {
-    if (await rt.isCanceled(run.id)) break;
+  await mapPool(splitTaskSurvey(services).calls, SURVEY_CONCURRENCY, async (item) => {
+    if (await rt.isCanceled(run.id)) return;
     try {
       const found = await surveyCall(rt, run, item.recipe, item.cred, item.call, fetchImpl);
       tasks.push(...found);
@@ -106,8 +109,21 @@ export async function surveySavedCalls(rt: AgentRuntime, run: Run, fetchImpl: ty
       warn("cron", "вызов списка не прочитан", { slug: item.recipe.slug, error: String(e) });
       await rt.step(run.id, "error", `${item.recipe.name}: список задач не прочитан`);
     }
-  }
+  });
   return { tasks, failed };
+}
+
+async function mapPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  if (!items.length) return;
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next];
+      next += 1;
+      if (item !== undefined) await fn(item);
+    }
+  });
+  await Promise.all(workers);
 }
 
 async function surveyCall(
@@ -274,7 +290,7 @@ async function parseTaskText(rt: AgentRuntime, run: Run, service: string, text: 
       },
     ],
     { jsonSchema: { name: "tasks", schema: TASK_LIST_SCHEMA }, temperature: 0, maxTokens: 800 },
-    rt.model,
+    rt.fastModel || rt.model,
   );
   await recordUsage(rt.store, rt.taskRef(run), "tasks.extract", "runtime", r).catch((e) =>
     warn("cron", "расход разбора списка не записан", { error: String(e) }),

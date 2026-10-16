@@ -46,6 +46,26 @@ async function browserBlock(
   return blocked;
 }
 
+/** `%email%` и пароль из доступа сервиса. Модель видит только имена. */
+async function sessionVariables(
+  rt: AgentRuntime,
+  serviceSlug: string | null,
+  instruction: string,
+): Promise<{ variables?: Record<string, string>; error?: { status: 400 | 409; message: string } }> {
+  const used = referencedVariables(instruction);
+  if (!used.length) return {};
+  if (!serviceSlug) {
+    return { error: { status: 400, message: "%email% и %password% работают только в сессии, открытой с serviceSlug сервиса" } };
+  }
+  const cred = (await rt.store.readServices())?.credentials.find((x) => x.slug === serviceSlug);
+  const known = credentialVariables(cred);
+  const missing = used.filter((v) => !known[v]);
+  if (missing.length) {
+    return { error: { status: 409, message: `в доступе ${serviceSlug} нет: ${missing.map((v) => `%${v}%`).join(", ")}` } };
+  }
+  return { variables: Object.fromEntries(used.map((v) => [v, known[v]!])) };
+}
+
 /** Hermes (соседний контейнер) → runtime: браузер Stagehand и Skyvern из скилла swarm-worker. */
 export function browserRoutes(rt: AgentRuntime): Hono {
   const app = new Hono();
@@ -96,21 +116,30 @@ export function browserRoutes(rt: AgentRuntime): Hono {
     const body = Session.extend({ instruction: z.string() }).parse(withAliases(await c.req.json(), INSTRUCTION_ALIASES));
     const s = rt.browser.sessions.get(body.sessionId);
     if (!s) return c.json({ error: "session not found" }, 404);
-    const used = referencedVariables(body.instruction);
-    let variables: Record<string, string> | undefined;
-    if (used.length) {
-      if (!s.serviceSlug) {
-        return c.json({ error: "%email% и %password% работают только в сессии, открытой с serviceSlug сервиса" }, 400);
-      }
-      const cred = (await rt.store.readServices())?.credentials.find((x) => x.slug === s.serviceSlug);
-      const known = credentialVariables(cred);
-      const missing = used.filter((v) => !known[v]);
-      if (missing.length) {
-        return c.json({ error: `в доступе ${s.serviceSlug} нет: ${missing.map((v) => `%${v}%`).join(", ")}` }, 409);
-      }
-      variables = Object.fromEntries(used.map((v) => [v, known[v]!]));
-    }
-    return c.json({ ...(await s.act(body.instruction, variables)), url: await s.currentUrl() });
+    const prepared = await sessionVariables(rt, s.serviceSlug, body.instruction);
+    if (prepared.error) return c.json({ error: prepared.error.message }, prepared.error.status);
+    return c.json({ ...(await s.act(body.instruction, prepared.variables)), url: await s.currentUrl() });
+  });
+
+  // Вся цель одним вызовом: Stagehand сам делает несколько шагов, Hermes между ними не думает.
+  app.post("/browser/goal", async (c) => {
+    noteActivity();
+    const body = Session.extend({
+      instruction: z.string().min(1),
+      maxSteps: z.number().int().min(1).max(12).default(6),
+    }).parse(
+      withAliases(await c.req.json(), {
+        ...INSTRUCTION_ALIASES,
+        maxSteps: ["max_steps", "steps", "limit"],
+      }),
+    );
+    const s = rt.browser.sessions.get(body.sessionId);
+    if (!s) return c.json({ error: "session not found" }, 404);
+    const prepared = await sessionVariables(rt, s.serviceSlug, body.instruction);
+    if (prepared.error) return c.json({ error: prepared.error.message }, prepared.error.status);
+    const result = await s.goal(body.instruction, prepared.variables, body.maxSteps);
+    await rt.step(s.meta.runId, "browser", `браузер: ${body.instruction.slice(0, 180)} (${result.steps} шагов)`);
+    return c.json(result);
   });
 
   // Токен со страницы — сразу в доступ сервиса, рядом с почтой и паролем. Модели значение не отдаётся.

@@ -188,7 +188,10 @@ export function buildAgentMachineConfig(input: AgentMachineInput): MachineConfig
   }));
 
   return {
-    guest: { cpu_kind: "shared", cpus: 1, memory_mb: 2048 },
+    // Два shared-ядра: Chromium на одном не укладывается в переход Stagehand.
+    // Размер задан сразу. Смена guest у Fly перезапускает машину и оборвала бы открытый браузер.
+    // Во сне CPU и RAM не тарифицируются — второе ядро берёт деньги только пока машина не спит.
+    guest: { cpu_kind: "shared", cpus: 2, memory_mb: 2048 },
     mounts: [{ volume: input.volumeId, path: DATA_PATH, name: input.volumeName }],
     restart: { policy: "always" },
     auto_destroy: false,

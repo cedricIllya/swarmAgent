@@ -35,6 +35,9 @@ type LocalBrowserHandle = Awaited<ReturnType<typeof localBrowser.launch>>;
 const PENDING_CODE_TTL_MS = 10 * 60 * 1000;
 /** Один шаг Stagehand: модель плюс действие на странице. Зависший шаг не держит задачу вечно. */
 const STEP_TIMEOUT_MS = 2 * 60 * 1000;
+/** Цель в браузере — несколько шагов за один вызов Hermes. Дольше этого ход возвращается с тем, что успел. */
+const GOAL_BUDGET_MS = 8 * 60 * 1000;
+export const GOAL_STEP_DEFAULT = 6;
 const CLOSE_TIMEOUT_MS = 10 * 1000;
 /** SPA после domcontentloaded ещё белая: ждём затишья сети и первого текста, но не дольше этого. */
 const SETTLE_MS = 8 * 1000;
@@ -327,7 +330,7 @@ function profileDir(store: Store, slug: string | null, sessionId: string): strin
 }
 
 /**
- * Свой браузер агента: Chromium на машине, Stagehand решает шаги моделью агента.
+ * Свой браузер агента: Chromium на машине, шаги Stagehand решает быстрая модель.
  * Профиль на slug сервиса хранит cookies между сессиями. Живого экрана нет.
  */
 export class ManagedBrowserSession {
@@ -457,7 +460,7 @@ export class ManagedBrowserSession {
     return reading;
   }
 
-  /** Stagehand думает той же моделью агента через OpenRouter; токены пишем в usage. */
+  /** Stagehand думает быстрой моделью через OpenRouter; токены пишем в usage. */
   private async generate(params: LLMGenerateParams) {
     const messages: ChatMessageIn[] = [];
     if (params.systemPrompt) messages.push({ role: "system", content: params.systemPrompt });
@@ -551,6 +554,38 @@ export class ManagedBrowserSession {
   /** Перед чтением страницы моделью: после клика SPA дорисовывается не сразу. */
   private async settled(): Promise<void> {
     await settlePage(await this.page(), { network: false, budgetMs: SETTLE_MS / 2 }).catch(() => undefined);
+  }
+
+  /**
+   * Несколько шагов к одной цели за один вызов. Hermes не крутит модель между кликами.
+   * `GOAL_DONE` в ответе шага — цель уже на экране, дальше не нажимаем.
+   */
+  async goal(
+    instruction: string,
+    variables?: Record<string, string>,
+    maxSteps = GOAL_STEP_DEFAULT,
+  ): Promise<{ done: boolean; steps: number; url: string; message: string }> {
+    const cap = Math.max(1, Math.min(maxSteps, 12));
+    const deadline = Date.now() + GOAL_BUDGET_MS;
+    const notes: string[] = [];
+    for (let i = 1; i <= cap; i++) {
+      if (Date.now() >= deadline) break;
+      const step = [
+        instruction,
+        "Сделай только следующий шаг к этой цели.",
+        "Если цель уже достигнута, ничего не нажимай и ответь ровно GOAL_DONE.",
+      ].join(" ");
+      const r = await this.act(step, variables);
+      notes.push(r.message);
+      if (goalReached(r.message)) {
+        await this.action({ type: "goal", instruction, steps: i, done: true });
+        return { done: true, steps: i, url: await this.currentUrl(), message: notes.filter(Boolean).join("\n") };
+      }
+      if (!r.success) break;
+    }
+    const steps = notes.length;
+    await this.action({ type: "goal", instruction, steps, done: false });
+    return { done: false, steps, url: await this.currentUrl(), message: notes.filter(Boolean).join("\n") };
   }
 
   /** `variables` — значения для `%name%` в инструкции: Stagehand вводит их, модели не показывает. */
@@ -698,6 +733,11 @@ export class ManagedBrowserSession {
     log("browser", "сессия закрыта", { id: this.id });
     return this.meta;
   }
+}
+
+/** Шаг Stagehand сообщает, что цель уже на странице и кликать дальше не нужно. */
+export function goalReached(message: string): boolean {
+  return /^\s*GOAL_DONE\b/i.test(message);
 }
 
 function stripFence(text: string): string {

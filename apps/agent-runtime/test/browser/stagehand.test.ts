@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { browserFailure, chromePidsFromPs, desktopUserAgent, pageReading, settlePage, tokenCandidates } from "../../src/browser/stagehand";
+import { browserFailure, chromePidsFromPs, desktopUserAgent, goalReached, pageReading, settlePage, tokenCandidates } from "../../src/browser/stagehand";
 import { acquireProfile } from "../../src/browser/profile-lock";
 
 describe("tokenCandidates", () => {
@@ -133,5 +133,14 @@ describe("desktopUserAgent", () => {
 
   it("без версии — null", () => {
     expect(desktopUserAgent("nope")).toBeNull();
+  });
+});
+
+describe("goalReached", () => {
+  it("останавливает цель только на ответе GOAL_DONE", () => {
+    expect(goalReached("GOAL_DONE")).toBe(true);
+    expect(goalReached("  GOAL_DONE, список открыт")).toBe(true);
+    expect(goalReached("нажал New issue")).toBe(false);
+    expect(goalReached("в инструкции было GOAL_DONE, но я нажал кнопку")).toBe(false);
   });
 });

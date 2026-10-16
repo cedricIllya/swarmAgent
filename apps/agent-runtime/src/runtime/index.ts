@@ -51,6 +51,8 @@ export class AgentRuntime {
   /** Фактические списания OpenRouter, которые прокси увидел за ход Hermes. */
   readonly llmCosts = new LlmCostLedger();
   model: string;
+  /** Stagehand и разбор списков. Ход Hermes идёт на `model`. */
+  fastModel: string;
   autonomous: boolean;
   /** Abort текущих ходов Hermes по id задачи. */
   private readonly aborts = new Map<string, AbortController>();
@@ -61,6 +63,7 @@ export class AgentRuntime {
   constructor(readonly cfg: RuntimeConfig) {
     this.store = new Store(cfg.dataDir);
     this.model = cfg.model;
+    this.fastModel = cfg.fastModel;
     this.autonomous = cfg.autonomous;
     this.openRouter = new OpenRouterClient(cfg.openRouterApiKey, cfg.model, fetch, { fallbackModels: [cfg.fallbackModel] });
     this.hermes = new HermesClient({

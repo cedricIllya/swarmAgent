@@ -15,6 +15,8 @@ export interface RuntimeConfig {
   email: string;
   ownerEmail: string | null;
   model: string;
+  /** Шаги браузера и разбор списка задач. Планирование остаётся на `model`. */
+  fastModel: string;
   /** Запасная модель для коротких решений, когда основная перегружена или молчит. */
   fallbackModel: string;
   autonomous: boolean;
@@ -38,6 +40,8 @@ export function loadConfig(): RuntimeConfig {
     email: need("AGENT_EMAIL"),
     ownerEmail: process.env.OWNER_EMAIL ?? null,
     model: process.env.AGENT_MODEL ?? "openai/gpt-4.1-mini",
+    // Кадры страницы уходят в модель: запасная для браузера должна принимать картинки.
+    fastModel: process.env.AGENT_FAST_MODEL ?? "openai/gpt-4.1-nano",
     fallbackModel: process.env.AGENT_FALLBACK_MODEL ?? "openai/gpt-4.1-mini",
     autonomous: process.env.AGENT_AUTONOMOUS === "true",
     runtimeToken: need("RUNTIME_TOKEN"),

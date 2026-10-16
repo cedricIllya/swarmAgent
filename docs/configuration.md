@@ -49,6 +49,7 @@ openssl rand -base64 32
 | `AGENT_NAME`, `AGENT_MODEL`, `AGENT_AUTONOMOUS` | Отображаемое имя («Имя Фамилия»), модель, `true`/`false`. |
 | `AGENT_FIRST_NAME`, `AGENT_LAST_NAME` | Имя и фамилия для форм регистрации. Пусто — runtime режет `AGENT_NAME` по первому пробелу. |
 | `AGENT_FALLBACK_MODEL` | Запасная модель для разбора писем и чата, когда основная перегружена (429) или отвечает пусто. По умолчанию `openai/gpt-4.1-mini`. |
+| `AGENT_FAST_MODEL` | Шаги браузера и разбор списка задач. Должна принимать картинки. По умолчанию `openai/gpt-4.1-nano`. |
 | `OWNER_EMAIL` | Куда слать вопрос одобрения. |
 | `OPENROUTER_API_KEY` | Обязателен. |
 | `CONTROL_PLANE_URL` | Куда runtime сдаёт письма и рецепты. |

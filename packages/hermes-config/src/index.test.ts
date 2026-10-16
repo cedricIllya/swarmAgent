@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { OPENROUTER_USAGE_PROXY, renderAllFiles, renderConfigYaml, renderCronJobs, replaceMcpServers, useOpenRouterUsageProxy } from "./index";
+import { OPENROUTER_USAGE_PROXY, RUNTIME_MCP_NAME, renderAllFiles, renderConfigYaml, renderCronJobs, replaceMcpServers, useOpenRouterUsageProxy } from "./index";
 
 describe("renderCronJobs", () => {
   it("не зовёт /tick из Hermes: этот ход занял бы ту же сессию, что и письмо", () => {
@@ -198,6 +198,25 @@ describe("renderConfigYaml", () => {
     expect(doc.mcp_servers["gensite"]?.transport).toBe("sse");
     expect(doc.mcp_servers["gensite"]?.headers?.["Authorization"]).toBe("Bearer gs_1");
     expect(doc.mcp_servers["gensite"]).not.toHaveProperty("description");
+  });
+
+  it("подключает runtime как MCP и не теряет его при перезаписи каталога без токена", () => {
+    const yaml = renderConfigYaml({
+      agentId: "agt_1",
+      agentName: "Ops",
+      email: "ops@agents.test",
+      model: "m",
+      autonomous: false,
+      skyvern: { enabled: false },
+      runtimeToken: "rt_secret",
+      services: { generatedAt: "t", recipes: [], credentials: [] },
+    });
+    const doc = parse(yaml) as { mcp_servers: Record<string, { url?: string; headers?: Record<string, string> }> };
+    expect(doc.mcp_servers[RUNTIME_MCP_NAME]?.url).toBe("http://127.0.0.1:8787/mcp");
+    expect(doc.mcp_servers[RUNTIME_MCP_NAME]?.headers?.Authorization).toBe("Bearer rt_secret");
+    const rewritten = replaceMcpServers(yaml, { generatedAt: "t2", recipes: [], credentials: [] }, false);
+    const next = parse(rewritten) as { mcp_servers: Record<string, { url?: string }> };
+    expect(next.mcp_servers[RUNTIME_MCP_NAME]?.url).toBe("http://127.0.0.1:8787/mcp");
   });
 
   it("writes shared files as 0644 so the hermes container can read them", () => {

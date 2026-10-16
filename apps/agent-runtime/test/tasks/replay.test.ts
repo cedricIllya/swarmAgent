@@ -72,6 +72,7 @@ describe("surveySavedCalls", () => {
     const rt = {
       isCanceled: async () => false,
       model: "m",
+      fastModel: "nano",
       taskRef: () => ({ taskId: run.id, taskTitle: run.title }),
       store: { readServices: async () => services, addUsage: vi.fn(async () => undefined) },
       openRouter: { chat },
@@ -81,8 +82,53 @@ describe("surveySavedCalls", () => {
     const result = await surveySavedCalls(rt as never, run, fetchImpl as never);
     expect(result.tasks.map((task) => task.title)).toEqual(["Починить"]);
     expect(chat).toHaveBeenCalledOnce();
+    expect(chat).toHaveBeenCalledWith(expect.anything(), expect.anything(), "nano");
     expect(applyReport).toHaveBeenCalledOnce();
     expect(services.credentials[0]?.tasksDigest).toBe(pageDigest('{"issues":["new"]}'));
+  });
+
+  it("reads saved API calls at the same time", async () => {
+    const text = "same";
+    const digest = pageDigest(text);
+    const second: ServiceRecipe = {
+      ...recipe,
+      slug: "notion",
+      name: "Notion",
+      domains: ["api.notion.com"],
+      api: { baseUrl: "https://api.notion.com", auth: "bearer", authHeader: "Authorization" },
+    };
+    const services: ServicesSnapshot = {
+      generatedAt: "t",
+      recipes: [recipe, second],
+      credentials: [
+        cred({ tasksCall: { kind: "api", method: "GET", url: "https://api.linear.app/issues" }, tasksDigest: digest }),
+        cred({
+          slug: "notion",
+          tasksCall: { kind: "api", method: "GET", url: "https://api.notion.com/v1/search" },
+          tasksDigest: digest,
+        }),
+      ],
+    };
+    let inflight = 0;
+    let max = 0;
+    const fetchImpl = vi.fn(async () => {
+      inflight += 1;
+      max = Math.max(max, inflight);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      inflight -= 1;
+      return new Response(text, { status: 200 });
+    });
+    const rt = {
+      isCanceled: async () => false,
+      store: { readServices: async () => services },
+      openRouter: { chat: vi.fn() },
+      step: vi.fn(async () => undefined),
+      services: { applyReport: vi.fn() },
+    };
+    const result = await surveySavedCalls(rt as never, run, fetchImpl as never);
+    expect(result.failed).toBe(0);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(max).toBe(2);
   });
 });
 

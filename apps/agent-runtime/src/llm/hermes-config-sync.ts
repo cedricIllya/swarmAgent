@@ -8,8 +8,15 @@ import { warn } from "../core/log";
  * Переписать `mcp_servers` в config.yaml на volume. Hermes gateway следит за файлом
  * и подключает новые серверы без рестарта машины.
  */
-export async function syncHermesMcp(dataDir: string, services: ServicesSnapshot, skyvernEnabled: boolean): Promise<void> {
-  await rewriteHermesConfig(dataDir, (current) => useOpenRouterUsageProxy(replaceMcpServers(current, services, skyvernEnabled)));
+export async function syncHermesMcp(
+  dataDir: string,
+  services: ServicesSnapshot,
+  skyvernEnabled: boolean,
+  runtimeToken?: string,
+): Promise<void> {
+  await rewriteHermesConfig(dataDir, (current) =>
+    useOpenRouterUsageProxy(replaceMcpServers(current, services, skyvernEnabled, runtimeToken)),
+  );
 }
 
 /** До старта Hermes: его вызовы модели идут в локальный прокси, даже если config.yaml старый. */
