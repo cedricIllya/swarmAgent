@@ -83,6 +83,48 @@ describe("parseSlackEnvelope", () => {
     expect(notice).toMatchObject({ kind: "message", userIds: ["UAGENT", "UOTHER"] });
   });
 
+  it("берёт файл в личке и не берёт служебное сообщение", () => {
+    const notice = parseSlackEnvelope(
+      JSON.stringify({
+        type: "event_callback",
+        team_id: "T1",
+        event_id: "EvF",
+        event: {
+          type: "message",
+          subtype: "file_share",
+          channel: "D1",
+          channel_type: "im",
+          user: "U1",
+          text: "вот таблица",
+          ts: "1.5",
+          files: [{ id: "F1", name: "data.csv", mimetype: "text/csv", size: 4, preview: "а,1", url_private: "https://files.slack.com/secret" }],
+        },
+      }),
+    );
+    expect(notice).toMatchObject({
+      kind: "message",
+      event: {
+        event: {
+          subtype: "file_share",
+          text: "вот таблица",
+          files: [{ id: "F1", name: "data.csv", mimetype: "text/csv", size: 4, preview: "а,1" }],
+        },
+      },
+    });
+    expect(JSON.stringify(notice)).not.toContain("url_private");
+    expect(JSON.stringify(notice)).not.toContain("files.slack.com");
+    expect(
+      parseSlackEnvelope(
+        JSON.stringify({
+          type: "event_callback",
+          team_id: "T1",
+          event_id: "EvJ",
+          event: { type: "message", subtype: "channel_join", channel: "C1", user: "U1", text: "joined", ts: "1.6" },
+        }),
+      ),
+    ).toEqual({ kind: "ignore" });
+  });
+
   it("не будит агента из-за своего сообщения", () => {
     expect(
       parseSlackEnvelope(
@@ -104,6 +146,7 @@ describe("buildSlackConsentUrl", () => {
     );
     expect(url.searchParams.get("user_scope")).toContain("chat:write");
     expect(url.searchParams.get("user_scope")).toContain("im:history");
+    expect(url.searchParams.get("user_scope")).toContain("files:read");
     expect(url.searchParams.get("scope")).toContain("chat:write");
     expect(url.searchParams.get("scope")).toContain("chat:write.public");
   });

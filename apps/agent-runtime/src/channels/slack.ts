@@ -1,9 +1,13 @@
-import { encodeSlackChoice } from "@swarm/contracts";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { encodeSlackChoice, slackFileRefs, type SlackFileRef } from "@swarm/contracts";
 
 /**
  * Slack Web API. Токен — bot или user из доступа сервиса (`xoxb-`, `xoxp-` и любой,
  * который принимает `auth.test`). Личные сообщения читаются целиком, в каналах —
- * только упоминания. Ответ уходит в тот же диалог. Кнопки вариантов пишет бот.
+ * только упоминания. Сообщение с файлом тоже: текст вкладывается в задачу,
+ * картинка и прочий файл сохраняются на диск. Ответ уходит в тот же диалог.
+ * Кнопки вариантов пишет бот.
  */
 
 export interface SlackRawMessage {
@@ -14,6 +18,7 @@ export interface SlackRawMessage {
   text?: string;
   ts?: string;
   thread_ts?: string;
+  files?: unknown;
 }
 
 export interface HeardSlack {
@@ -24,7 +29,10 @@ export interface HeardSlack {
   channel: string;
   /** В канале ответ идёт в тред. В личке поле пустое: весь диалог — один чат. */
   threadTs?: string;
+  /** ts сообщения, под которым публиковать ответ. В треде это корень, не реплика. */
+  replyTs: string;
   im: boolean;
+  files: SlackFileRef[];
 }
 
 interface SlackOk {
@@ -41,10 +49,248 @@ export function slackPlainText(raw: string): string {
     .trim();
 }
 
+const MAX_DOWNLOAD = 8 * 1024 * 1024;
+const MAX_INLINE = 12_000;
+const MAX_MESSAGE = 20_000;
+const TEXT_EXT = new Set([
+  "txt", "md", "markdown", "csv", "tsv", "json", "xml", "yaml", "yml", "log", "html", "htm", "css",
+  "js", "jsx", "ts", "tsx", "py", "rb", "go", "rs", "sql", "sh", "toml", "ini", "svg", "env",
+]);
+const TEXT_MIME = new Set([
+  "application/json", "application/xml", "application/javascript", "application/x-yaml",
+  "application/yaml", "application/csv", "application/sql", "image/svg+xml",
+]);
+
+function fileExtension(name: string): string {
+  const base = name.split(/[/\\]/).pop() ?? "";
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} Б`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} КБ`;
+  return `${(size / (1024 * 1024)).toFixed(1)} МБ`;
+}
+
+/** Подпись файла в тексте задачи. */
+export function slackFileLabel(file: SlackFileRef, extra = ""): string {
+  const bits = [file.mimetype || "файл"];
+  if (file.size > 0) bits.push(formatBytes(file.size));
+  if (extra) bits.push(extra);
+  return `[файл ${file.name}, ${bits.join(", ")}]`;
+}
+
+function withPreview(head: string, preview?: string): string {
+  const body = preview?.trim();
+  if (!body) return head;
+  return `${head}\n${body.slice(0, 1500)}`;
+}
+
+/** Строка треда: реплика и имена файлов, без скачивания. Служебный subtype — пусто. */
+export function slackThreadLine(message: SlackRawMessage): string {
+  if (message.subtype && message.subtype !== "file_share") return "";
+  const text = slackPlainText(message.text ?? "");
+  const notes = slackFileRefs(message.files).map((file) => withPreview(slackFileLabel(file), file.preview));
+  return [text, ...notes].filter(Boolean).join("\n").slice(0, 1500);
+}
+
+function inlineText(file: SlackFileRef): boolean {
+  const mime = file.mimetype.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (mime.startsWith("image/") && mime !== "image/svg+xml") return false;
+  if (mime === "application/pdf" || mime.startsWith("application/zip") || mime.startsWith("application/vnd.")) return false;
+  if (mime.startsWith("audio/") || mime.startsWith("video/")) return false;
+  if (mime.startsWith("text/") || TEXT_MIME.has(mime) || mime === "image/svg+xml") return true;
+  const ext = fileExtension(file.name);
+  if (TEXT_EXT.has(ext)) return true;
+  return mime === "" || mime === "application/octet-stream";
+}
+
+function decodeUtf8(bytes: Uint8Array): string | null {
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (text.includes("\u0000")) return null;
+    return text;
+  } catch {
+    return null;
+  }
+}
+
+/** Скачивать можно только адрес, который отдал сам Slack. */
+function slackDownloadUrl(value: unknown): string | null {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.hostname !== "files.slack.com") return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Файл Slack отдаёт 302 на подписанный адрес. Токен нужен только первому запросу:
+ * на чужой хост его не пересылаем.
+ */
+async function downloadSlackFile(
+  token: string,
+  url: string,
+  fetchImpl: typeof fetch,
+): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  const first = await fetchImpl(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    redirect: "manual",
+  });
+  let res = first;
+  if (first.status >= 300 && first.status < 400) {
+    const location = first.headers.get("location");
+    if (!location) return null;
+    let next: URL;
+    try {
+      next = new URL(location, url);
+    } catch {
+      return null;
+    }
+    if (next.protocol !== "https:") return null;
+    res = await fetchImpl(next.toString(), { redirect: "manual" });
+  }
+  if (!res.ok) return null;
+  const bytes = await readLimited(res);
+  if (!bytes) return null;
+  return { bytes, contentType: res.headers.get("content-type") ?? "" };
+}
+
+/** Читает тело, пока оно не больше предела. Дальше соединение закрывается. */
+async function readLimited(res: Response): Promise<Uint8Array | null> {
+  const length = Number(res.headers.get("content-length") ?? "");
+  if (Number.isFinite(length) && length > MAX_DOWNLOAD) return null;
+  if (!res.body) {
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.byteLength === 0 || bytes.byteLength > MAX_DOWNLOAD) return null;
+    return bytes;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let overflow = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_DOWNLOAD) {
+        overflow = true;
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    if (!overflow) reader.releaseLock();
+  }
+  if (total === 0) return null;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+function diskName(file: SlackFileRef): string {
+  const id = file.id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || "file";
+  const base = (file.name.split(/[/\\]/).pop() ?? "file").replace(/[^\w.\- \u0400-\u04FF]+/g, "_").replace(/^\.+/, "").trim().slice(0, 80);
+  return `${id}-${base || "file"}`;
+}
+
+async function saveBytes(dir: string, file: SlackFileRef, bytes: Uint8Array): Promise<string> {
+  await mkdir(dir, { recursive: true });
+  await chmod(dir, 0o755).catch(() => undefined);
+  const dest = path.join(dir, diskName(file));
+  await writeFile(dest, bytes, { mode: 0o644 });
+  return dest;
+}
+
+function refineFile(file: SlackFileRef, info: Record<string, unknown> | undefined): { file: SlackFileRef; url: string | null } {
+  if (!info) return { file, url: null };
+  const [refined] = slackFileRefs([{ ...info, id: file.id }]);
+  const next: SlackFileRef = refined
+    ? {
+        id: file.id,
+        name: refined.name !== "файл" ? refined.name : file.name,
+        mimetype: refined.mimetype || file.mimetype,
+        size: refined.size || file.size,
+        ...((refined.preview ?? file.preview) ? { preview: refined.preview ?? file.preview ?? "" } : {}),
+      }
+    : file;
+  if (!next.preview) delete next.preview;
+  return { file: next, url: slackDownloadUrl(info.url_private_download) ?? slackDownloadUrl(info.url_private) };
+}
+
+async function readOne(token: string, file: SlackFileRef, saveDir: string | null, fetchImpl: typeof fetch): Promise<string> {
+  let current = file;
+  let url: string | null = null;
+  try {
+    const data = await slackCall<{ file?: Record<string, unknown> } & SlackOk>(token, "files.info", { file: file.id }, fetchImpl);
+    const refined = refineFile(file, data.file);
+    current = refined.file;
+    url = refined.url;
+  } catch (e) {
+    const reason = String(e).includes("missing_scope") ? "нет права files:read" : "содержимое не прочитано";
+    return withPreview(slackFileLabel(current, reason), current.preview);
+  }
+  if (!url) return withPreview(slackFileLabel(current, "содержимое не прочитано"), current.preview);
+  if (current.size > MAX_DOWNLOAD) return withPreview(slackFileLabel(current, "слишком большой, чтобы скачать"), current.preview);
+  let downloaded: { bytes: Uint8Array; contentType: string } | null = null;
+  try {
+    downloaded = await downloadSlackFile(token, url, fetchImpl);
+  } catch {
+    downloaded = null;
+  }
+  if (!downloaded) return withPreview(slackFileLabel(current, "содержимое не прочитано"), current.preview);
+  const headerType = downloaded.contentType.split(";")[0]?.trim() ?? "";
+  if (headerType && !current.mimetype) current = { ...current, mimetype: headerType.slice(0, 128) };
+  const decoded = decodeUtf8(downloaded.bytes);
+  if (decoded !== null && inlineText(current)) {
+    const body = decoded.trim().slice(0, MAX_INLINE);
+    const clipped = decoded.trim().length > MAX_INLINE ? "\n…файл обрезан" : "";
+    return `${slackFileLabel(current)}\n${body}${clipped}`;
+  }
+  if (!saveDir) return withPreview(slackFileLabel(current, "содержимое не прочитано"), current.preview);
+  try {
+    const saved = await saveBytes(saveDir, current, downloaded.bytes);
+    return withPreview(slackFileLabel(current, `лежит в ${saved} — открой и посмотри`), current.preview);
+  } catch {
+    return withPreview(slackFileLabel(current, "не сохранился на диск"), current.preview);
+  }
+}
+
+/**
+ * Текст сообщения плюс содержимое файлов.
+ * Текстовый файл вкладывается в задачу. Картинку и прочее кладёт в `saveDir`,
+ * чтобы агент открыл их сам. Пустой список файлов текст не меняет.
+ */
+export async function slackReadFiles(
+  token: string,
+  text: string,
+  files: SlackFileRef[],
+  saveDir: string | null,
+  fetchImpl: typeof fetch,
+): Promise<string> {
+  const list = files.slice(0, 8);
+  if (list.length === 0) return text;
+  const parts: string[] = [];
+  if (text.trim()) parts.push(text.trim());
+  for (const file of list) parts.push(await readOne(token, file, saveDir, fetchImpl));
+  return parts.join("\n\n").slice(0, MAX_MESSAGE);
+}
+
 /**
  * Какие сообщения этого канала адресованы агенту. Свои и служебные пропускает.
- * В канале — упоминание user-токена или бота, событие `app_mention`, либо реплика
- * в треде, куда агента уже звали. `followedThreads` — ts корня таких тредов.
+ * `file_share` — сообщение с файлом, его оставляет. В канале — упоминание
+ * user-токена или бота, событие `app_mention`, либо реплика в треде, куда агента
+ * уже звали. `followedThreads` — ts корня таких тредов.
  * Упоминание бота не совпадает с id `auth.test` пользовательского токена.
  */
 export function hearSlack(args: {
@@ -61,15 +307,18 @@ export function hearSlack(args: {
   const out: HeardSlack[] = [];
   for (const message of args.messages) {
     if (message.type && message.type !== "message" && message.type !== "app_mention") continue;
-    if (message.subtype || message.bot_id) continue;
+    if (message.bot_id) continue;
+    if (message.subtype && message.subtype !== "file_share") continue;
     if (!message.user || !message.ts || own.has(message.user)) continue;
+    const files = slackFileRefs(message.files);
     const text = slackPlainText(message.text ?? "");
-    if (!text) continue;
+    if (!text && files.length === 0) continue;
     const raw = message.text ?? "";
     const mentioned = [...own].some((id) => raw.includes(`<@${id}>`));
     const followed = Boolean(message.thread_ts && args.followedThreads?.has(message.thread_ts));
     if (!args.im && !mentioned && !followed && message.type !== "app_mention") continue;
-    const threadTs = args.im ? undefined : message.thread_ts || message.ts;
+    const replyTs = message.thread_ts || message.ts;
+    const threadTs = args.im ? undefined : replyTs;
     out.push({
       externalId: `${args.channelId}:${message.ts}`,
       threadKey: args.im ? `slack:${args.teamId}:${args.channelId}` : `slack:${args.teamId}:${args.channelId}:${threadTs}`,
@@ -77,7 +326,9 @@ export function hearSlack(args: {
       text: text.slice(0, 4000),
       channel: args.channelId,
       ...(threadTs ? { threadTs } : {}),
+      replyTs,
       im: args.im,
+      files,
     });
   }
   return out;

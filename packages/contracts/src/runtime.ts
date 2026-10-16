@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { InboundEmailSchema } from "./email";
+import { SlackFileRefSchema } from "./slack-file";
 import {
   ServiceCredentialSchema,
   ServiceRecipeSchema,
@@ -30,6 +31,7 @@ export const DeliverSlackEventRequestSchema = z.object({
     channelType: z.string().max(32).optional(),
     botId: z.string().max(32).optional(),
     subtype: z.string().max(64).optional(),
+    files: z.array(SlackFileRefSchema).max(8).optional(),
   }),
 });
 

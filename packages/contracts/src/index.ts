@@ -4,4 +4,5 @@ export * from "./agent";
 export * from "./usage";
 export * from "./runtime";
 export * from "./slack-choice";
+export * from "./slack-file";
 export * from "./user-question";

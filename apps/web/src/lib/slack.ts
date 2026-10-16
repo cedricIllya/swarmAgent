@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { decodeSlackChoice, type DeliverSlackEventRequest, type ServiceRecipe } from "@swarm/contracts";
+import { decodeSlackChoice, slackFileRefs, type DeliverSlackEventRequest, type ServiceRecipe } from "@swarm/contracts";
 
 /**
  * Аккаунт Slack, от имени которого говорит агент. События приходят на
@@ -13,6 +13,7 @@ export const SLACK_USER_SCOPES = [
   "channels:history",
   "channels:read",
   "chat:write",
+  "files:read",
   "groups:history",
   "groups:read",
   "im:history",
@@ -233,10 +234,12 @@ export function parseSlackEnvelope(raw: string): SlackNotice {
   if (ev.type === "app_uninstalled") return { kind: "uninstall", teamId, userIds: [] };
   if (ev.type === "tokens_revoked") return { kind: "uninstall", teamId, userIds: revokedUserIds(ev.tokens) };
   if (ev.type !== "message" && ev.type !== "app_mention") return { kind: "ignore" };
-  if (typeof ev.bot_id === "string" || typeof ev.subtype === "string") return { kind: "ignore" };
+  if (typeof ev.bot_id === "string") return { kind: "ignore" };
+  if (typeof ev.subtype === "string" && ev.subtype !== "file_share") return { kind: "ignore" };
   if (typeof ev.user !== "string" || typeof ev.channel !== "string" || typeof ev.ts !== "string") return { kind: "ignore" };
+  const files = slackFileRefs(ev.files);
   const text = typeof ev.text === "string" ? ev.text.trim() : "";
-  if (!text) return { kind: "ignore" };
+  if (!text && files.length === 0) return { kind: "ignore" };
   const eventId = typeof envelope.event_id === "string" ? envelope.event_id : "";
   if (!eventId) return { kind: "ignore" };
   return {
@@ -249,10 +252,12 @@ export function parseSlackEnvelope(raw: string): SlackNotice {
         type: ev.type,
         channel: ev.channel,
         user: ev.user,
-        text: text.slice(0, 8000),
+        ...(text ? { text: text.slice(0, 8000) } : {}),
         ts: ev.ts,
         ...(typeof ev.thread_ts === "string" ? { threadTs: ev.thread_ts } : {}),
         ...(typeof ev.channel_type === "string" ? { channelType: ev.channel_type } : {}),
+        ...(ev.subtype === "file_share" ? { subtype: "file_share" } : {}),
+        ...(files.length ? { files } : {}),
       },
     },
   };

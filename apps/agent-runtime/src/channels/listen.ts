@@ -10,12 +10,14 @@ import {
   hearSlack,
   slackConversations,
   slackDisplayName,
+  slackFileLabel,
   slackHistory,
   slackIdentity,
-  slackPlainText,
   slackPost,
   slackPostChoices,
+  slackReadFiles,
   slackReplies,
+  slackThreadLine,
   type HeardSlack,
   type SlackIdentity,
   type SlackRawMessage,
@@ -28,9 +30,15 @@ interface ChannelState {
   names: Record<string, string>;
   /** slug рецепта → бот, чтобы не звать auth.test на каждое событие. */
   identities: Record<string, SlackIdentity>;
+  /** Задача → ts сообщения, под которым публиковать ответ. */
+  replyTo: Record<string, string>;
+  /** `slug:channel` → корни тредов лички, которые ещё надо читать. */
+  threads: Record<string, string[]>;
 }
 
-const EMPTY: ChannelState = { seen: [], cursors: {}, names: {}, identities: {} };
+const EMPTY: ChannelState = { seen: [], cursors: {}, names: {}, identities: {}, replyTo: {}, threads: {} };
+const MAX_REPLY_TO = 200;
+const MAX_THREADS = 30;
 const FIRST_WINDOW_SEC = 20 * 60;
 const MAX_SEEN = 400;
 const MAX_PER_TICK = 20;
@@ -47,6 +55,40 @@ function exclusive<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+function trimRecord(record: Record<string, string>, max: number): Record<string, string> {
+  const entries = Object.entries(record);
+  return Object.fromEntries(entries.slice(-max));
+}
+
+function asReplyTo(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) if (typeof value === "string" && value) out[key] = value;
+  return out;
+}
+
+function asThreads(raw: unknown): Record<string, string[]> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, string[]> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!Array.isArray(value)) continue;
+    const list = value.filter((item): item is string => typeof item === "string" && item.length > 0);
+    if (list.length) out[key] = list;
+  }
+  return out;
+}
+
+function mergeThreads(disk: unknown, next: Record<string, string[]>): Record<string, string[]> {
+  const prev = asThreads(disk);
+  const out: Record<string, string[]> = {};
+  for (const key of new Set([...Object.keys(prev), ...Object.keys(next)])) {
+    const merged = [...(prev[key] ?? [])];
+    for (const ts of next[key] ?? []) if (!merged.includes(ts)) merged.push(ts);
+    if (merged.length) out[key] = merged.slice(-MAX_THREADS);
+  }
+  return out;
+}
+
 function stateFile(rt: AgentRuntime): string | null {
   if (typeof rt.store?.dir !== "function") return null;
   return rt.store.dir("channel-inbox.json");
@@ -61,6 +103,8 @@ async function readState(rt: AgentRuntime): Promise<ChannelState> {
     cursors: raw?.cursors && typeof raw.cursors === "object" ? raw.cursors : {},
     names: raw?.names && typeof raw.names === "object" ? raw.names : {},
     identities: raw?.identities && typeof raw.identities === "object" ? raw.identities : {},
+    replyTo: asReplyTo(raw?.replyTo),
+    threads: asThreads(raw?.threads),
   };
 }
 
@@ -82,6 +126,8 @@ async function writeState(rt: AgentRuntime, state: ChannelState): Promise<void> 
       cursors,
       names: { ...(disk?.names ?? {}), ...state.names },
       identities: { ...(disk?.identities ?? {}), ...state.identities },
+      replyTo: trimRecord({ ...(disk?.replyTo ?? {}), ...state.replyTo }, MAX_REPLY_TO),
+      threads: mergeThreads(disk?.threads, state.threads),
     });
   });
 }
@@ -170,6 +216,20 @@ async function openThread(rt: AgentRuntime, link: ChannelLink, title: string): P
   return chat.id;
 }
 
+/** Комментарий и содержимое файлов. Без файлов текст не трогает. */
+async function heardText(token: string, heard: HeardSlack, rt: AgentRuntime, fetchImpl: typeof fetch): Promise<string> {
+  if (heard.files.length === 0) return heard.text;
+  const saveDir = typeof rt.store?.dir === "function" ? rt.store.dir("slack-files") : null;
+  try {
+    const text = await slackReadFiles(token, heard.text, heard.files, saveDir, fetchImpl);
+    if (text.trim()) return text;
+  } catch (e) {
+    warn("channel", "файлы Slack не прочитаны", { id: heard.externalId, error: String(e) });
+  }
+  const notes = heard.files.map((file) => slackFileLabel(file, "содержимое не прочитано")).join("\n");
+  return [heard.text.trim(), notes].filter(Boolean).join("\n\n");
+}
+
 async function ingest(rt: AgentRuntime, slug: string, author: string, heard: HeardSlack, threadContext: string): Promise<void> {
   const link: ChannelLink = {
     adapter: "slack",
@@ -179,13 +239,35 @@ async function ingest(rt: AgentRuntime, slug: string, author: string, heard: Hea
     ...(heard.threadTs ? { threadTs: heard.threadTs } : {}),
   };
   const chatId = await openThread(rt, link, `Slack · ${author}`.slice(0, 80));
-  await handleChat(rt, {
+  const started = await handleChat(rt, {
     chatId,
     message: heard.text,
     author,
     fromMessenger: true,
     ...(threadContext ? { threadContext } : {}),
   });
+  if (started) await rememberReply(rt, slug, heard.channel, started.run.id, heard.replyTs);
+}
+
+/** Куда отвечать на эту задачу. В личке тред держится по сообщению, чат карточки остаётся один. */
+async function rememberReply(rt: AgentRuntime, slug: string, channel: string, runId: string, ts: string): Promise<void> {
+  await exclusive(async () => {
+    const state = await readState(rt);
+    state.replyTo[runId] = ts;
+    state.replyTo = trimRecord(state.replyTo, MAX_REPLY_TO);
+    const key = `${slug}:${channel}`;
+    const roots = state.threads[key] ?? [];
+    if (!roots.includes(ts)) roots.push(ts);
+    state.threads[key] = roots.slice(-MAX_THREADS);
+    const file = stateFile(rt);
+    if (file) await writeJson(file, state);
+  });
+}
+
+async function replyTarget(rt: AgentRuntime, runId: string | null): Promise<string | null> {
+  if (!runId) return null;
+  const state = await readState(rt);
+  return state.replyTo[runId] ?? null;
 }
 
 /** ts корней тредов этого канала, куда агента уже звали. */
@@ -218,8 +300,8 @@ async function threadContext(
   }
   const lines: string[] = [];
   for (const message of messages) {
-    if (!message.ts || message.ts === currentTs || message.subtype || message.bot_id || !message.user) continue;
-    const text = slackPlainText(message.text ?? "");
+    if (!message.ts || message.ts === currentTs || message.bot_id || !message.user) continue;
+    const text = slackThreadLine(message);
     if (!text) continue;
     const name = message.user === selfId ? "Агент" : await authorName(token, state, message.user, fetchImpl);
     lines.push(`${name}: ${text}`);
@@ -289,9 +371,11 @@ async function pullSlack(rt: AgentRuntime, recipe: ServiceRecipe, cred: ServiceC
       warn("channel", "история Slack не прочитана", { channel: conversation.id, error: String(e) });
       continue;
     }
-    const roots = conversation.im ? new Set<string>() : await followedThreads(rt, conversation.id);
+    const roots = conversation.im
+      ? new Set(state.threads[cursorKey] ?? [])
+      : await followedThreads(rt, conversation.id);
     const replies: SlackRawMessage[] = [];
-    if (!conversation.im) {
+    if (roots.size > 0) {
       for (const threadTs of roots) {
         try {
           replies.push(...(await slackReplies(token, conversation.id, threadTs, fetchImpl)));
@@ -337,7 +421,8 @@ async function pullSlack(rt: AgentRuntime, recipe: ServiceRecipe, cred: ServiceC
       try {
         const name = await authorName(token, state, item.authorId, fetchImpl);
         const context = await threadContext(token, state, identity.userId, item, fetchImpl);
-        await ingest(rt, recipe.slug, name, item, context);
+        const text = await heardText(token, item, rt, fetchImpl);
+        await ingest(rt, recipe.slug, name, { ...item, text }, context);
       } catch (e) {
         warn("channel", "сообщение Slack не принято", { id: item.externalId, error: String(e) });
       }
@@ -407,7 +492,7 @@ export async function acceptSlackEvent(rt: AgentRuntime, inbound: DeliverSlackEv
     botUserIds: botUserIds(cred),
     channelId: event.channel,
     im,
-    followedThreads: im ? undefined : await followedThreads(rt, event.channel),
+    ...(im ? {} : { followedThreads: await followedThreads(rt, event.channel) }),
     messages: [
       {
         type: event.type,
@@ -417,6 +502,7 @@ export async function acceptSlackEvent(rt: AgentRuntime, inbound: DeliverSlackEv
         ...(event.text ? { text: event.text } : {}),
         ts: event.ts,
         ...(event.threadTs ? { thread_ts: event.threadTs } : {}),
+        ...(event.files?.length ? { files: event.files } : {}),
       },
     ],
   });
@@ -427,8 +513,9 @@ export async function acceptSlackEvent(rt: AgentRuntime, inbound: DeliverSlackEv
     const state = await readState(rt);
     const name = await authorName(token, state, item.authorId, globalThis.fetch);
     const context = await threadContext(token, state, identity.userId, item, globalThis.fetch);
+    const text = await heardText(token, item, rt, globalThis.fetch);
     await writeState(rt, state);
-    await ingest(rt, recipe.slug, name, item, context);
+    await ingest(rt, recipe.slug, name, { ...item, text }, context);
     return "accepted";
   } catch (e) {
     await forgetSeen(rt, item.externalId);
@@ -437,7 +524,7 @@ export async function acceptSlackEvent(rt: AgentRuntime, inbound: DeliverSlackEv
   }
 }
 
-/** Ответ агента в диалоге мессенджера уходит в тот же тред. */
+/** Ответ агента уходит тредом под сообщением, с которого началась задача. */
 export async function deliverChannelReply(rt: AgentRuntime, link: ChannelLink, message: ChatMessage): Promise<void> {
   const text = textForMessenger(message);
   if (!text || link.adapter !== "slack") return;
@@ -451,6 +538,7 @@ export async function deliverChannelReply(rt: AgentRuntime, link: ChannelLink, m
   const options = message.kind === "approval" ? (message.options ?? []).map((option) => option.trim()).filter(Boolean) : [];
   const prompt = redactInternal(message.text).trim();
   const botToken = botTokenOf(cred);
+  const replyTs = (await replyTarget(rt, message.runId)) || link.threadTs;
   let posted = false;
   let ts = "";
   try {
@@ -476,7 +564,7 @@ export async function deliverChannelReply(rt: AgentRuntime, link: ChannelLink, m
     if (!posted) {
       ts = await slackPost(
         token,
-        { channel: link.channel, text: redactInternal(text), threadTs: link.threadTs },
+        { channel: link.channel, text: redactInternal(text), threadTs: replyTs },
         globalThis.fetch,
       );
     }

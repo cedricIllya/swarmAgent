@@ -1,12 +1,13 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage, Run, ServiceRecipe } from "@swarm/contracts";
 import { decodeSlackChoice } from "@swarm/contracts";
-import { hearSlack, slackConversations, slackPlainText } from "../../src/channels/slack";
+import { hearSlack, slackConversations, slackPlainText, slackReadFiles, slackThreadLine } from "../../src/channels/slack";
 import { acceptSlackEvent, deliverChannelReply, listenMessengers } from "../../src/channels/listen";
 import { Store } from "../../src/store";
+import { readJson, writeJson } from "../../src/store/files";
 import type { AgentRuntime } from "../../src/runtime";
 
 describe("hearSlack", () => {
@@ -25,6 +26,7 @@ describe("hearSlack", () => {
     expect(heard.map((item) => item.text)).toEqual(["привет"]);
     expect(heard[0]?.threadKey).toBe("slack:T1:D1");
     expect(heard[0]?.threadTs).toBeUndefined();
+    expect(heard[0]?.replyTs).toBe("100.000001");
   });
 
   it("в канале оставляет только упоминание и отвечает в тред", () => {
@@ -41,6 +43,7 @@ describe("hearSlack", () => {
     expect(heard).toHaveLength(1);
     expect(heard[0]?.text).toBe("посмотри отчёт");
     expect(heard[0]?.threadTs).toBe("100.000002");
+    expect(heard[0]?.replyTs).toBe("100.000002");
     expect(heard[0]?.threadKey).toBe("slack:T1:C1:100.000002");
   });
 
@@ -58,6 +61,7 @@ describe("hearSlack", () => {
       ],
     });
     expect(heard.map((item) => item.text)).toEqual(["а срок какой?"]);
+    expect(heard[0]?.replyTs).toBe("100.000002");
     expect(heard[0]?.threadKey).toBe("slack:T1:C1:100.000002");
   });
 
@@ -75,6 +79,40 @@ describe("hearSlack", () => {
       ],
     });
     expect(heard.map((item) => item.text)).toEqual(["сделай отчёт", "и это тоже"]);
+  });
+
+  it("в личке берёт файл без текста и в канале ждёт упоминание", () => {
+    const file = {
+      id: "F1",
+      name: "data.csv",
+      mimetype: "text/csv",
+      size: 4,
+      preview: "а,1",
+    };
+    const dm = hearSlack({
+      teamId: "T1",
+      selfId: "UBOT",
+      channelId: "D1",
+      im: true,
+      messages: [{ type: "message", subtype: "file_share", user: "UALICE", text: "", ts: "100.000010", files: [file] }],
+    });
+    expect(dm).toHaveLength(1);
+    expect(dm[0]?.text).toBe("");
+    expect(dm[0]?.replyTs).toBe("100.000010");
+    expect(dm[0]?.files).toEqual([file]);
+
+    const channel = hearSlack({
+      teamId: "T1",
+      selfId: "UBOT",
+      channelId: "C1",
+      im: false,
+      messages: [
+        { type: "message", subtype: "file_share", user: "UALICE", ts: "100.000011", files: [file] },
+        { type: "message", subtype: "file_share", user: "UALICE", text: "<@UBOT> таблица", ts: "100.000012", files: [file] },
+      ],
+    });
+    expect(channel.map((item) => item.text)).toEqual(["таблица"]);
+    expect(channel[0]?.files[0]?.name).toBe("data.csv");
   });
 });
 
@@ -95,6 +133,136 @@ describe("slackConversations", () => {
     expect(contentType).toBe("application/x-www-form-urlencoded");
     expect(new URLSearchParams(body).get("types")).toContain("im");
     expect(found).toEqual([{ id: "D1", im: true }]);
+  });
+});
+
+describe("slackReadFiles", () => {
+  it("вкладывает текст и не ходит на чужой адрес", async () => {
+    const hosts: string[] = [];
+    const fetchImpl = async (url: string) => {
+      hosts.push(new URL(String(url)).host);
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          file: {
+            id: "F1",
+            name: "data.csv",
+            mimetype: "text/csv",
+            size: 4,
+            url_private_download: "https://evil.example/data.csv",
+          },
+        }),
+      );
+    };
+    const text = await slackReadFiles("xoxp-test", "разбери", [{ id: "F1", name: "data.csv", mimetype: "text/csv", size: 4 }], null, fetchImpl as typeof fetch);
+    expect(text).toContain("разбери");
+    expect(text).toContain("содержимое не прочитано");
+    expect(hosts).toEqual(["slack.com"]);
+  });
+
+  it("скачивает текст после редиректа без токена на втором хосте", async () => {
+    const calls: Array<{ url: string; auth: string }> = [];
+    const fetchImpl = async (url: string, init?: RequestInit) => {
+      const href = String(url);
+      const auth = String((init?.headers as Record<string, string> | undefined)?.Authorization ?? "");
+      calls.push({ url: href, auth });
+      if (href.endsWith("files.info")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            file: {
+              id: "F1",
+              name: "data.csv",
+              mimetype: "text/csv",
+              size: 4,
+              url_private_download: "https://files.slack.com/files-pri/T/F1/download/data.csv",
+            },
+          }),
+        );
+      }
+      if (href.startsWith("https://files.slack.com/")) {
+        expect(init?.redirect).toBe("manual");
+        return new Response(null, { status: 302, headers: { location: "https://cdn.example/data.csv" } });
+      }
+      return new Response("а,1\n", { headers: { "content-type": "text/csv" } });
+    };
+    const text = await slackReadFiles(
+      "xoxp-test",
+      "",
+      [{ id: "F1", name: "data.csv", mimetype: "text/csv", size: 4, preview: "черновик" }],
+      null,
+      fetchImpl as typeof fetch,
+    );
+    expect(text).toContain("data.csv");
+    expect(text).toContain("а,1");
+    expect(text).not.toContain("черновик");
+    expect(calls.find((call) => call.url.includes("cdn.example"))?.auth).toBe("");
+    expect(calls.find((call) => call.url.startsWith("https://files.slack.com/"))?.auth).toContain("xoxp-test");
+  });
+
+  it("кладёт картинку на диск и говорит её открыть", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "swarm-slack-file-"));
+    try {
+      const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const fetchImpl = async (url: string) => {
+        if (String(url).endsWith("files.info")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              file: {
+                id: "F9",
+                name: "photo.png",
+                mimetype: "image/png",
+                size: png.byteLength,
+                url_private_download: "https://files.slack.com/files-pri/T/F9/download/photo.png",
+              },
+            }),
+          );
+        }
+        return new Response(png, { headers: { "content-type": "image/png" } });
+      };
+      const text = await slackReadFiles(
+        "xoxp-test",
+        "посмотри",
+        [{ id: "F9", name: "photo.png", mimetype: "image/png", size: png.byteLength }],
+        dir,
+        fetchImpl as typeof fetch,
+      );
+      expect(text).toContain("посмотри");
+      expect(text).toContain("открой и посмотри");
+      const saved = path.join(dir, "F9-photo.png");
+      expect(text).toContain(saved);
+      expect(await readFile(saved)).toEqual(Buffer.from(png));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("без права files:read оставляет имя и превью", async () => {
+    const fetchImpl = async () => new Response(JSON.stringify({ ok: false, error: "missing_scope" }));
+    const text = await slackReadFiles(
+      "xoxp-test",
+      "",
+      [{ id: "F1", name: "data.csv", mimetype: "text/csv", size: 4, preview: "а,1" }],
+      null,
+      fetchImpl as typeof fetch,
+    );
+    expect(text).toContain("нет права files:read");
+    expect(text).toContain("а,1");
+  });
+});
+
+describe("slackThreadLine", () => {
+  it("показывает файл в треде и пропускает служебное сообщение", () => {
+    expect(
+      slackThreadLine({
+        type: "message",
+        subtype: "file_share",
+        text: "таблица",
+        files: [{ id: "F1", name: "data.csv", mimetype: "text/csv", size: 4, preview: "а,1" }],
+      }),
+    ).toContain("data.csv");
+    expect(slackThreadLine({ type: "message", subtype: "channel_join", text: "joined" })).toBe("");
   });
 });
 
@@ -136,7 +304,7 @@ describe("listenMessengers", () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       const method = String(url).split("/").pop();
-      const body = Object.fromEntries(new URLSearchParams(String(init?.body ?? ""))) as { channel?: string };
+      const body = Object.fromEntries(new URLSearchParams(String(init?.body ?? ""))) as { channel?: string; ts?: string };
       calls.push(method ?? "");
       const payload =
         method === "auth.test"
@@ -153,13 +321,15 @@ describe("listenMessengers", () => {
               : method === "users.info"
                 ? { ok: true, user: { real_name: "Алиса", profile: { display_name: "Алиса" } } }
                 : method === "conversations.replies"
-                  ? {
-                      ok: true,
-                      messages: [
-                        { type: "message", user: "UALICE", text: "посмотри <@UBOT> отчёт", ts: "400.000100" },
-                        { type: "message", user: "UBOB", text: "а срок?", ts: "400.000200", thread_ts: "400.000100" },
-                      ],
-                    }
+                  ? body.ts === "200.000100"
+                    ? { ok: true, messages: [{ type: "message", user: "UALICE", text: "сделай отчёт", ts: "200.000100" }] }
+                    : {
+                        ok: true,
+                        messages: [
+                          { type: "message", user: "UALICE", text: "посмотри <@UBOT> отчёт", ts: "400.000100" },
+                          { type: "message", user: "UBOB", text: "а срок?", ts: "400.000200", thread_ts: "400.000100" },
+                        ],
+                      }
                   : { ok: false, error: method };
       return new Response(JSON.stringify(payload));
     });
@@ -231,6 +401,12 @@ describe("listenMessengers", () => {
     const messages = await store.chats.listMessages(chats[0]!.id);
     expect(messages[0]).toMatchObject({ role: "user", text: "сделай отчёт", author: "Алиса" });
     expect(runs[0]?.threadId).toBe(chats[0]?.id);
+    const inbox = await readJson<{ replyTo?: Record<string, string>; threads?: Record<string, string[]> }>(
+      store.dir("channel-inbox.json"),
+      {},
+    );
+    expect(inbox.replyTo?.run_1).toBe("200.000100");
+    expect(inbox.threads?.["slack:D1"]).toContain("200.000100");
 
     const before = calls.length;
     expect(await listenMessengers(rt)).toBe(0);
@@ -298,6 +474,10 @@ describe("listenMessengers", () => {
     await vi.waitFor(() => expect(prompts.some((prompt) => prompt.includes("а срок?") && prompt.includes("посмотри"))).toBe(true));
     expect(runs).toHaveLength(4);
     expect(runs[3]?.threadId).toBe(runs[2]?.threadId);
+    await vi.waitFor(async () => {
+      const messages = await store.chats.listMessages(runs[3]!.threadId!);
+      expect(messages.some((message) => message.role === "agent" && message.text.includes("до пятницы"))).toBe(true);
+    });
   });
 
   it("принимает упоминание бота, когда auth.test вернул id пользователя", async () => {
@@ -398,6 +578,122 @@ describe("listenMessengers", () => {
       expect(run?.status).toBe("done");
     });
   });
+
+  it("кладёт содержимое файла из лички в задачу", async () => {
+    root = await mkdtemp(path.join(tmpdir(), "swarm-slack-file-msg-"));
+    const store = new Store(root);
+    await store.init();
+    await store.writeServices({
+      generatedAt: "t",
+      recipes: [
+        {
+          slug: "slack",
+          name: "Slack",
+          kind: "api",
+          domains: ["slack.com"],
+          notes: "",
+          discoveredBy: null,
+          channel: "messenger",
+        },
+      ],
+      credentials: [{ slug: "slack", kind: "api", token: "xoxp-user" }],
+    });
+    vi.stubGlobal("fetch", async (url: string) => {
+      const href = String(url);
+      if (href.startsWith("https://files.slack.com/")) return new Response("а,1\n", { headers: { "content-type": "text/csv" } });
+      const method = href.split("/").pop();
+      const payload =
+        method === "auth.test"
+          ? { ok: true, user_id: "UBOT", team_id: "T1" }
+          : method === "users.info"
+            ? { ok: true, user: { real_name: "Алиса" } }
+            : method === "files.info"
+              ? {
+                  ok: true,
+                  file: {
+                    id: "F1",
+                    name: "data.csv",
+                    mimetype: "text/csv",
+                    size: 4,
+                    url_private_download: "https://files.slack.com/files-pri/T/F1/download/data.csv",
+                  },
+                }
+              : { ok: false, error: method };
+      return new Response(JSON.stringify(payload));
+    });
+    const rt = {
+      cfg: { agentId: "agt_1" },
+      store,
+      services: { applyReport: async () => undefined, knownRecipe: async () => null },
+      openRouter: {
+        chat: async () => ({
+          text: JSON.stringify({ kind: "task", service: null, serviceDomain: null }),
+          promptTokens: 1,
+          completionTokens: 1,
+          costUsd: 0,
+          model: "m",
+          citations: [],
+        }),
+      },
+      isCanceled: async () => false,
+      createRun: async () => {
+        const run = {
+          id: "run_file",
+          title: "slack",
+          threadId: null,
+          status: "running",
+          trigger: "chat",
+          startedAt: "2026-01-01T00:00:00.000Z",
+          finishedAt: null,
+          summary: "",
+        } as Run;
+        await store.saveRun(run);
+        return run;
+      },
+      addChat: async (msg: { chatId?: string; text: string; role: "user" | "agent"; runId: string | null; author?: string }) => {
+        const chatId = msg.chatId ?? "";
+        await store.chats.addMessage(chatId, {
+          at: new Date().toISOString(),
+          role: msg.role,
+          text: msg.text,
+          runId: msg.runId,
+          chatId,
+          ...(msg.author ? { author: msg.author } : {}),
+        });
+      },
+      step: async () => undefined,
+      finishRun: async (run: Run, status: Run["status"], summary: string) => {
+        run.status = status;
+        run.summary = summary;
+        await store.saveRun(run);
+      },
+      think: async () => ({ text: "пусто", usedFallback: false, startedAt: "2026-01-01T00:00:00.000Z" }),
+    } as unknown as AgentRuntime;
+
+    expect(
+      await acceptSlackEvent(rt, {
+        eventId: "Ev-file",
+        teamId: "T1",
+        event: {
+          type: "message",
+          subtype: "file_share",
+          channel: "D1",
+          channelType: "im",
+          user: "UALICE",
+          text: "разбери",
+          ts: "600.000100",
+          files: [{ id: "F1", name: "data.csv", mimetype: "text/csv", size: 4 }],
+        },
+      }),
+    ).toBe("accepted");
+    await vi.waitFor(async () => {
+      const run = await store.getRun("run_file");
+      expect(run?.status).toBe("done");
+      const chats = await store.chats.list();
+      const messages = await store.chats.listMessages(chats[0]!.id);
+      expect(messages.some((message) => message.role === "user" && message.text.includes("разбери") && message.text.includes("а,1"))).toBe(true);
+    });
+  });
 });
 
 describe("deliverChannelReply", () => {
@@ -469,6 +765,28 @@ describe("deliverChannelReply", () => {
     expect(buttons.map((button) => button.text.text)).toEqual(["Завтра", "На неделе"]);
     expect(decodeSlackChoice(buttons[1]?.value ?? "")).toEqual({ agentId: "agt_1", approvalId: "qst_1", index: 1 });
     expect(posts[0]?.body.get("thread_ts")).toBe("1.0");
+  });
+
+  it("в личке отвечает тредом на сообщение задачи", async () => {
+    const rt = await runtime();
+    const posts = capture();
+    await writeJson(rt.store.dir("channel-inbox.json"), {
+      seen: [],
+      cursors: {},
+      names: {},
+      identities: {},
+      replyTo: { run_1: "5.5" },
+      threads: { "slack:D1": ["5.5"] },
+    });
+    await deliverChannelReply(
+      rt,
+      { adapter: "slack", slug: "slack", threadKey: "slack:T1:D1", channel: "D1" },
+      { at: "t", role: "agent", kind: "text", text: "готово", runId: "run_1", chatId: "chat_1" },
+    );
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.token).toBe("xoxp-user");
+    expect(posts[0]?.body.get("thread_ts")).toBe("5.5");
+    expect(posts[0]?.body.get("text")).toBe("готово");
   });
 
   it("в личке оставляет нумерованный текст от пользователя", async () => {
