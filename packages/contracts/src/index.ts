@@ -5,4 +5,5 @@ export * from "./usage";
 export * from "./runtime";
 export * from "./slack-choice";
 export * from "./slack-file";
+export * from "./slack-scopes";
 export * from "./user-question";

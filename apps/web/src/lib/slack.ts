@@ -1,5 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { decodeSlackChoice, slackFileRefs, type DeliverSlackEventRequest, type ServiceRecipe } from "@swarm/contracts";
+import {
+  decodeSlackChoice,
+  slackFileRefs,
+  SLACK_USER_SCOPES,
+  type DeliverSlackEventRequest,
+  type ServiceRecipe,
+} from "@swarm/contracts";
 
 /**
  * Аккаунт Slack, от имени которого говорит агент. События приходят на
@@ -9,19 +15,7 @@ import { decodeSlackChoice, slackFileRefs, type DeliverSlackEventRequest, type S
  * Токен бота общий на команду: им в канал уходят кнопки вариантов.
  * В одной команде может быть несколько таких аккаунтов.
  */
-export const SLACK_USER_SCOPES = [
-  "channels:history",
-  "channels:read",
-  "chat:write",
-  "files:read",
-  "groups:history",
-  "groups:read",
-  "im:history",
-  "im:read",
-  "mpim:history",
-  "mpim:read",
-  "users:read",
-] as const;
+export { SLACK_USER_SCOPES };
 
 /** Кнопки Slack живут только на сообщении приложения. */
 export const SLACK_BOT_SCOPES = ["chat:write", "chat:write.public"] as const;

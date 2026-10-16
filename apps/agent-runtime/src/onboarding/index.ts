@@ -1,4 +1,4 @@
-import type { Run, ServiceCredential, ServiceRecipe } from "@swarm/contracts";
+import { missingSlackScopes, type Run, type ServiceCredential, type ServiceRecipe } from "@swarm/contracts";
 import type { AcceptInviteResult } from "../browser/invite";
 import { generatePassword } from "../browser/invite";
 import { applyStorageToProfile, type BrowserStorageState } from "../browser/session-transfer";
@@ -386,7 +386,14 @@ async function connectInvite(
       consentUrl: await rt.controlPlane.slackConsent(),
       hasToken: async () => {
         const snap = await rt.store.readServices();
-        return Boolean(snap?.credentials.some((item) => item.slug === "slack" && (item.token || item.oauth?.accessToken)));
+        return Boolean(
+          snap?.credentials.some(
+            (item) =>
+              item.slug === "slack" &&
+              (item.token || item.oauth?.accessToken) &&
+              missingSlackScopes(item.oauth?.scope).length === 0,
+          ),
+        );
       },
       approve,
     });
