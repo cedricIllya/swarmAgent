@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import type { ServicesSnapshot } from "@swarm/contracts";
-import { browserTaskBlock } from "../../src/browser/access-mode";
+import { browserTaskBlock, userRequestsBrowser } from "../../src/browser/access-mode";
 import { browserRoutes } from "../../src/http/browser-routes";
 import type { AgentRuntime } from "../../src/runtime";
 
@@ -43,6 +43,15 @@ describe("browserTaskBlock", () => {
       credentials: [{ slug: "pneumatic", kind: "browser", password: "pw" }],
     };
     expect(browserTaskBlock(browser, { slug: "pneumatic" })).toBeNull();
+  });
+
+  it("allows the browser when the person asked to sign in that way", () => {
+    expect(userRequestsBrowser("Зайди в Pneumatic через браузер и закрой задачу")).toBe(true);
+    expect(userRequestsBrowser("Please log in via the browser")).toBe(true);
+    expect(userRequestsBrowser("Не через браузер, только API")).toBe(false);
+    expect(userRequestsBrowser("Закрой задачу в Pneumatic")).toBe(false);
+    expect(userRequestsBrowser("Если письмо отображается некорректно, откройте его в браузере")).toBe(false);
+    expect(browserTaskBlock(api, { slug: "pneumatic", userAsked: true })).toBeNull();
   });
 
   it("keeps MCP on its tools", () => {
@@ -91,5 +100,63 @@ describe("POST /browser/open", () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: expect.stringMatching(/через API/) });
     expect(opened).toBe(false);
+  });
+
+  it("opens the browser when the person asked to sign in that way", async () => {
+    let opened = false;
+    const rt = {
+      store: {
+        getRun: async () => ({ id: "run_1", trigger: "chat", threadId: "chat_1", title: "зайди" }),
+        readServices: async () => api,
+        chats: {
+          listMessages: async () => [
+            { role: "user", runId: "run_1", text: "Зайди в Pneumatic через браузер", kind: "text" },
+          ],
+        },
+      },
+      step: async () => undefined,
+      browser: {
+        open: async () => {
+          opened = true;
+          return { id: "s1", meta: { liveUrl: null } };
+        },
+      },
+    } as unknown as AgentRuntime;
+    const app = new Hono();
+    app.route("/", browserRoutes(rt));
+    const res = await app.request("/browser/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runId: "run_1", serviceSlug: "pneumatic", purpose: "войти как просит человек" }),
+    });
+    expect(res.status).toBe(200);
+    expect(opened).toBe(true);
+  });
+
+  it("opens the browser when the email asks to sign in that way", async () => {
+    let opened = false;
+    const rt = {
+      store: {
+        getRun: async () => ({ id: "run_1", trigger: "email", threadId: "msg_1", title: "Задача" }),
+        readServices: async () => api,
+        listSteps: async () => [{ at: "t", kind: "email", text: "task от owner@example.com", data: { userBrowser: true } }],
+      },
+      step: async () => undefined,
+      browser: {
+        open: async () => {
+          opened = true;
+          return { id: "s1", meta: { liveUrl: null } };
+        },
+      },
+    } as unknown as AgentRuntime;
+    const app = new Hono();
+    app.route("/", browserRoutes(rt));
+    const res = await app.request("/browser/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runId: "run_1", serviceSlug: "pneumatic", purpose: "войти как просит письмо" }),
+    });
+    expect(res.status).toBe(200);
+    expect(opened).toBe(true);
   });
 });

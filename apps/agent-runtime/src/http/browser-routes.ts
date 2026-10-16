@@ -1,10 +1,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { browserTaskBlock } from "../browser/access-mode";
+import type { Run } from "@swarm/contracts";
+import { browserTaskBlock, userRequestsBrowser } from "../browser/access-mode";
 import { savedBrowserSlug } from "../browser/local-session";
 import { credentialVariables, referencedVariables } from "../browser/secrets";
 import { saveTokenFromPage } from "../browser/save-token";
 import type { AgentRuntime } from "../runtime";
+import { chatRetrySource } from "../tasks/chat";
 import { noteActivity } from "../tasks/idle";
 import { INSTRUCTION_ALIASES, SESSION_ALIASES, skyvernPurpose, withAliases } from "./lenient";
 
@@ -16,6 +18,33 @@ const BrowserOpen = z.object({
 });
 
 const Session = z.object({ sessionId: z.string() });
+
+/** Текст человека в этой задаче просит войти через браузер. Расписание сюда не входит. */
+async function userAskedBrowser(rt: AgentRuntime, run: Run): Promise<boolean> {
+  if (run.trigger === "chat" && run.threadId) {
+    const messages = await rt.store.chats.listMessages(run.threadId, 500);
+    const own = messages.filter((m) => m.runId === run.id && m.role === "user").map((m) => m.text);
+    const source = chatRetrySource(messages, run.id);
+    if ([...own, source ?? ""].some((text) => userRequestsBrowser(text))) return true;
+  }
+  if (run.trigger !== "email" && run.trigger !== "approval") return false;
+  if (userRequestsBrowser(run.title)) return true;
+  const steps = await rt.store.listSteps(run.id);
+  if (steps.some((step) => step.data?.userBrowser === true)) return true;
+  const chatId = await rt.chatIdForRun(run);
+  const messages = await rt.store.chats.listMessages(chatId, 500);
+  return messages.some((m) => m.runId === run.id && m.role === "user" && userRequestsBrowser(m.text));
+}
+
+async function browserBlock(
+  rt: AgentRuntime,
+  run: Run,
+  args: { slug?: string | null; url?: string | null },
+): Promise<string | null> {
+  const blocked = browserTaskBlock(await rt.store.readServices(), args);
+  if (!blocked || (await userAskedBrowser(rt, run))) return null;
+  return blocked;
+}
 
 /** Hermes (соседний контейнер) → runtime: браузер Stagehand и Skyvern из скилла swarm-worker. */
 export function browserRoutes(rt: AgentRuntime): Hono {
@@ -33,7 +62,7 @@ export function browserRoutes(rt: AgentRuntime): Hono {
     );
     const run = await rt.store.getRun(body.runId);
     if (!run) return c.json({ error: "run not found" }, 404);
-    const blocked = browserTaskBlock(await rt.store.readServices(), { slug: body.serviceSlug, url: body.url ?? null });
+    const blocked = await browserBlock(rt, run, { slug: body.serviceSlug, url: body.url ?? null });
     if (blocked) {
       await rt.step(run.id, "note", blocked);
       return c.json({ error: blocked }, 409);
@@ -51,7 +80,10 @@ export function browserRoutes(rt: AgentRuntime): Hono {
     const body = Session.extend({ url: z.string().url() }).parse(withAliases(await c.req.json(), { ...SESSION_ALIASES, url: ["link", "href"] }));
     const s = rt.browser.sessions.get(body.sessionId);
     if (!s) return c.json({ error: "session not found" }, 404);
-    const blocked = browserTaskBlock(await rt.store.readServices(), { slug: s.serviceSlug, url: body.url });
+    const run = await rt.store.getRun(s.meta.runId);
+    const blocked = run
+      ? await browserBlock(rt, run, { slug: s.serviceSlug, url: body.url })
+      : browserTaskBlock(await rt.store.readServices(), { slug: s.serviceSlug, url: body.url });
     if (blocked) return c.json({ error: blocked }, 409);
     await s.goto(body.url);
     return c.json({ ok: true, url: await s.currentUrl() });
@@ -158,7 +190,7 @@ export function browserRoutes(rt: AgentRuntime): Hono {
     const run = await rt.store.getRun(body.runId);
     if (!run) return c.json({ error: "run not found" }, 404);
     const services = await rt.store.readServices();
-    const blocked = browserTaskBlock(services, { url: body.url });
+    const blocked = (await userAskedBrowser(rt, run)) ? null : browserTaskBlock(services, { url: body.url });
     if (blocked) {
       await rt.step(run.id, "note", blocked);
       return c.json({ error: blocked }, 409);

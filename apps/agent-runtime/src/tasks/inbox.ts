@@ -1,5 +1,6 @@
 import type { InboundEmail } from "@swarm/contracts";
 import { classifyReply, findDigitCode, matchesThread } from "./approval";
+import { userRequestsBrowser } from "../browser/access-mode";
 import { skyvernInboxContent } from "../browser/skyvern";
 import { emailInviteFallback } from "./invite-signal";
 import { isTransientModelError } from "../llm/openrouter";
@@ -211,7 +212,8 @@ async function handleThreadReply(
   }
 
   const run = await rt.createRun("email", email.subject || "Задача из письма", threadId);
-  await rt.step(run.id, "email", `новая задача в ветке от ${email.from}`);
+  const asked = userRequestsBrowser(`${email.subject}\n${email.replyText || email.text}`);
+  await rt.step(run.id, "email", `новая задача в ветке от ${email.from}`, asked ? { userBrowser: true } : undefined);
   const turn = await rt.think(run, emailTaskPrompt(email, "task"));
   const { text, status } = await finishServiceThink(rt, run, turn);
   if (status === "waiting_approval") return;
@@ -386,6 +388,7 @@ async function handleNewEmail(rt: AgentRuntime, email: InboundEmail, known: Emai
   }
   if (hold) bindWork(rt, hold.id, run.id, run.title);
   const meta: Record<string, unknown> = { service: c.service, domain: c.serviceDomain };
+  if (userRequestsBrowser(`${email.subject}\n${email.replyText || email.text}`)) meta.userBrowser = true;
   if (hold) {
     meta.workMarks = hold.marks;
     meta.broad = hold.broad;

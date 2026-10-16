@@ -40,13 +40,32 @@ function recipeOf(services: ServicesSnapshot, slug: string | null, url: string |
 }
 
 /**
+ * Человек прямо просит войти в сервис через браузер.
+ * Плановая проверка и уведомления сюда не попадают: смотрим только его текст.
+ */
+export function userRequestsBrowser(text: string): boolean {
+  const t = text.toLowerCase().replace(/ё/g, "е");
+  if (/не\s+через\s+браузер|не\s+в\s+браузере|без\s+браузера|не\s+браузером/.test(t)) return false;
+  if (/\b(not|don'?t|do not|without)\b[\s\S]{0,24}\bbrowser\b/.test(t)) return false;
+  if (/через\s+браузер/.test(t)) return true;
+  if (/(?:зайди|зайти|войди|войти|залогин\w*|авториз\w*)\s+браузером/.test(t)) return true;
+  if (/(?:открой|открыть)\s+браузер(?:\s|$|[.,!])/.test(t)) return true;
+  if (/\b(via|through)\s+(the\s+)?browser\b/.test(t)) return true;
+  if (/\b(open|use)\s+(the\s+)?browser\b/.test(t)) return true;
+  if (/\b(log|sign)\s*in\b[\s\S]{0,40}\bbrowser\b/.test(t)) return true;
+  return false;
+}
+
+/**
  * Задача в сервисе со способом API или MCP не открывает браузер.
  * Ключа ещё нет — браузер можно, чтобы его выпустить.
+ * Человек прямо попросил зайти через браузер — тоже можно.
  */
 export function browserTaskBlock(
   services: ServicesSnapshot | null,
-  args: { slug?: string | null; url?: string | null },
+  args: { slug?: string | null; url?: string | null; userAsked?: boolean },
 ): string | null {
+  if (args.userAsked) return null;
   if (!services) return null;
   const recipe = recipeOf(services, args.slug ?? null, args.url ?? null);
   if (!recipe) return null;

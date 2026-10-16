@@ -241,7 +241,9 @@ export function toolRoutes(rt: AgentRuntime): Hono {
         data: z.record(z.string(), z.unknown()).optional(),
       })
       .parse(raw);
-    await rt.step(c.req.param("id"), body.kind, redactInternal(body.text), body.data);
+    const data = body.data ? { ...body.data } : undefined;
+    if (data) delete data.userBrowser;
+    await rt.step(c.req.param("id"), body.kind, redactInternal(body.text), data && Object.keys(data).length ? data : undefined);
     return c.json({ ok: true });
   });
 
